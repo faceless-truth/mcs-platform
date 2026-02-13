@@ -1,10 +1,10 @@
-# MCS Financial Statement Platform
+# StatementHub
 
 A web-based financial statement preparation platform for **MC & S Pty Ltd**, built with Django, HTMX, and Bootstrap 5.
 
 ## Overview
 
-This platform replaces the legacy Microsoft Access Ledger system with a modern, multi-user web application for preparing AASB-compliant financial statements for Australian SMEs.
+**StatementHub** replaces the legacy Microsoft Access Ledger system with a modern, multi-user web application for preparing AASB-compliant financial statements for Australian SMEs.
 
 ### Key Features (Phase 1 — Core Engine)
 
