@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Adjustments - {{ fy.year_label }} - MCS Financials{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy.entity.entity_name }} - {{ fy.year_label }}</a></li>
+        <li class="breadcrumb-item active">Adjustments</li>
+    </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h5>Adjusting Journals</h5>
+    {% if not fy.is_locked and user.can_edit %}
+    <a href="{% url 'core:adjustment_create' pk=fy.pk %}" class="btn btn-primary btn-sm">
+        <i class="bi bi-plus-lg"></i> New Adjustment
+    </a>
+    {% endif %}
+</div>
+
+{% for adj in adjustments %}
+<div class="card mb-2">
+    <div class="card-body py-2">
+        <div class="d-flex justify-content-between">
+            <strong>{{ adj.journal_date|date:"d M Y" }}</strong>
+            <small class="text-muted">{{ adj.created_by.get_full_name|default:"System" }} &middot; {{ adj.created_at|date:"d/m/Y H:i" }}</small>
+        </div>
+        <p class="mb-2">{{ adj.description }}</p>
+        <table class="table table-sm mb-0" style="max-width: 500px;">
+            <thead><tr><th>Account</th><th class="text-end">Debit</th><th class="text-end">Credit</th></tr></thead>
+            <tbody>
+                {% for line in adj.lines.all %}
+                <tr>
+                    <td><code>{{ line.account_code }}</code> {{ line.account_name }}</td>
+                    <td class="text-end">{{ line.debit|floatformat:2 }}</td>
+                    <td class="text-end">{{ line.credit|floatformat:2 }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% empty %}
+<div class="text-center py-4 text-muted">No adjustments for this financial year.</div>
+{% endfor %}
+{% endblock %}

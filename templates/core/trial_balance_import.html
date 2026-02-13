@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Import Trial Balance - MCS Financials{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-8 mx-auto">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="{% url 'core:client_list' %}">Clients</a></li>
+                <li class="breadcrumb-item"><a href="{% url 'core:client_detail' pk=fy.entity.client.pk %}">{{ fy.entity.client.name }}</a></li>
+                <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=fy.entity.pk %}">{{ fy.entity.entity_name }}</a></li>
+                <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy.year_label }}</a></li>
+                <li class="breadcrumb-item active">Import Trial Balance</li>
+            </ol>
+        </nav>
+
+        <div class="card">
+            <div class="card-header"><h5 class="mb-0"><i class="bi bi-upload"></i> Import Trial Balance</h5></div>
+            <div class="card-body">
+                <div class="alert alert-info">
+                    <h6 class="alert-heading">Expected Excel Format</h6>
+                    <p class="mb-1">Upload a <strong>.xlsx</strong> file with the following columns (row 1 = header):</p>
+                    <table class="table table-sm table-bordered bg-white mt-2">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Account Code</th>
+                                <th>Account Name</th>
+                                <th>Opening Balance</th>
+                                <th>Debit</th>
+                                <th>Credit</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>1000</td>
+                                <td>Cash at Bank - CBA</td>
+                                <td>45,230.00</td>
+                                <td>125,000.00</td>
+                                <td>98,500.00</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    <small class="text-muted">
+                        <strong>Note:</strong> Importing will replace any existing non-adjustment trial balance lines.
+                        Debits and credits should balance. Opening balance is optional for first-year entities.
+                    </small>
+                </div>
+
+                <form method="post" enctype="multipart/form-data">
+                    {% csrf_token %}
+                    <div class="mb-3">
+                        <label for="id_file" class="form-label">Select Excel File</label>
+                        {{ form.file }}
+                        {% if form.file.errors %}
+                        <div class="invalid-feedback d-block">{{ form.file.errors.0 }}</div>
+                        {% endif %}
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-upload"></i> Import
+                        </button>
+                        <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-secondary">Cancel</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

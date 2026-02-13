@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Roll Forward - MCS Financials{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-6 mx-auto">
+        <div class="card">
+            <div class="card-header"><h5 class="mb-0"><i class="bi bi-arrow-right-circle"></i> Roll Forward</h5></div>
+            <div class="card-body">
+                <p>This will create a new financial year for <strong>{{ fy.entity.entity_name }}</strong> based on the closing balances of <strong>{{ fy.year_label }}</strong>.</p>
+                <ul>
+                    <li>A new financial year will be created</li>
+                    <li>Closing balances from {{ fy.year_label }} will become opening balances</li>
+                    <li>{{ fy.year_label }} will be linked as the comparative (prior) year</li>
+                </ul>
+                <form method="post">
+                    {% csrf_token %}
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">Confirm Roll Forward</button>
+                        <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-secondary">Cancel</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

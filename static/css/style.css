@@ -1,0 +1,92 @@
+/* MCS Financial Statement Platform - Custom Styles */
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background-color: #f5f6fa;
+    font-size: 0.9rem;
+}
+
+.navbar-brand {
+    font-size: 1.1rem;
+}
+
+/* Cards */
+.card {
+    border: none;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    border-radius: 0.5rem;
+}
+
+.card-header {
+    background-color: #fff;
+    border-bottom: 1px solid #eee;
+    padding: 0.75rem 1rem;
+}
+
+/* Tables */
+.table th {
+    font-weight: 600;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: #555;
+}
+
+.table td {
+    vertical-align: middle;
+}
+
+/* Financial numbers */
+.text-end {
+    font-variant-numeric: tabular-nums;
+}
+
+/* Status badges */
+.badge {
+    font-weight: 500;
+}
+
+/* Breadcrumb */
+.breadcrumb {
+    font-size: 0.85rem;
+    background: transparent;
+    padding: 0;
+    margin-bottom: 1rem;
+}
+
+/* Summary cards */
+.card.text-center .card-body h2 {
+    font-weight: 700;
+}
+
+/* Tab styling */
+.nav-tabs .nav-link {
+    color: #555;
+    font-size: 0.85rem;
+}
+
+.nav-tabs .nav-link.active {
+    font-weight: 600;
+}
+
+/* Form controls in tables */
+.form-select-sm {
+    font-size: 0.8rem;
+    padding: 0.15rem 0.5rem;
+}
+
+/* Alert improvements */
+.alert {
+    font-size: 0.85rem;
+}
+
+/* Print styles */
+@media print {
+    .navbar, .breadcrumb, .btn, footer, .nav-tabs {
+        display: none !important;
+    }
+    .card {
+        box-shadow: none;
+        border: 1px solid #ddd;
+    }
+}

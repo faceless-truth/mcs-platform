@@ -1,0 +1,25 @@
+<tr class="{% if not line.mapped_line_item %}table-warning{% endif %}" id="tb-line-{{ line.pk }}">
+    <td><code>{{ line.account_code }}</code></td>
+    <td>{{ line.account_name }}</td>
+    <td class="text-end">{{ line.opening_balance|floatformat:2 }}</td>
+    <td class="text-end">{{ line.debit|floatformat:2 }}</td>
+    <td class="text-end">{{ line.credit|floatformat:2 }}</td>
+    <td class="text-end fw-semibold">{{ line.closing_balance|floatformat:2 }}</td>
+    <td>
+        {% if line.mapped_line_item %}
+        <small class="text-success">{{ line.mapped_line_item.line_item_label }}</small>
+        {% else %}
+        <form hx-post="{% url 'core:htmx_map_tb_line' pk=line.pk %}"
+              hx-target="#tb-line-{{ line.pk }}"
+              hx-swap="outerHTML">
+            <select name="mapped_line_item" class="form-select form-select-sm" onchange="this.form.requestSubmit()">
+                <option value="">-- Map --</option>
+                {% for m in mappings %}
+                <option value="{{ m.pk }}">{{ m.standard_code }} - {{ m.line_item_label }}</option>
+                {% endfor %}
+            </select>
+        </form>
+        {% endif %}
+    </td>
+    <td></td>
+</tr>

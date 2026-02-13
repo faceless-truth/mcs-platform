@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Map Accounts - MCS Financials{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy.entity.entity_name }} - {{ fy.year_label }}</a></li>
+        <li class="breadcrumb-item active">Map Unmapped Accounts</li>
+    </ol>
+</nav>
+
+<div class="card">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-diagram-3"></i> Map Unmapped Client Accounts</h5>
+    </div>
+    <div class="card-body">
+        {% if unmapped %}
+        <form method="post">
+            {% csrf_token %}
+            <div class="alert alert-warning">
+                <strong>{{ unmapped.count }}</strong> account(s) need to be mapped to standard financial statement line items.
+                These mappings will be saved and reused in future years.
+            </div>
+            <div class="table-responsive">
+                <table class="table table-sm">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Client Account Code</th>
+                            <th>Account Name</th>
+                            <th>Map To Standard Line Item</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for cam in unmapped %}
+                        <tr>
+                            <td><code>{{ cam.client_account_code }}</code></td>
+                            <td>{{ cam.client_account_name }}</td>
+                            <td>
+                                <select name="mapping_{{ cam.pk }}" class="form-select form-select-sm">
+                                    <option value="">-- Select --</option>
+                                    {% for sm in standard_mappings %}
+                                    <option value="{{ sm.pk }}">{{ sm.standard_code }} - {{ sm.line_item_label }} ({{ sm.get_financial_statement_display }})</option>
+                                    {% endfor %}
+                                </select>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <div class="d-flex gap-2">
+                <button type="submit" class="btn btn-primary">Save Mappings</button>
+                <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-secondary">Cancel</a>
+            </div>
+        </form>
+        {% else %}
+        <div class="text-center py-4 text-success">
+            <i class="bi bi-check-circle" style="font-size: 2rem;"></i>
+            <p class="mt-2">All accounts are mapped.</p>
+            <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-primary">Back to Workspace</a>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

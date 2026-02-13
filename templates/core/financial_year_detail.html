@@ -1,0 +1,216 @@
+{% extends "base.html" %}
+{% load humanize %}
+{% block title %}{{ fy.entity.entity_name }} - {{ fy.year_label }} - MCS Financials{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'core:client_list' %}">Clients</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'core:client_detail' pk=client.pk %}">{{ client.name }}</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
+        <li class="breadcrumb-item active">{{ fy.year_label }}</li>
+    </ol>
+</nav>
+
+<!-- Header -->
+<div class="d-flex justify-content-between align-items-start mb-4">
+    <div>
+        <h4 class="mb-1">{{ entity.entity_name }} &mdash; {{ fy.year_label }}</h4>
+        <p class="text-muted mb-0">
+            {{ fy.start_date|date:"d M Y" }} to {{ fy.end_date|date:"d M Y" }}
+            &middot;
+            <span class="badge bg-{% if fy.status == 'draft' %}warning text-dark{% elif fy.status == 'in_review' %}info{% elif fy.status == 'reviewed' %}primary{% else %}success{% endif %} fs-6">
+                {{ fy.get_status_display }}
+            </span>
+        </p>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+        {% if not fy.is_locked and user.can_edit %}
+        <a href="{% url 'core:trial_balance_import' pk=fy.pk %}" class="btn btn-outline-success btn-sm">
+            <i class="bi bi-upload"></i> Import TB
+        </a>
+        <a href="{% url 'core:adjustment_create' pk=fy.pk %}" class="btn btn-outline-primary btn-sm">
+            <i class="bi bi-journal-plus"></i> Add Adjustment
+        </a>
+        {% endif %}
+        {% if unmapped_count > 0 %}
+        <a href="{% url 'core:map_client_accounts' pk=fy.pk %}" class="btn btn-warning btn-sm">
+            <i class="bi bi-exclamation-triangle"></i> Map {{ unmapped_count }} Accounts
+        </a>
+        {% endif %}
+        <a href="{% url 'core:financial_statements_view' pk=fy.pk %}" class="btn btn-outline-dark btn-sm">
+            <i class="bi bi-file-earmark-text"></i> Preview Statements
+        </a>
+        <a href="{% url 'core:generate_document' pk=fy.pk %}" class="btn btn-dark btn-sm">
+            <i class="bi bi-file-earmark-word"></i> Generate Document
+        </a>
+    </div>
+</div>
+
+<!-- Status Change & Roll Forward -->
+<div class="row g-3 mb-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-body py-2">
+                <form method="post" action="{% url 'core:financial_year_status' pk=fy.pk %}" class="d-flex align-items-center gap-2">
+                    {% csrf_token %}
+                    <label class="form-label mb-0 text-nowrap"><strong>Change Status:</strong></label>
+                    <select name="status" class="form-select form-select-sm" style="max-width: 200px;">
+                        <option value="draft" {% if fy.status == 'draft' %}selected{% endif %}>Draft</option>
+                        <option value="in_review" {% if fy.status == 'in_review' %}selected{% endif %}>In Review</option>
+                        <option value="reviewed" {% if fy.status == 'reviewed' %}selected{% endif %}>Reviewed</option>
+                        <option value="finalised" {% if fy.status == 'finalised' %}selected{% endif %}>Finalised</option>
+                    </select>
+                    <button type="submit" class="btn btn-sm btn-primary">Update</button>
+                </form>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-body py-2 d-flex align-items-center justify-content-between">
+                <span><strong>Roll Forward:</strong> Create next financial year from closing balances</span>
+                <a href="{% url 'core:roll_forward' pk=fy.pk %}" class="btn btn-sm btn-outline-primary">
+                    <i class="bi bi-arrow-right-circle"></i> Roll Forward
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Tabs -->
+<ul class="nav nav-tabs" id="workspaceTabs" role="tablist">
+    <li class="nav-item">
+        <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-tb" type="button">
+            <i class="bi bi-table"></i> Trial Balance ({{ tb_lines.count }})
+        </button>
+    </li>
+    <li class="nav-item">
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-adj" type="button">
+            <i class="bi bi-journal-text"></i> Adjustments ({{ adjustments.count }})
+        </button>
+    </li>
+    <li class="nav-item">
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-docs" type="button">
+            <i class="bi bi-file-earmark"></i> Documents ({{ documents.count }})
+        </button>
+    </li>
+</ul>
+
+<div class="tab-content border border-top-0 rounded-bottom bg-white">
+    <!-- Trial Balance Tab -->
+    <div class="tab-pane fade show active p-3" id="tab-tb">
+        {% if tb_lines %}
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <small class="text-muted">
+                Total Debits: <strong>${{ total_debit|floatformat:2 }}</strong> &middot;
+                Total Credits: <strong>${{ total_credit|floatformat:2 }}</strong>
+                {% if total_debit == total_credit %}
+                <span class="text-success"><i class="bi bi-check-circle"></i> Balanced</span>
+                {% else %}
+                <span class="text-danger"><i class="bi bi-x-circle"></i> Out of balance</span>
+                {% endif %}
+            </small>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Code</th>
+                        <th>Account Name</th>
+                        <th class="text-end">Opening</th>
+                        <th class="text-end">Debit</th>
+                        <th class="text-end">Credit</th>
+                        <th class="text-end">Closing</th>
+                        <th>Mapped To</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for line in tb_lines %}
+                    <tr class="{% if not line.mapped_line_item %}table-warning{% endif %}{% if line.is_adjustment %} fst-italic{% endif %}">
+                        <td><code>{{ line.account_code }}</code></td>
+                        <td>{{ line.account_name }}{% if line.is_adjustment %} <span class="badge bg-info text-dark">Adj</span>{% endif %}</td>
+                        <td class="text-end">{{ line.opening_balance|floatformat:2 }}</td>
+                        <td class="text-end">{{ line.debit|floatformat:2 }}</td>
+                        <td class="text-end">{{ line.credit|floatformat:2 }}</td>
+                        <td class="text-end fw-semibold">{{ line.closing_balance|floatformat:2 }}</td>
+                        <td>
+                            {% if line.mapped_line_item %}
+                            <small class="text-success">{{ line.mapped_line_item.line_item_label }}</small>
+                            {% else %}
+                            <small class="text-danger">Unmapped</small>
+                            {% endif %}
+                        </td>
+                        <td></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-upload" style="font-size: 3rem;"></i>
+            <p class="mt-2">No trial balance data yet. Import an Excel file to get started.</p>
+            {% if not fy.is_locked and user.can_edit %}
+            <a href="{% url 'core:trial_balance_import' pk=fy.pk %}" class="btn btn-primary">
+                <i class="bi bi-upload"></i> Import Trial Balance
+            </a>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Adjustments Tab -->
+    <div class="tab-pane fade p-3" id="tab-adj">
+        {% for adj in adjustments %}
+        <div class="card mb-2">
+            <div class="card-body py-2">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <strong>{{ adj.journal_date|date:"d M Y" }}</strong> &mdash; {{ adj.description }}
+                    </div>
+                    <small class="text-muted">by {{ adj.created_by.get_full_name|default:"System" }} on {{ adj.created_at|date:"d/m/Y H:i" }}</small>
+                </div>
+                <table class="table table-sm mt-2 mb-0" style="max-width: 500px;">
+                    <thead><tr><th>Account</th><th class="text-end">Debit</th><th class="text-end">Credit</th></tr></thead>
+                    <tbody>
+                        {% for line in adj.lines.all %}
+                        <tr>
+                            <td><code>{{ line.account_code }}</code> {{ line.account_name }}</td>
+                            <td class="text-end">{{ line.debit|floatformat:2 }}</td>
+                            <td class="text-end">{{ line.credit|floatformat:2 }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% empty %}
+        <div class="text-center py-4 text-muted">
+            <p>No adjustments yet.</p>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Documents Tab -->
+    <div class="tab-pane fade p-3" id="tab-docs">
+        {% for doc in documents %}
+        <div class="d-flex justify-content-between align-items-center border-bottom py-2">
+            <div>
+                <i class="bi bi-file-earmark-word text-primary"></i>
+                {{ doc.file_format|upper }} &mdash; Generated {{ doc.generated_at|date:"d M Y H:i" }}
+                by {{ doc.generated_by.get_full_name|default:"System" }}
+            </div>
+            <a href="{{ doc.file.url }}" class="btn btn-sm btn-outline-primary" download>
+                <i class="bi bi-download"></i> Download
+            </a>
+        </div>
+        {% empty %}
+        <div class="text-center py-4 text-muted">
+            <p>No documents generated yet.</p>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

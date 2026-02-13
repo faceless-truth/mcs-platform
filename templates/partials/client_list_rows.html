@@ -1,0 +1,19 @@
+{% for client in clients %}
+<tr>
+    <td>
+        <a href="{% url 'core:client_detail' pk=client.pk %}" class="text-decoration-none fw-semibold">
+            {{ client.name }}
+        </a>
+    </td>
+    <td><span class="badge bg-secondary">{{ client.num_entities }}</span></td>
+    <td>{{ client.assigned_accountant.get_full_name|default:"Unassigned" }}</td>
+    <td>{{ client.latest_status }}</td>
+    <td>
+        <a href="{% url 'core:client_detail' pk=client.pk %}" class="btn btn-sm btn-outline-primary">
+            <i class="bi bi-eye"></i>
+        </a>
+    </td>
+</tr>
+{% empty %}
+<tr><td colspan="5" class="text-center text-muted py-3">No clients found.</td></tr>
+{% endfor %}

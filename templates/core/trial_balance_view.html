@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Trial Balance - {{ fy.year_label }} - MCS Financials{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy.entity.entity_name }} - {{ fy.year_label }}</a></li>
+        <li class="breadcrumb-item active">Trial Balance</li>
+    </ol>
+</nav>
+
+<h5>Trial Balance &mdash; {{ fy.entity.entity_name }} &mdash; {{ fy.year_label }}</h5>
+
+<div class="table-responsive">
+    <table class="table table-sm table-striped">
+        <thead class="table-dark">
+            <tr>
+                <th>Code</th>
+                <th>Account Name</th>
+                <th class="text-end">Opening</th>
+                <th class="text-end">Debit</th>
+                <th class="text-end">Credit</th>
+                <th class="text-end">Closing</th>
+                <th>Mapped To</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for line in tb_lines %}
+            <tr class="{% if not line.mapped_line_item %}table-warning{% endif %}">
+                <td><code>{{ line.account_code }}</code></td>
+                <td>{{ line.account_name }}{% if line.is_adjustment %} <span class="badge bg-info text-dark">Adj</span>{% endif %}</td>
+                <td class="text-end">{{ line.opening_balance|floatformat:2 }}</td>
+                <td class="text-end">{{ line.debit|floatformat:2 }}</td>
+                <td class="text-end">{{ line.credit|floatformat:2 }}</td>
+                <td class="text-end fw-bold">{{ line.closing_balance|floatformat:2 }}</td>
+                <td>
+                    {% if line.mapped_line_item %}
+                    <small>{{ line.mapped_line_item.line_item_label }}</small>
+                    {% else %}
+                    <small class="text-danger">Unmapped</small>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-primary">
+    <i class="bi bi-arrow-left"></i> Back to Workspace
+</a>
+{% endblock %}

@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Standard Account Mappings - MCS Financials{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 class="mb-0"><i class="bi bi-diagram-3"></i> Standard Account Mappings</h4>
+    {% if user.is_admin %}
+    <a href="{% url 'core:account_mapping_create' %}" class="btn btn-primary">
+        <i class="bi bi-plus-lg"></i> Add Mapping
+    </a>
+    {% endif %}
+</div>
+
+<div class="card">
+    <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Code</th>
+                    <th>Line Item</th>
+                    <th>Statement</th>
+                    <th>Section</th>
+                    <th>Order</th>
+                    <th>Entities</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for m in mappings %}
+                <tr>
+                    <td><code>{{ m.standard_code }}</code></td>
+                    <td>{{ m.line_item_label }}</td>
+                    <td><span class="badge bg-secondary">{{ m.get_financial_statement_display }}</span></td>
+                    <td>{{ m.statement_section }}</td>
+                    <td>{{ m.display_order }}</td>
+                    <td>
+                        {% for e in m.applicable_entities %}
+                        <span class="badge bg-light text-dark">{{ e }}</span>
+                        {% endfor %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="6" class="text-center text-muted py-3">No standard mappings defined yet.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

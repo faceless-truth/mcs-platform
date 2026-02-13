@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Financial Statements - {{ fy.year_label }} - MCS Financials{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy.entity.entity_name }} - {{ fy.year_label }}</a></li>
+        <li class="breadcrumb-item active">Financial Statements Preview</li>
+    </ol>
+</nav>
+
+<div class="text-center mb-4">
+    <h4>{{ entity.entity_name }}</h4>
+    <p class="text-muted">
+        {% if entity.abn %}ABN: {{ entity.abn }} &middot; {% endif %}
+        Financial Year Ended {{ fy.end_date|date:"d F Y" }}
+    </p>
+</div>
+
+<!-- Income Statement -->
+<div class="card mb-4">
+    <div class="card-header bg-dark text-white">
+        <h6 class="mb-0">Income Statement</h6>
+    </div>
+    <div class="card-body p-0">
+        <table class="table table-sm mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th></th>
+                    <th class="text-end" style="width: 150px;">{{ fy.year_label }}</th>
+                    {% if fy.prior_year %}
+                    <th class="text-end" style="width: 150px;">{{ fy.prior_year.year_label }}</th>
+                    {% endif %}
+                </tr>
+            </thead>
+            <tbody>
+                {% regroup income_statement by section as sections %}
+                {% for section in sections %}
+                <tr class="table-light">
+                    <td colspan="{% if fy.prior_year %}3{% else %}2{% endif %}" class="fw-bold">{{ section.grouper }}</td>
+                </tr>
+                {% for item in section.list %}
+                <tr>
+                    <td class="ps-4">{{ item.label }}</td>
+                    <td class="text-end">{{ item.current|floatformat:2 }}</td>
+                    {% if fy.prior_year %}
+                    <td class="text-end text-muted">{{ item.prior|floatformat:2 }}</td>
+                    {% endif %}
+                </tr>
+                {% endfor %}
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Balance Sheet -->
+<div class="card mb-4">
+    <div class="card-header bg-dark text-white">
+        <h6 class="mb-0">Balance Sheet</h6>
+    </div>
+    <div class="card-body p-0">
+        <table class="table table-sm mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th></th>
+                    <th class="text-end" style="width: 150px;">{{ fy.year_label }}</th>
+                    {% if fy.prior_year %}
+                    <th class="text-end" style="width: 150px;">{{ fy.prior_year.year_label }}</th>
+                    {% endif %}
+                </tr>
+            </thead>
+            <tbody>
+                {% regroup balance_sheet by section as sections %}
+                {% for section in sections %}
+                <tr class="table-light">
+                    <td colspan="{% if fy.prior_year %}3{% else %}2{% endif %}" class="fw-bold">{{ section.grouper }}</td>
+                </tr>
+                {% for item in section.list %}
+                <tr>
+                    <td class="ps-4">{{ item.label }}</td>
+                    <td class="text-end">{{ item.current|floatformat:2 }}</td>
+                    {% if fy.prior_year %}
+                    <td class="text-end text-muted">{{ item.prior|floatformat:2 }}</td>
+                    {% endif %}
+                </tr>
+                {% endfor %}
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="text-center">
+    <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-primary">
+        <i class="bi bi-arrow-left"></i> Back to Workspace
+    </a>
+    <a href="{% url 'core:generate_document' pk=fy.pk %}" class="btn btn-dark">
+        <i class="bi bi-file-earmark-word"></i> Generate Document
+    </a>
+</div>
+{% endblock %}
