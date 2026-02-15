@@ -138,6 +138,72 @@ class Entity(models.Model):
 
 
 # ---------------------------------------------------------------------------
+# Entity Officer / Signatory
+# ---------------------------------------------------------------------------
+class EntityOfficer(models.Model):
+    """
+    Directors, partners, trustees, or beneficiaries of an entity.
+    These are used on declaration pages and signature blocks of financial statements.
+    Officers are set once per entity and rolled forward each year.
+    """
+
+    class OfficerRole(models.TextChoices):
+        DIRECTOR = "director", "Director"
+        PARTNER = "partner", "Partner"
+        TRUSTEE = "trustee", "Trustee"
+        BENEFICIARY = "beneficiary", "Beneficiary"
+        SECRETARY = "secretary", "Secretary"
+        PUBLIC_OFFICER = "public_officer", "Public Officer"
+        SOLE_TRADER = "sole_trader", "Sole Trader / Proprietor"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entity = models.ForeignKey(
+        Entity, on_delete=models.CASCADE, related_name="officers"
+    )
+    full_name = models.CharField(max_length=255)
+    role = models.CharField(max_length=20, choices=OfficerRole.choices)
+    title = models.CharField(
+        max_length=50, blank=True,
+        help_text='Optional title, e.g. "Managing Director", "Senior Partner"',
+    )
+    date_appointed = models.DateField(null=True, blank=True)
+    date_ceased = models.DateField(null=True, blank=True)
+    is_signatory = models.BooleanField(
+        default=True,
+        help_text="Whether this person signs the financial statements",
+    )
+    display_order = models.IntegerField(
+        default=0,
+        help_text="Order in which signatories appear on declaration page",
+    )
+    # For partnerships: profit share percentage
+    profit_share_percentage = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True,
+        help_text="Partnership profit share % (partnerships only)",
+    )
+    # For trusts: beneficiary distribution percentage
+    distribution_percentage = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True,
+        help_text="Distribution % (trust beneficiaries only)",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["entity", "display_order", "full_name"]
+        verbose_name = "Entity Officer / Signatory"
+        verbose_name_plural = "Entity Officers / Signatories"
+
+    def __str__(self):
+        return f"{self.full_name} ({self.get_role_display()}) - {self.entity.entity_name}"
+
+    @property
+    def is_active(self):
+        """Officer is active if they have not ceased."""
+        return self.date_ceased is None
+
+
+# ---------------------------------------------------------------------------
 # Financial Year
 # ---------------------------------------------------------------------------
 class FinancialYear(models.Model):

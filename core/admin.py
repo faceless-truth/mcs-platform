@@ -3,7 +3,7 @@ from .models import (
     Client, Entity, FinancialYear, TrialBalanceLine,
     AccountMapping, ClientAccountMapping, NoteTemplate,
     AdjustingJournal, JournalLine, FinancialStatementTemplate,
-    GeneratedDocument, AuditLog,
+    GeneratedDocument, AuditLog, EntityOfficer,
 )
 
 
@@ -74,6 +74,13 @@ class FinancialStatementTemplateAdmin(admin.ModelAdmin):
 @admin.register(GeneratedDocument)
 class GeneratedDocumentAdmin(admin.ModelAdmin):
     list_display = ("financial_year", "file_format", "generated_by", "generated_at")
+
+
+@admin.register(EntityOfficer)
+class EntityOfficerAdmin(admin.ModelAdmin):
+    list_display = ("full_name", "role", "entity", "title", "is_signatory", "date_appointed", "date_ceased")
+    list_filter = ("role", "is_signatory")
+    search_fields = ("full_name", "entity__entity_name")
 
 
 @admin.register(AuditLog)

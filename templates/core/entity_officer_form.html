@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+
+{% block title %}{% if form.instance.pk %}Edit{% else %}Add{% endif %} Officer - {{ entity.entity_name }} | StatementHub{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+    <h2>{% if form.instance.pk %}Edit{% else %}Add{% endif %} Officer / Signatory</h2>
+    <p class="text-muted">
+        <a href="{% url 'core:client_detail' entity.client.pk %}">{{ entity.client.name }}</a>
+        &raquo;
+        <a href="{% url 'core:entity_detail' entity.pk %}">{{ entity.entity_name }}</a>
+        &raquo;
+        <a href="{% url 'core:entity_officers' entity.pk %}">Officers</a>
+        &raquo; {% if form.instance.pk %}Edit{% else %}Add{% endif %}
+    </p>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        <form method="post">
+            {% csrf_token %}
+
+            {% if form.errors %}
+            <div class="alert alert-danger">
+                <strong>Please correct the errors below:</strong>
+                {{ form.errors }}
+            </div>
+            {% endif %}
+
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label for="{{ form.full_name.id_for_label }}" class="form-label">Full Name *</label>
+                    {{ form.full_name }}
+                    <small class="text-muted">As it should appear on the financial statements</small>
+                </div>
+                <div class="col-md-3 mb-3">
+                    <label for="{{ form.role.id_for_label }}" class="form-label">Role *</label>
+                    {{ form.role }}
+                </div>
+                <div class="col-md-3 mb-3">
+                    <label for="{{ form.title.id_for_label }}" class="form-label">Title</label>
+                    {{ form.title }}
+                    <small class="text-muted">e.g. "Managing Director"</small>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-md-3 mb-3">
+                    <label for="{{ form.date_appointed.id_for_label }}" class="form-label">Date Appointed</label>
+                    {{ form.date_appointed }}
+                </div>
+                <div class="col-md-3 mb-3">
+                    <label for="{{ form.date_ceased.id_for_label }}" class="form-label">Date Ceased</label>
+                    {{ form.date_ceased }}
+                    <small class="text-muted">Leave blank if still active</small>
+                </div>
+                <div class="col-md-3 mb-3">
+                    <label for="{{ form.display_order.id_for_label }}" class="form-label">Display Order</label>
+                    {{ form.display_order }}
+                    <small class="text-muted">Order on declaration page</small>
+                </div>
+                <div class="col-md-3 mb-3 d-flex align-items-center pt-4">
+                    <div class="form-check">
+                        {{ form.is_signatory }}
+                        <label class="form-check-label" for="{{ form.is_signatory.id_for_label }}">
+                            Signs financial statements
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            {% if entity.entity_type == 'partnership' %}
+            <div class="row">
+                <div class="col-md-4 mb-3">
+                    <label for="{{ form.profit_share_percentage.id_for_label }}" class="form-label">Profit Share %</label>
+                    {{ form.profit_share_percentage }}
+                    <small class="text-muted">Percentage of partnership profit allocated to this partner</small>
+                </div>
+            </div>
+            {% endif %}
+
+            {% if entity.entity_type == 'trust' %}
+            <div class="row">
+                <div class="col-md-4 mb-3">
+                    <label for="{{ form.distribution_percentage.id_for_label }}" class="form-label">Distribution %</label>
+                    {{ form.distribution_percentage }}
+                    <small class="text-muted">Percentage of trust distribution allocated to this beneficiary</small>
+                </div>
+            </div>
+            {% endif %}
+
+            {{ form.profit_share_percentage.as_hidden }}
+            {{ form.distribution_percentage.as_hidden }}
+
+            <div class="d-flex gap-2">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-check-lg"></i> {% if form.instance.pk %}Update{% else %}Add{% endif %} Officer
+                </button>
+                <a href="{% url 'core:entity_officers' entity.pk %}" class="btn btn-outline-secondary">Cancel</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

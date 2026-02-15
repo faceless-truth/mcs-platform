@@ -44,6 +44,12 @@ urlpatterns = [
     # Document Generation
     path("years/<uuid:pk>/generate/", views.generate_document, name="generate_document"),
 
+    # Entity Officers / Signatories
+    path("entities/<uuid:pk>/officers/", views.entity_officers, name="entity_officers"),
+    path("entities/<uuid:entity_pk>/officers/create/", views.entity_officer_create, name="entity_officer_create"),
+    path("officers/<uuid:pk>/edit/", views.entity_officer_edit, name="entity_officer_edit"),
+    path("officers/<uuid:pk>/delete/", views.entity_officer_delete, name="entity_officer_delete"),
+
     # HTMX partials
     path("htmx/client-search/", views.htmx_client_search, name="htmx_client_search"),
     path("htmx/tb-line/<uuid:pk>/map/", views.htmx_map_tb_line, name="htmx_map_tb_line"),

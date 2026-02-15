@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% load mcs_filters %}
+
+{% block title %}Officers & Signatories - {{ entity.entity_name }} | StatementHub{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h2>Officers & Signatories</h2>
+        <p class="text-muted mb-0">
+            <a href="{% url 'core:client_detail' entity.client.pk %}">{{ entity.client.name }}</a>
+            &raquo;
+            <a href="{% url 'core:entity_detail' entity.pk %}">{{ entity.entity_name }}</a>
+            &raquo; Officers
+        </p>
+    </div>
+    <a href="{% url 'core:entity_officer_create' entity.pk %}" class="btn btn-primary">
+        <i class="bi bi-plus-lg"></i> Add {{ officer_label }}
+    </a>
+</div>
+
+{% if officers %}
+<div class="card">
+    <div class="card-header">
+        <h5 class="mb-0">
+            {% if entity.entity_type == 'company' %}Directors & Officers
+            {% elif entity.entity_type == 'trust' %}Trustees & Beneficiaries
+            {% elif entity.entity_type == 'partnership' %}Partners
+            {% elif entity.entity_type == 'sole_trader' %}Proprietor
+            {% else %}Officers{% endif %}
+        </h5>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>Order</th>
+                    <th>Name</th>
+                    <th>Role</th>
+                    <th>Title</th>
+                    <th>Appointed</th>
+                    <th>Ceased</th>
+                    <th>Signatory</th>
+                    {% if entity.entity_type == 'partnership' %}
+                    <th>Profit Share %</th>
+                    {% endif %}
+                    {% if entity.entity_type == 'trust' %}
+                    <th>Distribution %</th>
+                    {% endif %}
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for officer in officers %}
+                <tr {% if officer.date_ceased %}class="text-muted"{% endif %}>
+                    <td>{{ officer.display_order }}</td>
+                    <td><strong>{{ officer.full_name }}</strong></td>
+                    <td>{{ officer.get_role_display }}</td>
+                    <td>{{ officer.title|default:"-" }}</td>
+                    <td>{{ officer.date_appointed|date:"d/m/Y"|default:"-" }}</td>
+                    <td>{{ officer.date_ceased|date:"d/m/Y"|default:"-" }}</td>
+                    <td>
+                        {% if officer.is_signatory %}
+                            <span class="badge bg-success">Yes</span>
+                        {% else %}
+                            <span class="badge bg-secondary">No</span>
+                        {% endif %}
+                    </td>
+                    {% if entity.entity_type == 'partnership' %}
+                    <td>{{ officer.profit_share_percentage|default:"-" }}{% if officer.profit_share_percentage %}%{% endif %}</td>
+                    {% endif %}
+                    {% if entity.entity_type == 'trust' %}
+                    <td>{{ officer.distribution_percentage|default:"-" }}{% if officer.distribution_percentage %}%{% endif %}</td>
+                    {% endif %}
+                    <td>
+                        {% if officer.date_ceased %}
+                            <span class="badge bg-danger">Ceased</span>
+                        {% else %}
+                            <span class="badge bg-success">Active</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <a href="{% url 'core:entity_officer_edit' officer.pk %}" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-pencil"></i>
+                        </a>
+                        <a href="{% url 'core:entity_officer_delete' officer.pk %}" class="btn btn-sm btn-outline-danger"
+                           onclick="return confirm('Are you sure you want to remove this officer?');">
+                            <i class="bi bi-trash"></i>
+                        </a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% else %}
+<div class="alert alert-info">
+    <i class="bi bi-info-circle"></i>
+    No officers or signatories have been added yet. Click <strong>Add {{ officer_label }}</strong> to add the first one.
+    <br><br>
+    <small class="text-muted">
+        {% if entity.entity_type == 'company' %}
+            Add the directors who will sign the Director's Declaration on the financial statements.
+        {% elif entity.entity_type == 'trust' %}
+            Add the trustees (or directors of the corporate trustee) who will sign the Trustee's Declaration,
+            and the beneficiaries for the distribution statement.
+        {% elif entity.entity_type == 'partnership' %}
+            Add all partners with their profit share percentages. Partners will appear on the Partner's Declaration
+            and the Partners' Distribution Statement.
+        {% elif entity.entity_type == 'sole_trader' %}
+            Add the sole trader / proprietor who will sign the financial statements.
+        {% endif %}
+    </small>
+</div>
+{% endif %}
+
+<div class="mt-3">
+    <a href="{% url 'core:entity_detail' entity.pk %}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> Back to Entity
+    </a>
+</div>
+{% endblock %}

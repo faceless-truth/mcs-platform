@@ -22,6 +22,9 @@
     </div>
     <div class="d-flex gap-2">
         {% if user.can_edit %}
+        <a href="{% url 'core:entity_officers' pk=entity.pk %}" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-people"></i> Officers & Signatories
+        </a>
         <a href="{% url 'core:entity_edit' pk=entity.pk %}" class="btn btn-outline-primary btn-sm">
             <i class="bi bi-pencil"></i> Edit
         </a>
@@ -31,6 +34,33 @@
         {% endif %}
     </div>
 </div>
+
+<!-- Officers Summary -->
+{% if officers %}
+<div class="card mb-3">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h6 class="mb-0"><i class="bi bi-people"></i> Officers & Signatories</h6>
+        <a href="{% url 'core:entity_officers' pk=entity.pk %}" class="btn btn-sm btn-outline-primary">Manage</a>
+    </div>
+    <div class="card-body">
+        <div class="d-flex flex-wrap gap-2">
+            {% for officer in officers %}
+            <span class="badge {% if officer.date_ceased %}bg-secondary{% else %}bg-primary{% endif %} fs-6 fw-normal py-2 px-3">
+                {{ officer.full_name }}
+                <small>({{ officer.get_role_display }})</small>
+                {% if officer.is_signatory %}<i class="bi bi-pen ms-1" title="Signatory"></i>{% endif %}
+            </span>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% else %}
+<div class="alert alert-warning mb-3">
+    <i class="bi bi-exclamation-triangle"></i>
+    <strong>No officers or signatories set up.</strong>
+    <a href="{% url 'core:entity_officers' pk=entity.pk %}">Add officers</a> so they appear on the financial statement declarations.
+</div>
+{% endif %}
 
 <!-- Financial Years -->
 <div class="card">

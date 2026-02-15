@@ -3,6 +3,7 @@ from django import forms
 from .models import (
     Client, Entity, FinancialYear, AccountMapping,
     AdjustingJournal, JournalLine, ClientAccountMapping,
+    EntityOfficer,
 )
 
 
@@ -116,3 +117,63 @@ JournalLineFormSet = forms.inlineformset_factory(
     extra=4,
     can_delete=True,
 )
+
+
+# ---------------------------------------------------------------------------
+# Entity Officer Forms
+# ---------------------------------------------------------------------------
+class EntityOfficerForm(forms.ModelForm):
+    class Meta:
+        model = EntityOfficer
+        fields = (
+            "full_name", "role", "title", "date_appointed", "date_ceased",
+            "is_signatory", "display_order", "profit_share_percentage",
+            "distribution_percentage",
+        )
+        widgets = {
+            "date_appointed": forms.DateInput(attrs={"type": "date"}),
+            "date_ceased": forms.DateInput(attrs={"type": "date"}),
+        }
+
+    def __init__(self, *args, entity_type=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        for name, field in self.fields.items():
+            if isinstance(field.widget, forms.CheckboxInput):
+                field.widget.attrs["class"] = "form-check-input"
+            else:
+                field.widget.attrs["class"] = "form-control"
+
+        # Filter role choices based on entity type
+        if entity_type:
+            role_map = {
+                "company": [
+                    EntityOfficer.OfficerRole.DIRECTOR,
+                    EntityOfficer.OfficerRole.SECRETARY,
+                    EntityOfficer.OfficerRole.PUBLIC_OFFICER,
+                ],
+                "trust": [
+                    EntityOfficer.OfficerRole.TRUSTEE,
+                    EntityOfficer.OfficerRole.BENEFICIARY,
+                    EntityOfficer.OfficerRole.DIRECTOR,  # directors of trustee company
+                ],
+                "partnership": [
+                    EntityOfficer.OfficerRole.PARTNER,
+                ],
+                "sole_trader": [
+                    EntityOfficer.OfficerRole.SOLE_TRADER,
+                ],
+                "smsf": [
+                    EntityOfficer.OfficerRole.TRUSTEE,
+                    EntityOfficer.OfficerRole.DIRECTOR,  # corporate trustee directors
+                ],
+            }
+            allowed_roles = role_map.get(entity_type, EntityOfficer.OfficerRole.choices)
+            self.fields["role"].choices = [
+                (r.value, r.label) for r in allowed_roles
+            ]
+
+        # Show/hide partnership and trust specific fields
+        if entity_type != "partnership":
+            self.fields["profit_share_percentage"].widget = forms.HiddenInput()
+        if entity_type != "trust":
+            self.fields["distribution_percentage"].widget = forms.HiddenInput()

@@ -11,12 +11,13 @@ from django.utils import timezone
 from .models import (
     Client, Entity, FinancialYear, TrialBalanceLine,
     AccountMapping, ClientAccountMapping, AdjustingJournal,
-    JournalLine, GeneratedDocument, AuditLog,
+    JournalLine, GeneratedDocument, AuditLog, EntityOfficer,
 )
 from .forms import (
     ClientForm, EntityForm, FinancialYearForm,
     TrialBalanceUploadForm, AccountMappingForm,
     AdjustingJournalForm, JournalLineFormSet,
+    EntityOfficerForm,
 )
 
 
@@ -187,7 +188,8 @@ def entity_create(request, client_pk):
 def entity_detail(request, pk):
     entity = get_object_or_404(Entity, pk=pk)
     financial_years = entity.financial_years.all()
-    context = {"entity": entity, "financial_years": financial_years}
+    officers = entity.officers.filter(date_ceased__isnull=True)
+    context = {"entity": entity, "financial_years": financial_years, "officers": officers}
     return render(request, "core/entity_detail.html", context)
 
 
@@ -680,8 +682,42 @@ def financial_statements_view(request, pk):
 @login_required
 def generate_document(request, pk):
     fy = get_object_or_404(FinancialYear, pk=pk)
-    messages.info(request, "Document generation will be available in Phase 2.")
-    return redirect("core:financial_year_detail", pk=pk)
+
+    # Check that there are trial balance lines
+    if not fy.trial_balance_lines.exists():
+        messages.error(request, "Cannot generate statements: no trial balance data loaded.")
+        return redirect("core:financial_year_detail", pk=pk)
+
+    from .docgen import generate_financial_statements
+
+    try:
+        buffer = generate_financial_statements(fy.pk)
+    except Exception as e:
+        messages.error(request, f"Document generation failed: {e}")
+        return redirect("core:financial_year_detail", pk=pk)
+
+    # Build filename
+    entity_name = fy.entity.entity_name.replace(" ", "_")
+    filename = f"{entity_name}_Financial_Statements_{fy.year_label}.docx"
+
+    response = HttpResponse(
+        buffer.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+
+    # Log the generation
+    _log_action(request, "generate", f"Generated financial statements for {fy}", fy)
+
+    # Save record
+    GeneratedDocument.objects.create(
+        financial_year=fy,
+        file_format="docx",
+        generated_by=request.user,
+        file_path=filename,
+    )
+
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -737,3 +773,91 @@ def htmx_map_tb_line(request, pk):
     return render(request, "partials/tb_line_row.html", {
         "line": line, "mappings": mappings
     })
+
+
+# ---------------------------------------------------------------------------
+# Entity Officers / Signatories
+# ---------------------------------------------------------------------------
+@login_required
+def entity_officers(request, pk):
+    """List all officers/signatories for an entity."""
+    entity = get_object_or_404(Entity, pk=pk)
+    officers = entity.officers.all()
+
+    officer_label_map = {
+        "company": "Director / Officer",
+        "trust": "Trustee / Beneficiary",
+        "partnership": "Partner",
+        "sole_trader": "Proprietor",
+        "smsf": "Trustee / Director",
+    }
+    officer_label = officer_label_map.get(entity.entity_type, "Officer")
+
+    return render(request, "core/entity_officers.html", {
+        "entity": entity,
+        "officers": officers,
+        "officer_label": officer_label,
+    })
+
+
+@login_required
+def entity_officer_create(request, entity_pk):
+    """Add a new officer/signatory to an entity."""
+    entity = get_object_or_404(Entity, pk=entity_pk)
+
+    if request.method == "POST":
+        form = EntityOfficerForm(request.POST, entity_type=entity.entity_type)
+        if form.is_valid():
+            officer = form.save(commit=False)
+            officer.entity = entity
+            officer.save()
+            _log_action(request, "user_change",
+                        f"Added officer {officer.full_name} to {entity.entity_name}",
+                        officer)
+            messages.success(request, f"Added {officer.full_name} as {officer.get_role_display()}.")
+            return redirect("core:entity_officers", pk=entity.pk)
+    else:
+        form = EntityOfficerForm(entity_type=entity.entity_type)
+
+    return render(request, "core/entity_officer_form.html", {
+        "form": form,
+        "entity": entity,
+    })
+
+
+@login_required
+def entity_officer_edit(request, pk):
+    """Edit an existing officer/signatory."""
+    officer = get_object_or_404(EntityOfficer, pk=pk)
+    entity = officer.entity
+
+    if request.method == "POST":
+        form = EntityOfficerForm(request.POST, instance=officer, entity_type=entity.entity_type)
+        if form.is_valid():
+            form.save()
+            _log_action(request, "user_change",
+                        f"Updated officer {officer.full_name} for {entity.entity_name}",
+                        officer)
+            messages.success(request, f"Updated {officer.full_name}.")
+            return redirect("core:entity_officers", pk=entity.pk)
+    else:
+        form = EntityOfficerForm(instance=officer, entity_type=entity.entity_type)
+
+    return render(request, "core/entity_officer_form.html", {
+        "form": form,
+        "entity": entity,
+    })
+
+
+@login_required
+def entity_officer_delete(request, pk):
+    """Delete an officer/signatory."""
+    officer = get_object_or_404(EntityOfficer, pk=pk)
+    entity = officer.entity
+    name = officer.full_name
+    _log_action(request, "user_change",
+                f"Removed officer {name} from {entity.entity_name}",
+                officer)
+    officer.delete()
+    messages.success(request, f"Removed {name}.")
+    return redirect("core:entity_officers", pk=entity.pk)
