@@ -39,7 +39,6 @@ urlpatterns = [
     path("years/<uuid:pk>/adjustments/create/", views.adjustment_create, name="adjustment_create"),
     path("journals/<uuid:pk>/", views.journal_detail, name="journal_detail"),
     path("journals/<uuid:pk>/post/", views.journal_post, name="journal_post"),
-    path("journals/<uuid:pk>/reverse/", views.journal_reverse, name="journal_reverse"),
     path("journals/<uuid:pk>/delete/", views.journal_delete, name="journal_delete"),
     path("years/<uuid:pk>/accounts-api/", views.account_list_api, name="account_list_api"),
 

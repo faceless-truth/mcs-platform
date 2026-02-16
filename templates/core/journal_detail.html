@@ -34,19 +34,13 @@
                             <i class="bi bi-check-circle"></i> Post Journal
                         </button>
                     </form>
+                    {% endif %}
+                    {% if not fy.is_locked %}
                     <form method="post" action="{% url 'core:journal_delete' pk=journal.pk %}" class="d-inline"
-                          onsubmit="return confirm('Delete this draft journal? This cannot be undone.');">
+                          onsubmit="return confirm('Are you sure you want to delete journal {{ journal.reference_number }}? This action will be logged for audit purposes.');">
                         {% csrf_token %}
                         <button type="submit" class="btn btn-outline-danger btn-sm">
                             <i class="bi bi-trash"></i> Delete
-                        </button>
-                    </form>
-                    {% elif journal.status == 'posted' and not fy.is_locked %}
-                    <form method="post" action="{% url 'core:journal_reverse' pk=journal.pk %}" class="d-inline"
-                          onsubmit="return confirm('Reverse this journal? A new reversing entry will be created and posted.');">
-                        {% csrf_token %}
-                        <button type="submit" class="btn btn-outline-danger btn-sm">
-                            <i class="bi bi-arrow-counterclockwise"></i> Reverse Journal
                         </button>
                     </form>
                     {% endif %}
@@ -74,26 +68,6 @@
                 <div class="mb-3">
                     <label class="form-label text-muted small mb-0">Narration / Notes</label>
                     <div class="bg-light p-2 rounded small">{{ journal.narration }}</div>
-                </div>
-                {% endif %}
-
-                {% if journal.reversal_of_journal %}
-                <div class="alert alert-info py-2 mb-3">
-                    <i class="bi bi-arrow-return-left"></i>
-                    This is a reversal of
-                    <a href="{% url 'core:journal_detail' pk=journal.reversal_of_journal.pk %}">
-                        {{ journal.reversal_of_journal.reference_number }}
-                    </a>
-                </div>
-                {% endif %}
-
-                {% if journal.reversed_by %}
-                <div class="alert alert-warning py-2 mb-3">
-                    <i class="bi bi-exclamation-triangle"></i>
-                    This journal has been reversed by
-                    <a href="{% url 'core:journal_detail' pk=journal.reversed_by.pk %}">
-                        {{ journal.reversed_by.reference_number }}
-                    </a>
                 </div>
                 {% endif %}
 
@@ -164,17 +138,6 @@
                         <div class="text-muted">Posted</div>
                         <div>{{ journal.posted_by.get_full_name|default:"System" }}</div>
                         <div class="text-muted">{{ journal.posted_at|date:"d/m/Y H:i:s" }}</div>
-                    </li>
-                    {% endif %}
-                    {% if journal.reversed_by %}
-                    <li class="list-group-item">
-                        <div class="text-muted">Reversed</div>
-                        <div>
-                            <a href="{% url 'core:journal_detail' pk=journal.reversed_by.pk %}">
-                                {{ journal.reversed_by.reference_number }}
-                            </a>
-                        </div>
-                        <div class="text-muted">{{ journal.reversed_by.created_at|date:"d/m/Y H:i:s" }}</div>
                     </li>
                     {% endif %}
                     <li class="list-group-item">

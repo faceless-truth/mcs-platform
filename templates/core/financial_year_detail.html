@@ -175,7 +175,7 @@
         {% endif %}
 
         {% for adj in adjustments %}
-        <div class="card mb-2 {% if adj.status == 'reversed' %}border-secondary{% elif adj.status == 'posted' %}border-success{% else %}border-warning{% endif %}">
+        <div class="card mb-2 {% if adj.status == 'posted' %}border-success{% else %}border-warning{% endif %}">
             <div class="card-body py-2">
                 <div class="d-flex justify-content-between align-items-start">
                     <div>
@@ -199,24 +199,20 @@
                                 <i class="bi bi-check-circle"></i> Post
                             </button>
                         </form>
-                        {% elif adj.status == 'posted' and not fy.is_locked %}
-                        <form method="post" action="{% url 'core:journal_reverse' pk=adj.pk %}" class="d-inline"
-                              onsubmit="return confirm('Are you sure you want to reverse this journal? A reversing entry will be created.');">
+                        {% endif %}
+                        {% if not fy.is_locked %}
+                        <form method="post" action="{% url 'core:journal_delete' pk=adj.pk %}" class="d-inline"
+                              onsubmit="return confirm('Are you sure you want to delete journal {{ adj.reference_number }}? This action will be logged for audit purposes.');">
                             {% csrf_token %}
-                            <button type="submit" class="btn btn-sm btn-outline-danger" title="Reverse journal">
-                                <i class="bi bi-arrow-counterclockwise"></i> Reverse
+                            <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete journal">
+                                <i class="bi bi-trash"></i> Delete
                             </button>
                         </form>
                         {% endif %}
                     </div>
                 </div>
                 <p class="mb-1 mt-1">{{ adj.description }}</p>
-                {% if adj.reversal_of_journal %}
-                <small class="text-info"><i class="bi bi-arrow-return-left"></i> Reversal of {{ adj.reversal_of_journal.reference_number }}</small>
-                {% endif %}
-                {% if adj.reversed_by %}
-                <small class="text-secondary"><i class="bi bi-arrow-right"></i> Reversed by {{ adj.reversed_by.reference_number }}</small>
-                {% endif %}
+
                 <table class="table table-sm mt-2 mb-0">
                     <thead class="table-light">
                         <tr>

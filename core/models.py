@@ -550,7 +550,6 @@ class AdjustingJournal(models.Model):
     class JournalType(models.TextChoices):
         GENERAL = "general", "General Journal"
         ADJUSTING = "adjusting", "Adjusting Entry"
-        REVERSING = "reversing", "Reversing Entry"
         YEAR_END = "year_end", "Year-End Entry"
         DEPRECIATION = "depreciation", "Depreciation Entry"
         TAX = "tax", "Tax Adjustment"
@@ -558,7 +557,6 @@ class AdjustingJournal(models.Model):
     class JournalStatus(models.TextChoices):
         DRAFT = "draft", "Draft"
         POSTED = "posted", "Posted"
-        REVERSED = "reversed", "Reversed"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     financial_year = models.ForeignKey(
@@ -591,23 +589,6 @@ class AdjustingJournal(models.Model):
     total_credit = models.DecimalField(
         max_digits=15, decimal_places=2, default=0,
         help_text="Cached total credit for quick display",
-    )
-    # Reversal tracking
-    reversed_by = models.ForeignKey(
-        "self",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="reversal_of",
-        help_text="The reversing journal that reversed this entry",
-    )
-    reversal_of_journal = models.ForeignKey(
-        "self",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="reversed_journal",
-        help_text="The original journal this entry reverses",
     )
     # Audit fields
     created_by = models.ForeignKey(
@@ -663,8 +644,9 @@ class AdjustingJournal(models.Model):
         return self.status == self.JournalStatus.DRAFT and self.is_balanced
 
     @property
-    def can_reverse(self):
-        return self.status == self.JournalStatus.POSTED
+    def can_delete(self):
+        """Any journal can be deleted if the year is not locked."""
+        return not self.financial_year.is_locked
 
     def recalculate_totals(self):
         """Recalculate cached totals from lines."""

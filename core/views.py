@@ -612,7 +612,7 @@ def journal_detail(request, pk):
     journal = get_object_or_404(
         AdjustingJournal.objects.select_related(
             "financial_year", "financial_year__entity",
-            "created_by", "posted_by", "reversed_by", "reversal_of_journal"
+            "created_by", "posted_by"
         ).prefetch_related("lines"),
         pk=pk,
     )
@@ -673,98 +673,42 @@ def journal_post(request, pk):
 
 
 @login_required
-def journal_reverse(request, pk):
-    """Reverse a posted journal — creates a new reversing entry."""
-    original = get_object_or_404(AdjustingJournal, pk=pk)
-    fy = original.financial_year
-
-    if original.status != AdjustingJournal.JournalStatus.POSTED:
-        messages.error(request, "Only posted journals can be reversed.")
-        return redirect("core:journal_detail", pk=pk)
-
-    if fy.is_locked:
-        messages.error(request, "Cannot reverse in a finalised year.")
-        return redirect("core:journal_detail", pk=pk)
-
-    # Create reversing journal
-    reversing = AdjustingJournal(
-        financial_year=fy,
-        journal_type=AdjustingJournal.JournalType.REVERSING,
-        journal_date=timezone.now().date(),
-        description=f"Reversal of {original.reference_number}: {original.description}",
-        narration=f"Auto-generated reversal of journal {original.reference_number}",
-        reversal_of_journal=original,
-        created_by=request.user,
-    )
-    reversing.save()  # Auto-generates reference number
-
-    # Create reversed lines (swap debit/credit)
-    total_dr = Decimal("0")
-    total_cr = Decimal("0")
-    for line in original.lines.all():
-        JournalLine.objects.create(
-            journal=reversing,
-            line_number=line.line_number,
-            account_code=line.account_code,
-            account_name=line.account_name,
-            description=f"Reversal: {line.description}" if line.description else "Reversal",
-            debit=line.credit,   # Swap
-            credit=line.debit,   # Swap
-        )
-        total_dr += line.credit
-        total_cr += line.debit
-
-    # Update reversing journal totals and post it immediately
-    reversing.total_debit = total_dr
-    reversing.total_credit = total_cr
-    reversing.status = AdjustingJournal.JournalStatus.POSTED
-    reversing.posted_by = request.user
-    reversing.posted_at = timezone.now()
-    reversing.save()
-
-    # Create reversing TB lines
-    for line in reversing.lines.all():
-        mapping = ClientAccountMapping.objects.filter(
-            entity=fy.entity, client_account_code=line.account_code
-        ).first()
-        mapped_item = mapping.mapped_line_item if mapping else None
-
-        TrialBalanceLine.objects.create(
-            financial_year=fy,
-            account_code=line.account_code,
-            account_name=line.account_name,
-            opening_balance=Decimal("0"),
-            debit=line.debit,
-            credit=line.credit,
-            closing_balance=line.debit - line.credit,
-            mapped_line_item=mapped_item,
-            is_adjustment=True,
-        )
-
-    # Mark original as reversed
-    original.status = AdjustingJournal.JournalStatus.REVERSED
-    original.reversed_by = reversing
-    original.save(update_fields=["status", "reversed_by"])
-
-    _log_action(request, "adjustment", f"Reversed journal {original.reference_number} with {reversing.reference_number}", reversing)
-    messages.success(request, f"Journal {original.reference_number} reversed. Reversing entry {reversing.reference_number} posted.")
-    return redirect("core:financial_year_detail", pk=fy.pk)
-
-
-@login_required
 def journal_delete(request, pk):
-    """Delete a draft journal (only drafts can be deleted)."""
+    """Delete a journal entry. If posted, also removes its adjustment TB lines."""
     journal = get_object_or_404(AdjustingJournal, pk=pk)
     fy = journal.financial_year
 
-    if journal.status != AdjustingJournal.JournalStatus.DRAFT:
-        messages.error(request, "Only draft journals can be deleted. Posted journals must be reversed.")
+    if fy.is_locked:
+        messages.error(request, "Cannot delete journals in a finalised year.")
+        return redirect("core:journal_detail", pk=pk)
+
+    if not request.user.can_edit:
+        messages.error(request, "You do not have permission to delete journals.")
         return redirect("core:journal_detail", pk=pk)
 
     ref = journal.reference_number
+    status = journal.status
+
+    # If the journal was posted, remove its adjustment TB lines
+    if status == AdjustingJournal.JournalStatus.POSTED:
+        for line in journal.lines.all():
+            TrialBalanceLine.objects.filter(
+                financial_year=fy,
+                account_code=line.account_code,
+                debit=line.debit,
+                credit=line.credit,
+                is_adjustment=True,
+            ).first().delete() if TrialBalanceLine.objects.filter(
+                financial_year=fy,
+                account_code=line.account_code,
+                debit=line.debit,
+                credit=line.credit,
+                is_adjustment=True,
+            ).exists() else None
+
     journal.delete()
-    _log_action(request, "adjustment", f"Deleted draft journal {ref}")
-    messages.success(request, f"Draft journal {ref} deleted.")
+    _log_action(request, "adjustment", f"Deleted {status} journal {ref}")
+    messages.success(request, f"Journal {ref} has been deleted.")
     return redirect("core:financial_year_detail", pk=fy.pk)
 
 
