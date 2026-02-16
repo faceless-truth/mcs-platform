@@ -1055,8 +1055,9 @@ def trial_balance_pdf(request, pk):
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import mm
-    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    import os
 
     fy = get_object_or_404(FinancialYear, pk=pk)
     entity = fy.entity
@@ -1068,6 +1069,15 @@ def trial_balance_pdf(request, pk):
                             leftMargin=15*mm, rightMargin=15*mm)
     styles = getSampleStyleSheet()
     elements = []
+
+    # Logo
+    from django.conf import settings
+    logo_path = os.path.join(settings.BASE_DIR, 'static', 'img', 'mcs_logo.png')
+    if os.path.exists(logo_path):
+        logo = Image(logo_path, width=40*mm, height=40*mm)
+        logo.hAlign = 'LEFT'
+        elements.append(logo)
+        elements.append(Spacer(1, 3*mm))
 
     # Title
     title_style = ParagraphStyle('Title', parent=styles['Title'], fontSize=16, spaceAfter=4*mm)
@@ -1152,8 +1162,9 @@ def journals_pdf(request, pk):
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import mm
-    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, KeepTogether
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, KeepTogether, Image
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    import os
 
     fy = get_object_or_404(FinancialYear, pk=pk)
     entity = fy.entity
@@ -1164,6 +1175,15 @@ def journals_pdf(request, pk):
                             leftMargin=15*mm, rightMargin=15*mm)
     styles = getSampleStyleSheet()
     elements = []
+
+    # Logo
+    from django.conf import settings
+    logo_path = os.path.join(settings.BASE_DIR, 'static', 'img', 'mcs_logo.png')
+    if os.path.exists(logo_path):
+        logo = Image(logo_path, width=40*mm, height=40*mm)
+        logo.hAlign = 'LEFT'
+        elements.append(logo)
+        elements.append(Spacer(1, 3*mm))
 
     # Title
     title_style = ParagraphStyle('Title', parent=styles['Title'], fontSize=16, spaceAfter=4*mm)
