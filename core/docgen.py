@@ -31,6 +31,7 @@ from .models import (
     Entity, FinancialYear, TrialBalanceLine, AccountMapping,
     EntityOfficer, NoteTemplate, DepreciationAsset,
 )
+from .table_helpers import FinancialTable
 
 # =============================================================================
 # Constants
@@ -278,21 +279,21 @@ def _start_report_section(doc, entity, report_title, footer_type="statement",
             run = p2.add_run(f"\t$")
         _set_run_font(run, size=FONT_SIZE_BODY)
         
-        # Horizontal line in header
+        # Horizontal line in header (thin)
         pBdr = parse_xml(
-            f'<w:pBdr {nsdecls("w")}>'
-            f'  <w:bottom w:val="single" w:sz="12" w:space="1" w:color="000000"/>'
+            f'<w:pBdr {nsdecls("w")}>' 
+            f'  <w:bottom w:val="single" w:sz="4" w:space="1" w:color="000000"/>'
             f'</w:pBdr>'
         )
         p2._element.get_or_add_pPr().append(pBdr)
     else:
-        # Just add a horizontal line after the title
+        # Just add a horizontal line after the title (thin)
         p_line = header.add_paragraph()
         p_line.paragraph_format.space_before = Pt(2)
         p_line.paragraph_format.space_after = Pt(0)
         pBdr = parse_xml(
-            f'<w:pBdr {nsdecls("w")}>'
-            f'  <w:bottom w:val="single" w:sz="12" w:space="1" w:color="000000"/>'
+            f'<w:pBdr {nsdecls("w")}>' 
+            f'  <w:bottom w:val="single" w:sz="4" w:space="1" w:color="000000"/>'
             f'</w:pBdr>'
         )
         p_line._element.get_or_add_pPr().append(pBdr)
@@ -305,13 +306,13 @@ def _start_report_section(doc, entity, report_title, footer_type="statement",
     for p in footer.paragraphs:
         p.clear()
     
-    # Horizontal line
+    # Horizontal line (thin)
     p_line = footer.add_paragraph()
     p_line.paragraph_format.space_before = Pt(0)
     p_line.paragraph_format.space_after = Pt(2)
     pBdr = parse_xml(
-        f'<w:pBdr {nsdecls("w")}>'
-        f'  <w:top w:val="single" w:sz="12" w:space="1" w:color="000000"/>'
+        f'<w:pBdr {nsdecls("w")}>' 
+        f'  <w:top w:val="single" w:sz="4" w:space="1" w:color="000000"/>'
         f'</w:pBdr>'
     )
     p_line._element.get_or_add_pPr().append(pBdr)
@@ -785,34 +786,28 @@ def _add_trading_account(doc, entity, fy, sections, show_cents=False):
                           has_prior=has_prior, show_column_headers=True,
                           include_note=False, show_cents=show_cents)
 
+    ft = FinancialTable(doc, has_prior=has_prior, include_note=False, show_cents=show_cents)
+
     # Trading Income
     total_trading_income = Decimal("0")
     total_trading_income_prior = Decimal("0")
 
-    _add_amount_line(doc, "Trading Income", None, has_prior=has_prior,
-                     is_section_heading=True, heading_size=FONT_SIZE_SUBHEADING, bold=True,
-                     show_cents=show_cents)
+    ft.add_section_heading("Trading Income")
 
-    for i, (code, name, balance, prior) in enumerate(sections["trading_income"]):
+    for code, name, balance, prior in sections["trading_income"]:
         val = abs(balance)
         prior_val = abs(prior) if prior else Decimal("0")
         total_trading_income += val
         total_trading_income_prior += prior_val
-        # Last item in the list gets an underline on the amount
-        is_last = (i == len(sections["trading_income"]) - 1)
-        _add_amount_line(doc, name, val, prior_val, has_prior=has_prior, indent=1,
-                         show_cents=show_cents)
+        ft.add_line(name, val, prior_val, indent=1)
 
-    _add_amount_line(doc, "Total Trading Income", total_trading_income,
-                     total_trading_income_prior, has_prior=has_prior, bold=True,
-                     show_cents=show_cents, is_total=True)
+    ft.add_total("Total Trading Income", total_trading_income,
+                 total_trading_income_prior)
 
-    doc.add_paragraph().paragraph_format.space_after = Pt(4)
+    ft.add_spacer()
 
     # Cost of Sales
-    _add_amount_line(doc, "Cost of Sales", None, has_prior=has_prior,
-                     is_section_heading=True, heading_size=FONT_SIZE_SUBHEADING, bold=True,
-                     show_cents=show_cents)
+    ft.add_section_heading("Cost of Sales")
 
     total_cogs = Decimal("0")
     total_cogs_prior = Decimal("0")
@@ -834,54 +829,45 @@ def _add_trading_account(doc, entity, fy, sections, show_cents=False):
     # Add: Opening Stock + Purchases
     add_items = opening_stock + other_cogs
     if add_items:
-        _add_paragraph(doc, "Add:", size=FONT_SIZE_BODY, bold=True, space_after=2)
+        ft.add_sub_heading("Add:")
 
     add_subtotal = Decimal("0")
     add_subtotal_prior = Decimal("0")
-    for i, (code, name, balance, prior) in enumerate(add_items):
+    for code, name, balance, prior in add_items:
         val = abs(balance) if balance else Decimal("0")
         prior_val = abs(prior) if prior else Decimal("0")
         add_subtotal += val
         add_subtotal_prior += prior_val
         total_cogs += val
         total_cogs_prior += prior_val
-        # Last add item gets underline
-        is_last = (i == len(add_items) - 1)
-        _add_amount_line(doc, name, val, prior_val, has_prior=has_prior, indent=1,
-                         show_cents=show_cents)
+        ft.add_line(name, val, prior_val, indent=1)
 
     # Show add subtotal if there are multiple add items
     if len(add_items) > 1:
-        _add_amount_line(doc, "", add_subtotal, add_subtotal_prior,
-                         has_prior=has_prior, show_cents=show_cents,
-                         is_subtotal=True)
+        ft.add_subtotal("", add_subtotal, add_subtotal_prior)
 
     # Less: Closing Stock
     if closing_stock:
-        _add_paragraph(doc, "Less:", size=FONT_SIZE_BODY, bold=True, space_after=2)
+        ft.add_sub_heading("Less:")
         for code, name, balance, prior in closing_stock:
             val = abs(balance) if balance else Decimal("0")
             prior_val = abs(prior) if prior else Decimal("0")
             total_cogs -= val  # Closing stock reduces COGS
             total_cogs_prior -= prior_val
-            _add_amount_line(doc, name, val, prior_val, has_prior=has_prior, indent=1,
-                             show_cents=show_cents, is_subtotal=True)
+            ft.add_subtotal(name, val, prior_val)
 
-    doc.add_paragraph().paragraph_format.space_after = Pt(2)
+    ft.add_spacer()
 
-    _add_amount_line(doc, "Cost of Sales", total_cogs, total_cogs_prior,
-                     has_prior=has_prior, bold=True, show_cents=show_cents,
-                     is_total=True)
+    ft.add_total("Cost of Sales", total_cogs, total_cogs_prior)
 
-    doc.add_paragraph().paragraph_format.space_after = Pt(4)
+    ft.add_spacer()
 
-    # Gross Profit
+    # Gross Profit — grand total with double underline
     gross_profit = total_trading_income - total_cogs
     gross_profit_prior = total_trading_income_prior - total_cogs_prior
 
-    _add_amount_line(doc, "Gross Profit from Trading", gross_profit, gross_profit_prior,
-                     has_prior=has_prior, bold=True, show_cents=show_cents,
-                     is_total=True)
+    ft.add_total("Gross Profit from Trading", gross_profit, gross_profit_prior,
+                 is_grand_total=True)
 
     return gross_profit, gross_profit_prior
 
@@ -904,18 +890,17 @@ def _add_detailed_pnl(doc, entity, fy, sections, show_cents=False,
                           has_prior=has_prior, show_column_headers=True,
                           include_note=False, show_cents=show_cents)
 
+    ft = FinancialTable(doc, has_prior=has_prior, include_note=False, show_cents=show_cents)
+
     # Income section
     total_income = Decimal("0")
     total_income_prior = Decimal("0")
 
-    _add_amount_line(doc, "Income", None, has_prior=has_prior,
-                     is_section_heading=True, heading_size=FONT_SIZE_SUBHEADING, bold=True,
-                     show_cents=show_cents)
+    ft.add_section_heading("Income")
 
     # If we have a trading account, first line is "Trading profit"
     if gross_profit is not None:
-        _add_amount_line(doc, "Trading profit", gross_profit, gross_profit_prior,
-                         has_prior=has_prior, indent=1, show_cents=show_cents)
+        ft.add_line("Trading profit", gross_profit, gross_profit_prior, indent=1)
         total_income += gross_profit
         total_income_prior += gross_profit_prior
     else:
@@ -925,8 +910,7 @@ def _add_detailed_pnl(doc, entity, fy, sections, show_cents=False,
             prior_val = abs(prior) if prior else Decimal("0")
             total_income += val
             total_income_prior += prior_val
-            _add_amount_line(doc, name, val, prior_val, has_prior=has_prior, indent=1,
-                             show_cents=show_cents)
+            ft.add_line(name, val, prior_val, indent=1)
 
     # Other income
     for code, name, balance, prior in sections["income"]:
@@ -934,36 +918,30 @@ def _add_detailed_pnl(doc, entity, fy, sections, show_cents=False,
         prior_val = abs(prior) if prior else Decimal("0")
         total_income += val
         total_income_prior += prior_val
-        _add_amount_line(doc, name, val, prior_val, has_prior=has_prior, indent=1,
-                         show_cents=show_cents)
+        ft.add_line(name, val, prior_val, indent=1)
 
-    _add_amount_line(doc, "Total income", total_income, total_income_prior,
-                     has_prior=has_prior, show_cents=show_cents, is_subtotal=True)
+    ft.add_subtotal("Total income", total_income, total_income_prior)
 
-    doc.add_paragraph().paragraph_format.space_after = Pt(4)
+    ft.add_spacer()
 
     # Expenses section
     total_expenses = Decimal("0")
     total_expenses_prior = Decimal("0")
 
-    _add_amount_line(doc, "Expenses", None, has_prior=has_prior,
-                     is_section_heading=True, heading_size=FONT_SIZE_SUBHEADING, bold=True,
-                     show_cents=show_cents)
+    ft.add_section_heading("Expenses")
 
     for code, name, balance, prior in sections["expenses"]:
         val = abs(balance)
         prior_val = abs(prior) if prior else Decimal("0")
         total_expenses += val
         total_expenses_prior += prior_val
-        _add_amount_line(doc, name, val, prior_val, has_prior=has_prior, indent=1,
-                         show_cents=show_cents)
+        ft.add_line(name, val, prior_val, indent=1)
 
-    _add_amount_line(doc, "Total expenses", total_expenses, total_expenses_prior,
-                     has_prior=has_prior, show_cents=show_cents, is_subtotal=True)
+    ft.add_subtotal("Total expenses", total_expenses, total_expenses_prior)
 
-    doc.add_paragraph().paragraph_format.space_after = Pt(4)
+    ft.add_spacer()
 
-    # Net Profit/Loss
+    # Net Profit/Loss — grand total with double underline
     net_profit = total_income - total_expenses
     net_profit_prior = total_income_prior - total_expenses_prior
 
@@ -974,8 +952,7 @@ def _add_detailed_pnl(doc, entity, fy, sections, show_cents=False,
     else:
         profit_label = "Profit (Loss) from Ordinary Activities before income tax"
 
-    _add_amount_line(doc, profit_label, net_profit, net_profit_prior,
-                     has_prior=has_prior, show_cents=show_cents, is_total=True)
+    ft.add_total(profit_label, net_profit, net_profit_prior, is_grand_total=True)
 
     return net_profit, net_profit_prior
 
@@ -999,14 +976,14 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
                           has_prior=has_prior, show_column_headers=True,
                           include_note=True, show_cents=show_cents)
 
+    # TABLE 1: Assets (and sole trader equity at top)
+    ft = FinancialTable(doc, has_prior=has_prior, include_note=True, show_cents=show_cents)
+
     # ---- SOLE TRADER: Equity at TOP ----
     if entity_type == "sole_trader":
-        _add_amount_line(doc, "Proprietors' Funds", None, has_prior=has_prior,
-                         is_section_heading=True, heading_size=FONT_SIZE_SUBHEADING, bold=True,
-                         show_cents=show_cents)
+        ft.add_section_heading("Proprietors' Funds")
 
         # Calculate proprietors' funds
-        # Opening balance = prior year equity total
         opening_balance = Decimal("0")
         opening_balance_prior = Decimal("0")
         drawings = Decimal("0")
@@ -1021,38 +998,30 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
                 opening_balance = abs(balance) if balance < 0 else balance
                 opening_balance_prior = abs(prior) if prior and prior < 0 else (prior or Decimal("0"))
 
-        # If no explicit opening balance, calculate from equity accounts
         if opening_balance == 0 and not any("opening" in n.lower() or "capital" in n.lower()
                                              for _, n, _, _ in sections["equity"]):
-            # Opening balance is the prior year's closing equity
             pass
 
-        _add_amount_line(doc, "Opening balance", opening_balance, opening_balance_prior,
-                         has_prior=has_prior, show_cents=show_cents)
-        _add_amount_line(doc, "Net profit / (loss)", net_profit, net_profit_prior,
-                         has_prior=has_prior, show_cents=show_cents)
+        ft.add_line("Opening balance", opening_balance, opening_balance_prior)
+        ft.add_line("Net profit / (loss)", net_profit, net_profit_prior)
         if drawings > 0 or drawings_prior > 0:
-            _add_amount_line(doc, "Less: Drawings", drawings, drawings_prior,
-                             has_prior=has_prior, show_cents=show_cents)
+            ft.add_line("Less: Drawings", drawings, drawings_prior)
 
         total_prop_funds = opening_balance + net_profit - drawings
         total_prop_funds_prior = opening_balance_prior + net_profit_prior - drawings_prior
 
-        _add_amount_line(doc, "Total Proprietors' Funds", total_prop_funds,
-                         total_prop_funds_prior, has_prior=has_prior, bold=True,
-                         show_cents=show_cents, is_total=True)
+        ft.add_total("Total Proprietors' Funds", total_prop_funds,
+                     total_prop_funds_prior, is_grand_total=True)
 
-        doc.add_paragraph().paragraph_format.space_after = Pt(4)
-        _add_paragraph(doc, "Represented by:", size=FONT_SIZE_BODY, bold=True, space_after=6)
+        ft.add_spacer()
+        ft.add_sub_heading("Represented by:")
 
     # ---- Current Assets ----
     total_ca = Decimal("0")
     total_ca_prior = Decimal("0")
 
     if sections["current_assets"]:
-        _add_amount_line(doc, "Current Assets", None, has_prior=has_prior,
-                         is_section_heading=True, heading_size=FONT_SIZE_SUBHEADING, bold=True,
-                         show_cents=show_cents)
+        ft.add_section_heading("Current Assets")
 
         # Sub-categorise current assets
         cash_items = []
@@ -1074,9 +1043,7 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
 
         # Cash Assets
         if cash_items:
-            _add_amount_line(doc, "Cash Assets", None, has_prior=has_prior,
-                             bold=True, is_section_heading=True, heading_size=FONT_SIZE_BODY,
-                             show_cents=show_cents)
+            ft.add_sub_heading("Cash Assets")
             sub_total = Decimal("0")
             sub_total_prior = Decimal("0")
             for code, name, balance, prior in cash_items:
@@ -1086,37 +1053,29 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
                 sub_total_prior += prior_val
                 total_ca += val
                 total_ca_prior += prior_val
-                _add_amount_line(doc, name, val, prior_val, has_prior=has_prior, indent=1,
-                                 show_cents=show_cents)
+                ft.add_line(name, val, prior_val, indent=1)
             if len(cash_items) > 1:
-                _add_amount_line(doc, "", sub_total, sub_total_prior,
-                                 has_prior=has_prior, show_cents=show_cents)
+                ft.add_subtotal("", sub_total, sub_total_prior)
 
         # Receivables
         if receivable_items:
-            _add_amount_line(doc, "Receivables", None, has_prior=has_prior,
-                             bold=True, is_section_heading=True, heading_size=FONT_SIZE_BODY,
-                             show_cents=show_cents)
+            ft.add_sub_heading("Receivables")
             for code, name, balance, prior in receivable_items:
                 val = abs(balance) if balance > 0 else balance
                 prior_val = abs(prior) if prior and prior > 0 else (prior or Decimal("0"))
                 total_ca += val
                 total_ca_prior += prior_val
-                _add_amount_line(doc, name, val, prior_val, has_prior=has_prior, indent=1,
-                                 show_cents=show_cents)
+                ft.add_line(name, val, prior_val, indent=1)
 
         # Inventories
         if inventory_items:
-            _add_amount_line(doc, "Inventories", None, has_prior=has_prior,
-                             bold=True, is_section_heading=True, heading_size=FONT_SIZE_BODY,
-                             show_cents=show_cents)
+            ft.add_sub_heading("Inventories")
             for code, name, balance, prior in inventory_items:
                 val = abs(balance) if balance > 0 else balance
                 prior_val = abs(prior) if prior and prior > 0 else (prior or Decimal("0"))
                 total_ca += val
                 total_ca_prior += prior_val
-                _add_amount_line(doc, name, val, prior_val, has_prior=has_prior, indent=1,
-                                 show_cents=show_cents)
+                ft.add_line(name, val, prior_val, indent=1)
 
         # Other current assets
         for code, name, balance, prior in other_ca_items:
@@ -1124,20 +1083,16 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
             prior_val = abs(prior) if prior and prior > 0 else (prior or Decimal("0"))
             total_ca += val
             total_ca_prior += prior_val
-            _add_amount_line(doc, name, val, prior_val, has_prior=has_prior, indent=1,
-                             show_cents=show_cents)
+            ft.add_line(name, val, prior_val, indent=1)
 
-        _add_amount_line(doc, "Total Current Assets", total_ca, total_ca_prior,
-                         has_prior=has_prior, bold=True, show_cents=show_cents, is_subtotal=True)
+        ft.add_subtotal("Total Current Assets", total_ca, total_ca_prior, bold=True)
 
     # ---- Non-Current Assets ----
     total_nca = Decimal("0")
     total_nca_prior = Decimal("0")
 
     if sections["noncurrent_assets"]:
-        _add_amount_line(doc, "Non-Current Assets", None, has_prior=has_prior,
-                         is_section_heading=True, heading_size=FONT_SIZE_SUBHEADING, bold=True,
-                         show_cents=show_cents)
+        ft.add_section_heading("Non-Current Assets")
 
         # Sub-categorise non-current assets
         ppe_items = []
@@ -1165,48 +1120,37 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
 
         # NCA Receivables
         if receivable_nca_items:
-            _add_amount_line(doc, "Receivables", None, has_prior=has_prior,
-                             bold=True, is_section_heading=True, heading_size=FONT_SIZE_BODY,
-                             show_cents=show_cents)
+            ft.add_sub_heading("Receivables")
             for code, name, balance, prior in receivable_nca_items:
                 val = balance
                 prior_val = prior or Decimal("0")
                 total_nca += val
                 total_nca_prior += prior_val
-                _add_amount_line(doc, name, val, prior_val, has_prior=has_prior, indent=1,
-                                 show_cents=show_cents)
+                ft.add_line(name, val, prior_val, indent=1)
 
         # NCA Inventories (e.g., land held for resale)
         if inventory_nca_items:
-            _add_amount_line(doc, "Inventories", None, has_prior=has_prior,
-                             bold=True, is_section_heading=True, heading_size=FONT_SIZE_BODY,
-                             show_cents=show_cents)
+            ft.add_sub_heading("Inventories")
             for code, name, balance, prior in inventory_nca_items:
                 val = abs(balance) if balance > 0 else balance
                 prior_val = abs(prior) if prior and prior > 0 else (prior or Decimal("0"))
                 total_nca += val
                 total_nca_prior += prior_val
-                _add_amount_line(doc, name, val, prior_val, has_prior=has_prior, indent=1,
-                                 show_cents=show_cents)
+                ft.add_line(name, val, prior_val, indent=1)
 
         # Other Financial Assets
         if investment_items:
-            _add_amount_line(doc, "Other Financial Assets", None, has_prior=has_prior,
-                             bold=True, is_section_heading=True, heading_size=FONT_SIZE_BODY,
-                             show_cents=show_cents)
+            ft.add_sub_heading("Other Financial Assets")
             for code, name, balance, prior in investment_items:
                 val = abs(balance) if balance > 0 else balance
                 prior_val = abs(prior) if prior and prior > 0 else (prior or Decimal("0"))
                 total_nca += val
                 total_nca_prior += prior_val
-                _add_amount_line(doc, name, val, prior_val, has_prior=has_prior, indent=1,
-                                 show_cents=show_cents)
+                ft.add_line(name, val, prior_val, indent=1)
 
         # PPE
         if ppe_items:
-            _add_amount_line(doc, "Property, Plant and Equipment", None, has_prior=has_prior,
-                             bold=True, is_section_heading=True, heading_size=FONT_SIZE_BODY,
-                             show_cents=show_cents)
+            ft.add_sub_heading("Property, Plant and Equipment")
             ppe_total = Decimal("0")
             ppe_total_prior = Decimal("0")
             for code, name, balance, prior in ppe_items:
@@ -1219,11 +1163,9 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
                     prior_val = abs(prior) if prior else Decimal("0")
                 ppe_total += val
                 ppe_total_prior += prior_val
-                _add_amount_line(doc, name, val, prior_val, has_prior=has_prior, indent=1,
-                                 show_cents=show_cents)
+                ft.add_line(name, val, prior_val, indent=1)
 
-            _add_amount_line(doc, "", ppe_total, ppe_total_prior,
-                             has_prior=has_prior, show_cents=show_cents, is_subtotal=True)
+            ft.add_subtotal("", ppe_total, ppe_total_prior)
             total_nca += ppe_total
             total_nca_prior += ppe_total_prior
 
@@ -1233,36 +1175,25 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
             prior_val = prior or Decimal("0")
             total_nca += val
             total_nca_prior += prior_val
-            _add_amount_line(doc, name, val, prior_val, has_prior=has_prior, indent=1,
-                             show_cents=show_cents)
+            ft.add_line(name, val, prior_val, indent=1)
 
-        _add_amount_line(doc, "Total Non-Current Assets", total_nca, total_nca_prior,
-                         has_prior=has_prior, bold=True, show_cents=show_cents, is_subtotal=True)
+        ft.add_subtotal("Total Non-Current Assets", total_nca, total_nca_prior, bold=True)
 
-    # Total Assets
+    # Total Assets — grand total with double underline
     total_assets = total_ca + total_nca
     total_assets_prior = total_ca_prior + total_nca_prior
-    doc.add_paragraph().paragraph_format.space_after = Pt(2)
-    _add_amount_line(doc, "Total Assets", total_assets, total_assets_prior,
-                     has_prior=has_prior, bold=True, show_cents=show_cents, is_total=True)
+    ft.add_spacer()
+    ft.add_total("Total Assets", total_assets, total_assets_prior, is_grand_total=True)
 
-    # ---- Current Liabilities (new page) ----
-    # Page break before liabilities section so it starts on its own page
-    # New section for liabilities (repeating headers will handle continuation)
-    _start_report_section(doc, entity,
-                          f"Detailed Balance Sheet {_get_as_at_text(fy)}",
-                          footer_type="statement",
-                          year=year, prior_year=prior_year_str,
-                          has_prior=has_prior, show_column_headers=True,
-                          include_note=True, show_cents=show_cents)
+    # TABLE 2: Liabilities (separate table for better pagination)
+    ft = FinancialTable(doc, has_prior=has_prior, include_note=True, show_cents=show_cents)
 
+    # ---- Liabilities ----
     total_cl = Decimal("0")
     total_cl_prior = Decimal("0")
 
     if sections["current_liabilities"]:
-        _add_amount_line(doc, "Current Liabilities", None, has_prior=has_prior,
-                         is_section_heading=True, heading_size=FONT_SIZE_SUBHEADING, bold=True,
-                         show_cents=show_cents)
+        ft.add_section_heading("Current Liabilities")
 
         payable_items = []
         tax_items = []
@@ -1282,57 +1213,46 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
 
         # Payables
         if payable_items:
-            _add_amount_line(doc, "Payables", None, has_prior=has_prior,
-                             bold=True, is_section_heading=True, heading_size=FONT_SIZE_BODY,
-                             show_cents=show_cents)
-            # Check for secured/unsecured
+            ft.add_sub_heading("Payables")
             secured = [i for i in payable_items if "secured" in i[1].lower()]
             unsecured = [i for i in payable_items if "secured" not in i[1].lower()]
             if secured:
-                _add_paragraph(doc, "Secured:", size=FONT_SIZE_BODY, bold=True, space_after=2)
+                ft.add_sub_heading("Secured:", italic=True)
                 for code, name, balance, prior in secured:
                     val = abs(balance)
                     prior_val = abs(prior) if prior else Decimal("0")
                     total_cl += val
                     total_cl_prior += prior_val
-                    _add_amount_line(doc, name, val, prior_val, has_prior=has_prior, indent=1,
-                                     show_cents=show_cents)
+                    ft.add_line(name, val, prior_val, indent=1)
             if unsecured:
                 if secured:
-                    _add_paragraph(doc, "Unsecured:", size=FONT_SIZE_BODY, bold=True, space_after=2)
+                    ft.add_sub_heading("Unsecured:", italic=True)
                 for code, name, balance, prior in unsecured:
                     val = abs(balance)
                     prior_val = abs(prior) if prior else Decimal("0")
                     total_cl += val
                     total_cl_prior += prior_val
-                    _add_amount_line(doc, name, val, prior_val, has_prior=has_prior, indent=1,
-                                     show_cents=show_cents)
+                    ft.add_line(name, val, prior_val, indent=1)
 
         # Current Tax Liabilities
         if tax_items:
-            _add_amount_line(doc, "Current Tax Liabilities", None, has_prior=has_prior,
-                             bold=True, is_section_heading=True, heading_size=FONT_SIZE_BODY,
-                             show_cents=show_cents)
+            ft.add_sub_heading("Current Tax Liabilities")
             for code, name, balance, prior in tax_items:
                 val = abs(balance)
                 prior_val = abs(prior) if prior else Decimal("0")
                 total_cl += val
                 total_cl_prior += prior_val
-                _add_amount_line(doc, name, val, prior_val, has_prior=has_prior, indent=1,
-                                 show_cents=show_cents)
+                ft.add_line(name, val, prior_val, indent=1)
 
         # Provisions
         if provision_items:
-            _add_amount_line(doc, "Provisions", None, has_prior=has_prior,
-                             bold=True, is_section_heading=True, heading_size=FONT_SIZE_BODY,
-                             show_cents=show_cents)
+            ft.add_sub_heading("Provisions")
             for code, name, balance, prior in provision_items:
                 val = abs(balance)
                 prior_val = abs(prior) if prior else Decimal("0")
                 total_cl += val
                 total_cl_prior += prior_val
-                _add_amount_line(doc, name, val, prior_val, has_prior=has_prior, indent=1,
-                                 show_cents=show_cents)
+                ft.add_line(name, val, prior_val, indent=1)
 
         # Other CL
         if other_cl_items:
@@ -1341,20 +1261,16 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
                 prior_val = abs(prior) if prior else Decimal("0")
                 total_cl += val
                 total_cl_prior += prior_val
-                _add_amount_line(doc, name, val, prior_val, has_prior=has_prior, indent=1,
-                                 show_cents=show_cents)
+                ft.add_line(name, val, prior_val, indent=1)
 
-        _add_amount_line(doc, "Total Current Liabilities", total_cl, total_cl_prior,
-                         has_prior=has_prior, bold=True, show_cents=show_cents, is_subtotal=True)
+        ft.add_subtotal("Total Current Liabilities", total_cl, total_cl_prior, bold=True)
 
     # ---- Non-Current Liabilities ----
     total_ncl = Decimal("0")
     total_ncl_prior = Decimal("0")
 
     if sections["noncurrent_liabilities"]:
-        _add_amount_line(doc, "Non-Current Liabilities", None, has_prior=has_prior,
-                         is_section_heading=True, heading_size=FONT_SIZE_SUBHEADING, bold=True,
-                         show_cents=show_cents)
+        ft.add_section_heading("Non-Current Liabilities")
 
         loan_items = []
         other_ncl_items = []
@@ -1367,33 +1283,28 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
                 other_ncl_items.append((code, name, balance, prior))
 
         if loan_items:
-            _add_amount_line(doc, "Financial Liabilities", None, has_prior=has_prior,
-                             bold=True, is_section_heading=True, heading_size=FONT_SIZE_BODY,
-                             show_cents=show_cents)
+            ft.add_sub_heading("Financial Liabilities")
 
-            # Separate secured and unsecured
             secured_loans = [i for i in loan_items if "mortgage" in i[1].lower() or "secured" in i[1].lower()]
             unsecured_loans = [i for i in loan_items if "mortgage" not in i[1].lower() and "secured" not in i[1].lower()]
 
             if unsecured_loans:
-                _add_paragraph(doc, "Unsecured:", size=FONT_SIZE_BODY, bold=True, italic=True, space_after=2)
+                ft.add_sub_heading("Unsecured:", italic=True)
                 for code, name, balance, prior in unsecured_loans:
                     val = abs(balance)
                     prior_val = abs(prior) if prior else Decimal("0")
                     total_ncl += val
                     total_ncl_prior += prior_val
-                    _add_amount_line(doc, name, val, prior_val, has_prior=has_prior, indent=1,
-                                     show_cents=show_cents)
+                    ft.add_line(name, val, prior_val, indent=1)
 
             if secured_loans:
-                _add_paragraph(doc, "Secured:", size=FONT_SIZE_BODY, bold=True, italic=True, space_after=2)
+                ft.add_sub_heading("Secured:", italic=True)
                 for code, name, balance, prior in secured_loans:
                     val = abs(balance)
                     prior_val = abs(prior) if prior else Decimal("0")
                     total_ncl += val
                     total_ncl_prior += prior_val
-                    _add_amount_line(doc, name, val, prior_val, has_prior=has_prior, indent=1,
-                                     show_cents=show_cents)
+                    ft.add_line(name, val, prior_val, indent=1)
 
         if other_ncl_items:
             for code, name, balance, prior in other_ncl_items:
@@ -1401,67 +1312,54 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
                 prior_val = abs(prior) if prior else Decimal("0")
                 total_ncl += val
                 total_ncl_prior += prior_val
-                _add_amount_line(doc, name, val, prior_val, has_prior=has_prior, indent=1,
-                                 show_cents=show_cents)
+                ft.add_line(name, val, prior_val, indent=1)
 
-        _add_amount_line(doc, "Total Non-Current Liabilities", total_ncl, total_ncl_prior,
-                         has_prior=has_prior, bold=True, show_cents=show_cents, is_subtotal=True)
+        ft.add_subtotal("Total Non-Current Liabilities", total_ncl, total_ncl_prior, bold=True)
 
     # Total Liabilities
     total_liabilities = total_cl + total_ncl
     total_liabilities_prior = total_cl_prior + total_ncl_prior
-    doc.add_paragraph().paragraph_format.space_after = Pt(2)
-    _add_amount_line(doc, "Total Liabilities", total_liabilities, total_liabilities_prior,
-                     has_prior=has_prior, bold=True, show_cents=show_cents, is_total=True)
+    ft.add_spacer()
+    ft.add_total("Total Liabilities", total_liabilities, total_liabilities_prior)
 
-    # Net Assets
+    # Net Assets + Equity (same table as liabilities for continuous flow)
+    # Net Assets — grand total with double underline
     net_assets = total_assets - total_liabilities
     net_assets_prior = total_assets_prior - total_liabilities_prior
-    doc.add_paragraph().paragraph_format.space_after = Pt(2)
-    _add_amount_line(doc, "Net Assets (Liabilities)", net_assets, net_assets_prior,
-                     has_prior=has_prior, bold=True, show_cents=show_cents, is_total=True)
+    ft.add_spacer()
+    ft.add_total("Net Assets (Liabilities)", net_assets, net_assets_prior, is_grand_total=True)
 
     # ---- Equity (for non-sole-trader) ----
     if entity_type != "sole_trader":
-        equity_title = "Equity"
-        if entity_type == "trust":
-            equity_title = "Equity"
-
-        _add_amount_line(doc, equity_title, None, has_prior=has_prior,
-                         is_section_heading=True, heading_size=FONT_SIZE_SUBHEADING, bold=True,
-                         show_cents=show_cents)
+        ft.add_section_heading("Equity", keep_with_next=True)
 
         total_equity = Decimal("0")
         total_equity_prior = Decimal("0")
 
         if sections["equity"]:
-            for code, name, balance, prior in sections["equity"]:
-                # Equity accounts are credit (negative in TB), display as positive
+            equity_items = list(sections["equity"])
+            for i, (code, name, balance, prior) in enumerate(equity_items):
                 val = abs(balance) if balance < 0 else balance
                 prior_val = abs(prior) if prior and prior < 0 else (prior or Decimal("0"))
                 total_equity += val
                 total_equity_prior += prior_val
 
-                # Trust-specific: rename "Retained profits" to "Undistributed income"
                 display_name = name
                 if entity_type == "trust" and "retained" in name.lower():
                     display_name = "Undistributed income"
 
-                _add_amount_line(doc, display_name, val, prior_val, has_prior=has_prior,
-                                 show_cents=show_cents)
+                # Keep all equity items together with Total Equity
+                ft.add_line(display_name, val, prior_val, keep_with_next=True)
         else:
-            # No equity accounts — show retained profits = net assets
             if entity_type == "trust":
                 label = "Undistributed income"
             else:
                 label = "Retained profits / (accumulated losses)"
-            _add_amount_line(doc, label, net_assets, net_assets_prior,
-                             has_prior=has_prior, show_cents=show_cents)
+            ft.add_line(label, net_assets, net_assets_prior, keep_with_next=True)
             total_equity = net_assets
             total_equity_prior = net_assets_prior
 
-        _add_amount_line(doc, "Total Equity", total_equity, total_equity_prior,
-                         has_prior=has_prior, bold=True, show_cents=show_cents, is_total=True)
+        ft.add_total("Total Equity", total_equity, total_equity_prior, is_grand_total=True)
 
 
 # =============================================================================
@@ -1482,9 +1380,10 @@ def _add_summary_pnl(doc, entity, fy, sections, show_cents=False,
                           has_prior=has_prior, show_column_headers=True,
                           include_note=True, show_cents=show_cents)
 
+    ft = FinancialTable(doc, has_prior=has_prior, include_note=True, show_cents=show_cents)
+
     # Operating profit
-    _add_amount_line(doc, "Operating profit before income tax", net_profit, net_profit_prior,
-                     has_prior=has_prior, show_cents=show_cents)
+    ft.add_line("Operating profit before income tax", net_profit, net_profit_prior)
 
     # Income tax (check for tax accounts in equity or expenses)
     tax_amount = Decimal("0")
@@ -1495,21 +1394,18 @@ def _add_summary_pnl(doc, entity, fy, sections, show_cents=False,
             tax_amount_prior = abs(prior) if prior else Decimal("0")
 
     if tax_amount > 0 or tax_amount_prior > 0:
-        _add_amount_line(doc, "Income tax attributable to operating profit (loss)",
-                         -tax_amount, -tax_amount_prior,
-                         has_prior=has_prior, show_cents=show_cents)
+        ft.add_line("Income tax attributable to operating profit (loss)",
+                    -tax_amount, -tax_amount_prior)
 
     profit_after_tax = net_profit - tax_amount
     profit_after_tax_prior = net_profit_prior - tax_amount_prior
 
-    _add_amount_line(doc, "Operating profit after income tax", profit_after_tax,
-                     profit_after_tax_prior, has_prior=has_prior, bold=True,
-                     show_cents=show_cents, is_total=True)
+    ft.add_total("Operating profit after income tax", profit_after_tax,
+                 profit_after_tax_prior)
 
-    doc.add_paragraph().paragraph_format.space_after = Pt(4)
+    ft.add_spacer()
 
     # Retained profits
-    # Get opening retained profits from equity
     opening_retained = Decimal("0")
     opening_retained_prior = Decimal("0")
     dividends = Decimal("0")
@@ -1524,29 +1420,25 @@ def _add_summary_pnl(doc, entity, fy, sections, show_cents=False,
             dividends = abs(balance) if balance else Decimal("0")
             dividends_prior = abs(prior) if prior else Decimal("0")
 
-    _add_amount_line(doc, "Retained profits at beginning of year",
-                     opening_retained - profit_after_tax,
-                     opening_retained_prior - profit_after_tax_prior,
-                     has_prior=has_prior, show_cents=show_cents)
+    ft.add_line("Retained profits at beginning of year",
+                opening_retained - profit_after_tax,
+                opening_retained_prior - profit_after_tax_prior)
 
     total_available = opening_retained
     total_available_prior = opening_retained_prior
 
-    _add_amount_line(doc, "Total available for appropriation",
-                     total_available, total_available_prior,
-                     has_prior=has_prior, bold=True, show_cents=show_cents, is_subtotal=True)
+    ft.add_subtotal("Total available for appropriation",
+                    total_available, total_available_prior, bold=True)
 
     if dividends > 0 or dividends_prior > 0:
-        _add_amount_line(doc, "Dividends provided for or paid",
-                         -dividends, -dividends_prior,
-                         has_prior=has_prior, show_cents=show_cents)
+        ft.add_line("Dividends provided for or paid",
+                    -dividends, -dividends_prior)
 
     closing_retained = total_available - dividends
     closing_retained_prior = total_available_prior - dividends_prior
 
-    _add_amount_line(doc, "Retained profits at end of year",
-                     closing_retained, closing_retained_prior,
-                     has_prior=has_prior, bold=True, show_cents=show_cents, is_total=True)
+    ft.add_total("Retained profits at end of year",
+                 closing_retained, closing_retained_prior, is_grand_total=True)
 
 
 # =============================================================================
@@ -1845,30 +1737,16 @@ def _add_notes(doc, entity, fy, sections, show_cents=False):
     year = str(fy.end_date.year)
     prior_year_str = str(fy.end_date.year - 1) if has_prior else None
 
-    # Column header for notes
-    p = doc.add_paragraph()
-    pf = p.paragraph_format
-    pf.space_after = Pt(0)
-    tab_stops = pf.tab_stops
-    if has_prior:
-        tab_stops.add_tab_stop(Cm(14), WD_ALIGN_PARAGRAPH.RIGHT)
-        tab_stops.add_tab_stop(Cm(16.5), WD_ALIGN_PARAGRAPH.RIGHT)
-        run = p.add_run(f"\t{year}\t{prior_year_str}")
-    else:
-        tab_stops.add_tab_stop(Cm(16), WD_ALIGN_PARAGRAPH.RIGHT)
-        run = p.add_run(f"\t{year}")
-    _set_run_font(run, size=FONT_SIZE_BODY, bold=True)
-    _add_horizontal_line(doc)
-
-    doc.add_paragraph().paragraph_format.space_after = Pt(6)
-
+    # Note 2 and beyond use FinancialTable for amounts
     _add_paragraph(doc, "Note 2:  Revenue", size=Pt(14), bold=True, space_after=8)
     _add_paragraph(doc, "Operating Activities:", size=FONT_SIZE_BODY, bold=True, space_after=4)
+
+    ft_note2 = FinancialTable(doc, has_prior=has_prior, include_note=False, show_cents=show_cents)
 
     # Determine revenue label based on entity type and COGS
     has_trading = _has_cogs(sections)
     if has_trading:
-        _add_paragraph(doc, "Sales revenue:", size=FONT_SIZE_BODY, space_after=2)
+        ft_note2.add_sub_heading("Sales revenue:", bold=False, space_before=2)
         total_revenue = Decimal("0")
         total_revenue_prior = Decimal("0")
         for code, name, balance, prior in sections["trading_income"]:
@@ -1876,11 +1754,10 @@ def _add_notes(doc, entity, fy, sections, show_cents=False):
             prior_val = abs(prior) if prior else Decimal("0")
             total_revenue += val
             total_revenue_prior += prior_val
-        _add_amount_line(doc, "Non-primary production trading revenue",
-                         total_revenue, total_revenue_prior,
-                         has_prior=has_prior, indent=1, show_cents=show_cents)
+        ft_note2.add_line("Non-primary production trading revenue",
+                          total_revenue, total_revenue_prior, indent=1)
     else:
-        _add_paragraph(doc, "Other operating revenue:", size=FONT_SIZE_BODY, space_after=2)
+        ft_note2.add_sub_heading("Other operating revenue:", bold=False, space_before=2)
         total_revenue = Decimal("0")
         total_revenue_prior = Decimal("0")
         for code, name, balance, prior in sections["trading_income"]:
@@ -1888,12 +1765,12 @@ def _add_notes(doc, entity, fy, sections, show_cents=False):
             prior_val = abs(prior) if prior else Decimal("0")
             total_revenue += val
             total_revenue_prior += prior_val
-            _add_amount_line(doc, name, val, prior_val, has_prior=has_prior, show_cents=show_cents)
+            ft_note2.add_line(name, val, prior_val)
 
     # Other income
     if sections["income"]:
-        doc.add_paragraph().paragraph_format.space_after = Pt(4)
-        _add_paragraph(doc, "Other revenue:", size=FONT_SIZE_BODY, space_after=2)
+        ft_note2.add_spacer()
+        ft_note2.add_sub_heading("Other revenue:", bold=False, space_before=2)
         total_other = Decimal("0")
         total_other_prior = Decimal("0")
         for code, name, balance, prior in sections["income"]:
@@ -1903,12 +1780,10 @@ def _add_notes(doc, entity, fy, sections, show_cents=False):
             total_other_prior += prior_val
             total_revenue += val
             total_revenue_prior += prior_val
-            _add_amount_line(doc, name, val, prior_val, has_prior=has_prior, indent=1,
-                             show_cents=show_cents)
+            ft_note2.add_line(name, val, prior_val, indent=1)
 
-    doc.add_paragraph().paragraph_format.space_after = Pt(2)
-    _add_amount_line(doc, "", total_revenue, total_revenue_prior,
-                     has_prior=has_prior, bold=True, show_cents=show_cents)
+    ft_note2.add_spacer()
+    ft_note2.add_total("", total_revenue, total_revenue_prior, is_grand_total=True)
 
     # ---- Note 3: Profit from Ordinary Activities ----
     doc.add_paragraph().paragraph_format.space_after = Pt(8)
@@ -1921,6 +1796,8 @@ def _add_notes(doc, entity, fy, sections, show_cents=False):
 
     _add_paragraph(doc, "Charging as Expense:", size=FONT_SIZE_BODY, bold=True, space_after=4)
 
+    ft_note3 = FinancialTable(doc, has_prior=has_prior, include_note=False, show_cents=show_cents)
+
     # Check for borrowing costs
     borrowing_total = Decimal("0")
     borrowing_total_prior = Decimal("0")
@@ -1931,9 +1808,8 @@ def _add_notes(doc, entity, fy, sections, show_cents=False):
             borrowing_total_prior += abs(prior) if prior else Decimal("0")
 
     if borrowing_total > 0 or borrowing_total_prior > 0:
-        _add_paragraph(doc, "Borrowing costs:", size=FONT_SIZE_BODY, space_after=2)
-        _add_amount_line(doc, " - Interest expense", borrowing_total, borrowing_total_prior,
-                         has_prior=has_prior, indent=1, show_cents=show_cents)
+        ft_note3.add_sub_heading("Borrowing costs:", bold=False, space_before=2)
+        ft_note3.add_line(" - Interest expense", borrowing_total, borrowing_total_prior, indent=1)
 
     # COGS
     if has_trading:
@@ -1948,9 +1824,8 @@ def _add_notes(doc, entity, fy, sections, show_cents=False):
                 total_cogs -= abs(balance) if balance else Decimal("0")
                 total_cogs_prior -= abs(prior) if prior else Decimal("0")
 
-        _add_amount_line(doc, "Cost of non-primary production goods traded",
-                         total_cogs, total_cogs_prior,
-                         has_prior=has_prior, show_cents=show_cents)
+        ft_note3.add_line("Cost of non-primary production goods traded",
+                          total_cogs, total_cogs_prior)
 
     # Depreciation/amortisation
     depreciation_total = Decimal("0")
@@ -1964,10 +1839,8 @@ def _add_notes(doc, entity, fy, sections, show_cents=False):
         prior_val = abs(prior) if prior else Decimal("0")
         if "depreciation" in name_lower:
             if "building" in name_lower:
-                # Building depreciation separate
-                _add_paragraph(doc, "Depreciation of non-current assets:", size=FONT_SIZE_BODY, space_after=2)
-                _add_amount_line(doc, " - Buildings", val, prior_val,
-                                 has_prior=has_prior, indent=1, show_cents=show_cents)
+                ft_note3.add_sub_heading("Depreciation of non-current assets:", bold=False, space_before=2)
+                ft_note3.add_line(" - Buildings", val, prior_val, indent=1)
                 depreciation_total += val
                 depreciation_total_prior += prior_val
             else:
@@ -1978,22 +1851,19 @@ def _add_notes(doc, entity, fy, sections, show_cents=False):
             amortisation_total_prior += prior_val
 
     if amortisation_total > 0 or amortisation_total_prior > 0:
-        _add_paragraph(doc, "Amortisation of non-current assets:", size=FONT_SIZE_BODY, space_after=2)
-        _add_amount_line(doc, " - Leased assets", amortisation_total, amortisation_total_prior,
-                         has_prior=has_prior, indent=1, show_cents=show_cents)
-        _add_amount_line(doc, "Total amortisation expenses", amortisation_total,
-                         amortisation_total_prior, has_prior=has_prior, show_cents=show_cents)
+        ft_note3.add_sub_heading("Amortisation of non-current assets:", bold=False, space_before=2)
+        ft_note3.add_line(" - Leased assets", amortisation_total, amortisation_total_prior, indent=1)
+        ft_note3.add_subtotal("Total amortisation expenses", amortisation_total,
+                              amortisation_total_prior)
 
     if depreciation_total > 0 or depreciation_total_prior > 0:
-        # Only add the header if we haven't already (for buildings)
         has_building_dep = any("building" in n.lower() and "depreciation" in n.lower()
                                for _, n, _, _ in sections["expenses"])
         if not has_building_dep:
-            _add_paragraph(doc, "Depreciation of non-current assets:", size=FONT_SIZE_BODY, space_after=2)
-        _add_amount_line(doc, " - Other", depreciation_total, depreciation_total_prior,
-                         has_prior=has_prior, indent=1, show_cents=show_cents)
-        _add_amount_line(doc, "Total depreciation expenses", depreciation_total,
-                         depreciation_total_prior, has_prior=has_prior, show_cents=show_cents)
+            ft_note3.add_sub_heading("Depreciation of non-current assets:", bold=False, space_before=2)
+        ft_note3.add_line(" - Other", depreciation_total, depreciation_total_prior, indent=1)
+        ft_note3.add_subtotal("Total depreciation expenses", depreciation_total,
+                              depreciation_total_prior)
 
     # Bad debts
     bad_debts = Decimal("0")
@@ -2004,8 +1874,7 @@ def _add_notes(doc, entity, fy, sections, show_cents=False):
             bad_debts_prior += abs(prior) if prior else Decimal("0")
 
     if bad_debts > 0 or bad_debts_prior > 0:
-        _add_amount_line(doc, "Bad and doubtful debts", bad_debts, bad_debts_prior,
-                         has_prior=has_prior, show_cents=show_cents)
+        ft_note3.add_line("Bad and doubtful debts", bad_debts, bad_debts_prior)
 
 
 
