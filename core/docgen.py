@@ -156,14 +156,189 @@ def _add_thin_line(doc):
 
 
 def _add_header_block(doc, entity, title, date_text=None):
-    """Add the standard header block: entity name, ABN, title, optional date."""
-    _add_centered_heading(doc, entity.entity_name, size=FONT_SIZE_HEADING, bold=True, space_after=0)
+    """Add the standard header block: entity name, ABN, title, optional date.
+    Used for pages that DON'T use section-based repeating headers (cover, contents, declaration, compilation)."""
+    _add_centered_heading(doc, entity.entity_name.upper(), size=FONT_SIZE_HEADING, bold=True, space_after=0)
+    if entity.trading_as:
+        _add_centered_heading(doc, f"Trading As", size=Pt(11), bold=False, space_after=0)
     if entity.abn:
         _add_centered_heading(doc, f"ABN {entity.abn}", size=Pt(11), bold=True, space_after=0)
     _add_centered_heading(doc, title, size=FONT_SIZE_SUBHEADING, bold=True, space_after=0)
     if date_text:
         _add_centered_heading(doc, date_text, size=Pt(11), bold=True, space_after=2)
     _add_horizontal_line(doc)
+
+
+def _add_header_para(header, text, size=FONT_SIZE_BODY, bold=False, italic=False):
+    """Add a centered paragraph to a Word section header."""
+    p = header.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after = Pt(0)
+    run = p.add_run(text)
+    _set_run_font(run, size=size, bold=bold, italic=italic)
+    return p
+
+
+def _start_report_section(doc, entity, report_title, footer_type="statement",
+                          year=None, prior_year=None, has_prior=False,
+                          show_column_headers=True, include_note=False,
+                          show_cents=False, landscape=False):
+    """
+    Start a new Word Section with repeating header and footer.
+    
+    The header contains: entity name (ALL CAPS, bold), Trading As (if set),
+    ABN, report title, and optionally column headers (year/$).
+    
+    The footer contains the appropriate disclaimer text.
+    
+    This ensures that when content spans multiple pages, the header and
+    footer repeat automatically on every page.
+    """
+    section = doc.add_section()
+    section.top_margin = Cm(2.54)
+    section.bottom_margin = Cm(2.54)
+    section.left_margin = Cm(2.54)
+    section.right_margin = Cm(2.54)
+    
+    if landscape:
+        section.orientation = WD_ORIENT.LANDSCAPE
+        new_width, new_height = section.page_height, section.page_width
+        section.page_width = new_width
+        section.page_height = new_height
+    else:
+        section.orientation = WD_ORIENT.PORTRAIT
+    
+    # Different first page = False (same header on all pages)
+    section.different_first_page_header_footer = False
+    
+    # ---- Build the header ----
+    header = section.header
+    header.is_linked_to_previous = False
+    
+    # Clear any existing content
+    for p in header.paragraphs:
+        p.clear()
+    
+    # Entity name - ALL CAPS, BOLD
+    _add_header_para(header, entity.entity_name.upper(),
+                     size=FONT_SIZE_HEADING, bold=True)
+    
+    # Trading As (only if set)
+    if entity.trading_as:
+        _add_header_para(header, "Trading As",
+                         size=Pt(11), bold=False)
+    
+    # ABN
+    if entity.abn:
+        _add_header_para(header, f"ABN {entity.abn}",
+                         size=Pt(11), bold=True)
+    
+    # Report title
+    _add_header_para(header, report_title,
+                     size=FONT_SIZE_SUBHEADING, bold=True)
+    
+    # Column headers (year / $) if requested
+    if show_column_headers and year:
+        # Year line
+        p = header.add_paragraph()
+        p.paragraph_format.space_before = Pt(6)
+        p.paragraph_format.space_after = Pt(0)
+        tab_stops = p.paragraph_format.tab_stops
+        if has_prior:
+            if include_note:
+                tab_stops.add_tab_stop(Cm(12), WD_ALIGN_PARAGRAPH.RIGHT)
+            tab_stops.add_tab_stop(Cm(14), WD_ALIGN_PARAGRAPH.RIGHT)
+            tab_stops.add_tab_stop(Cm(16.5), WD_ALIGN_PARAGRAPH.RIGHT)
+        else:
+            if include_note:
+                tab_stops.add_tab_stop(Cm(12), WD_ALIGN_PARAGRAPH.RIGHT)
+            tab_stops.add_tab_stop(Cm(16), WD_ALIGN_PARAGRAPH.RIGHT)
+        
+        if include_note:
+            run = p.add_run("\tNote")
+            _set_run_font(run, size=FONT_SIZE_BODY, bold=True)
+        run = p.add_run(f"\t{year}")
+        _set_run_font(run, size=FONT_SIZE_BODY, bold=True)
+        if has_prior and prior_year:
+            run = p.add_run(f"\t{prior_year}")
+            _set_run_font(run, size=FONT_SIZE_BODY, bold=True)
+        
+        # Dollar sign line
+        p2 = header.add_paragraph()
+        p2.paragraph_format.space_before = Pt(0)
+        p2.paragraph_format.space_after = Pt(0)
+        tab_stops2 = p2.paragraph_format.tab_stops
+        if has_prior:
+            tab_stops2.add_tab_stop(Cm(14), WD_ALIGN_PARAGRAPH.RIGHT)
+            tab_stops2.add_tab_stop(Cm(16.5), WD_ALIGN_PARAGRAPH.RIGHT)
+            run = p2.add_run(f"\t$\t$")
+        else:
+            tab_stops2.add_tab_stop(Cm(16), WD_ALIGN_PARAGRAPH.RIGHT)
+            run = p2.add_run(f"\t$")
+        _set_run_font(run, size=FONT_SIZE_BODY)
+        
+        # Horizontal line in header
+        pBdr = parse_xml(
+            f'<w:pBdr {nsdecls("w")}>'
+            f'  <w:bottom w:val="single" w:sz="12" w:space="1" w:color="000000"/>'
+            f'</w:pBdr>'
+        )
+        p2._element.get_or_add_pPr().append(pBdr)
+    else:
+        # Just add a horizontal line after the title
+        p_line = header.add_paragraph()
+        p_line.paragraph_format.space_before = Pt(2)
+        p_line.paragraph_format.space_after = Pt(0)
+        pBdr = parse_xml(
+            f'<w:pBdr {nsdecls("w")}>'
+            f'  <w:bottom w:val="single" w:sz="12" w:space="1" w:color="000000"/>'
+            f'</w:pBdr>'
+        )
+        p_line._element.get_or_add_pPr().append(pBdr)
+    
+    # ---- Build the footer ----
+    footer = section.footer
+    footer.is_linked_to_previous = False
+    
+    # Clear existing
+    for p in footer.paragraphs:
+        p.clear()
+    
+    # Horizontal line
+    p_line = footer.add_paragraph()
+    p_line.paragraph_format.space_before = Pt(0)
+    p_line.paragraph_format.space_after = Pt(2)
+    pBdr = parse_xml(
+        f'<w:pBdr {nsdecls("w")}>'
+        f'  <w:top w:val="single" w:sz="12" w:space="1" w:color="000000"/>'
+        f'</w:pBdr>'
+    )
+    p_line._element.get_or_add_pPr().append(pBdr)
+    
+    if footer_type == "statement":
+        text = (
+            "These financial statements are unaudited. They must be read in conjunction "
+            "with the attached Accountant's Compilation Report and Notes which form part "
+            "of these financial statements."
+        )
+    elif footer_type == "notes":
+        text = (
+            f"These notes should be read in conjunction with the attached financial "
+            f"statements and compilation report of {FIRM_NAME}."
+        )
+    else:
+        text = ""
+    
+    if text:
+        p_footer = footer.add_paragraph()
+        p_footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p_footer.paragraph_format.space_before = Pt(0)
+        p_footer.paragraph_format.space_after = Pt(0)
+        run = p_footer.add_run(text)
+        _set_run_font(run, size=FONT_SIZE_FOOTER, bold=True)
+    
+    return section
 
 
 def _get_period_text(fy):
@@ -351,21 +526,37 @@ def _has_cogs(sections):
 def _add_amount_line(doc, label, current, prior=None, has_prior=False,
                      bold=False, indent=0, size=FONT_SIZE_BODY, note_ref="",
                      is_section_heading=False, heading_size=None,
-                     show_cents=False, underline_amount=False,
-                     double_underline_amount=False):
+                     show_cents=False, is_subtotal=False, is_total=False):
     """Add a single line to a financial statement using tab stops.
     
-    underline_amount: adds a single underline below the amount (for subtotals)
-    double_underline_amount: adds a double underline below the amount (for grand totals)
+    Formatting matches the trust.docx reference:
+    - is_subtotal: thin top border on the paragraph (line above the amount)
+    - is_total: bold text, thin top border on the paragraph
+    - No underlines on individual amounts ever
+    - Section headings are bold and larger
     """
     p = doc.add_paragraph()
     pf = p.paragraph_format
-    pf.space_before = Pt(1)
-    pf.space_after = Pt(1)
+    pf.space_before = Pt(2)
+    pf.space_after = Pt(2)
 
     if is_section_heading:
-        pf.space_before = Pt(8)
-        pf.space_after = Pt(4)
+        pf.space_before = Pt(10)
+        pf.space_after = Pt(6)
+
+    # Add top border for subtotals and totals (thin line above)
+    if is_subtotal or is_total:
+        pf.space_before = Pt(4)
+        pBdr = parse_xml(
+            f'<w:pBdr {nsdecls("w")}>'
+            f'  <w:top w:val="single" w:sz="4" w:space="1" w:color="000000"/>'
+            f'</w:pBdr>'
+        )
+        p._element.get_or_add_pPr().append(pBdr)
+
+    # Force bold for totals
+    if is_total:
+        bold = True
 
     # Tab stops for alignment
     tab_stops = pf.tab_stops
@@ -395,19 +586,11 @@ def _add_amount_line(doc, label, current, prior=None, has_prior=False,
         current_str = _fmt(current, show_cents) if current is not None else ""
         run = p.add_run(f"\t{current_str}")
         _set_run_font(run, size=size, bold=bold)
-        if underline_amount:
-            run.font.underline = True
-        if double_underline_amount:
-            run.font.underline = 3  # WD_UNDERLINE.DOUBLE
 
         if has_prior:
             prior_str = _fmt(prior, show_cents) if prior is not None else ""
             run = p.add_run(f"\t{prior_str}")
             _set_run_font(run, size=size, bold=bold)
-            if underline_amount:
-                run.font.underline = True
-            if double_underline_amount:
-                run.font.underline = 3  # WD_UNDERLINE.DOUBLE
 
     return p
 
@@ -591,14 +774,16 @@ def _add_contents_page(doc, entity, fy, sections):
 
 def _add_trading_account(doc, entity, fy, sections, show_cents=False):
     """Add the Trading Account page (for entities with COGS)."""
-    _add_header_block(doc, entity, "Trading Account", _get_period_text(fy))
-
     has_prior = _has_prior_year(fy)
     year = str(fy.end_date.year)
     prior_year_str = str(fy.end_date.year - 1) if has_prior else None
 
-    _add_column_headers(doc, year, has_prior=has_prior, prior_year=prior_year_str,
-                        include_note=False, show_cents=show_cents)
+    _start_report_section(doc, entity,
+                          f"Trading Account\n{_get_period_text(fy)}",
+                          footer_type="statement",
+                          year=year, prior_year=prior_year_str,
+                          has_prior=has_prior, show_column_headers=True,
+                          include_note=False, show_cents=show_cents)
 
     # Trading Income
     total_trading_income = Decimal("0")
@@ -616,11 +801,11 @@ def _add_trading_account(doc, entity, fy, sections, show_cents=False):
         # Last item in the list gets an underline on the amount
         is_last = (i == len(sections["trading_income"]) - 1)
         _add_amount_line(doc, name, val, prior_val, has_prior=has_prior, indent=1,
-                         show_cents=show_cents, underline_amount=is_last)
+                         show_cents=show_cents)
 
     _add_amount_line(doc, "Total Trading Income", total_trading_income,
                      total_trading_income_prior, has_prior=has_prior, bold=True,
-                     show_cents=show_cents, underline_amount=True)
+                     show_cents=show_cents, is_total=True)
 
     doc.add_paragraph().paragraph_format.space_after = Pt(4)
 
@@ -663,13 +848,13 @@ def _add_trading_account(doc, entity, fy, sections, show_cents=False):
         # Last add item gets underline
         is_last = (i == len(add_items) - 1)
         _add_amount_line(doc, name, val, prior_val, has_prior=has_prior, indent=1,
-                         show_cents=show_cents, underline_amount=is_last)
+                         show_cents=show_cents)
 
     # Show add subtotal if there are multiple add items
     if len(add_items) > 1:
         _add_amount_line(doc, "", add_subtotal, add_subtotal_prior,
                          has_prior=has_prior, show_cents=show_cents,
-                         underline_amount=True)
+                         is_subtotal=True)
 
     # Less: Closing Stock
     if closing_stock:
@@ -680,13 +865,13 @@ def _add_trading_account(doc, entity, fy, sections, show_cents=False):
             total_cogs -= val  # Closing stock reduces COGS
             total_cogs_prior -= prior_val
             _add_amount_line(doc, name, val, prior_val, has_prior=has_prior, indent=1,
-                             show_cents=show_cents, underline_amount=True)
+                             show_cents=show_cents, is_subtotal=True)
 
     doc.add_paragraph().paragraph_format.space_after = Pt(2)
 
     _add_amount_line(doc, "Cost of Sales", total_cogs, total_cogs_prior,
                      has_prior=has_prior, bold=True, show_cents=show_cents,
-                     underline_amount=True)
+                     is_total=True)
 
     doc.add_paragraph().paragraph_format.space_after = Pt(4)
 
@@ -696,10 +881,7 @@ def _add_trading_account(doc, entity, fy, sections, show_cents=False):
 
     _add_amount_line(doc, "Gross Profit from Trading", gross_profit, gross_profit_prior,
                      has_prior=has_prior, bold=True, show_cents=show_cents,
-                     double_underline_amount=True)
-
-    _add_statement_footer(doc)
-    doc.add_page_break()
+                     is_total=True)
 
     return gross_profit, gross_profit_prior
 
@@ -711,16 +893,16 @@ def _add_trading_account(doc, entity, fy, sections, show_cents=False):
 def _add_detailed_pnl(doc, entity, fy, sections, show_cents=False,
                       gross_profit=None, gross_profit_prior=None):
     """Add the detailed P&L."""
-    _add_header_block(doc, entity,
-                      "Detailed Profit and Loss Statement",
-                      _get_period_text(fy))
-
     has_prior = _has_prior_year(fy)
     year = str(fy.end_date.year)
     prior_year_str = str(fy.end_date.year - 1) if has_prior else None
 
-    _add_column_headers(doc, year, has_prior=has_prior, prior_year=prior_year_str,
-                        include_note=False, show_cents=show_cents)
+    _start_report_section(doc, entity,
+                          f"Detailed Profit and Loss Statement\n{_get_period_text(fy)}",
+                          footer_type="statement",
+                          year=year, prior_year=prior_year_str,
+                          has_prior=has_prior, show_column_headers=True,
+                          include_note=False, show_cents=show_cents)
 
     # Income section
     total_income = Decimal("0")
@@ -756,7 +938,7 @@ def _add_detailed_pnl(doc, entity, fy, sections, show_cents=False,
                          show_cents=show_cents)
 
     _add_amount_line(doc, "Total income", total_income, total_income_prior,
-                     has_prior=has_prior, bold=False, show_cents=show_cents)
+                     has_prior=has_prior, show_cents=show_cents, is_subtotal=True)
 
     doc.add_paragraph().paragraph_format.space_after = Pt(4)
 
@@ -777,7 +959,7 @@ def _add_detailed_pnl(doc, entity, fy, sections, show_cents=False,
                          show_cents=show_cents)
 
     _add_amount_line(doc, "Total expenses", total_expenses, total_expenses_prior,
-                     has_prior=has_prior, bold=False, show_cents=show_cents)
+                     has_prior=has_prior, show_cents=show_cents, is_subtotal=True)
 
     doc.add_paragraph().paragraph_format.space_after = Pt(4)
 
@@ -793,10 +975,7 @@ def _add_detailed_pnl(doc, entity, fy, sections, show_cents=False,
         profit_label = "Profit (Loss) from Ordinary Activities before income tax"
 
     _add_amount_line(doc, profit_label, net_profit, net_profit_prior,
-                     has_prior=has_prior, bold=True, show_cents=show_cents)
-
-    _add_statement_footer(doc)
-    doc.add_page_break()
+                     has_prior=has_prior, show_cents=show_cents, is_total=True)
 
     return net_profit, net_profit_prior
 
@@ -808,16 +987,17 @@ def _add_detailed_pnl(doc, entity, fy, sections, show_cents=False,
 def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
                                 net_profit=Decimal("0"), net_profit_prior=Decimal("0")):
     """Add the detailed balance sheet."""
-    _add_header_block(doc, entity,
-                      f"Detailed Balance Sheet {_get_as_at_text(fy)}", None)
-
     has_prior = _has_prior_year(fy)
     year = str(fy.end_date.year)
     prior_year_str = str(fy.end_date.year - 1) if has_prior else None
     entity_type = entity.entity_type
 
-    _add_column_headers(doc, year, has_prior=has_prior, prior_year=prior_year_str,
-                        include_note=True, show_cents=show_cents)
+    _start_report_section(doc, entity,
+                          f"Detailed Balance Sheet {_get_as_at_text(fy)}",
+                          footer_type="statement",
+                          year=year, prior_year=prior_year_str,
+                          has_prior=has_prior, show_column_headers=True,
+                          include_note=True, show_cents=show_cents)
 
     # ---- SOLE TRADER: Equity at TOP ----
     if entity_type == "sole_trader":
@@ -860,7 +1040,7 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
 
         _add_amount_line(doc, "Total Proprietors' Funds", total_prop_funds,
                          total_prop_funds_prior, has_prior=has_prior, bold=True,
-                         show_cents=show_cents)
+                         show_cents=show_cents, is_total=True)
 
         doc.add_paragraph().paragraph_format.space_after = Pt(4)
         _add_paragraph(doc, "Represented by:", size=FONT_SIZE_BODY, bold=True, space_after=6)
@@ -948,7 +1128,7 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
                              show_cents=show_cents)
 
         _add_amount_line(doc, "Total Current Assets", total_ca, total_ca_prior,
-                         has_prior=has_prior, bold=True, show_cents=show_cents)
+                         has_prior=has_prior, bold=True, show_cents=show_cents, is_subtotal=True)
 
     # ---- Non-Current Assets ----
     total_nca = Decimal("0")
@@ -1043,7 +1223,7 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
                                  show_cents=show_cents)
 
             _add_amount_line(doc, "", ppe_total, ppe_total_prior,
-                             has_prior=has_prior, show_cents=show_cents)
+                             has_prior=has_prior, show_cents=show_cents, is_subtotal=True)
             total_nca += ppe_total
             total_nca_prior += ppe_total_prior
 
@@ -1057,23 +1237,24 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
                              show_cents=show_cents)
 
         _add_amount_line(doc, "Total Non-Current Assets", total_nca, total_nca_prior,
-                         has_prior=has_prior, bold=True, show_cents=show_cents)
+                         has_prior=has_prior, bold=True, show_cents=show_cents, is_subtotal=True)
 
     # Total Assets
     total_assets = total_ca + total_nca
     total_assets_prior = total_ca_prior + total_nca_prior
     doc.add_paragraph().paragraph_format.space_after = Pt(2)
     _add_amount_line(doc, "Total Assets", total_assets, total_assets_prior,
-                     has_prior=has_prior, bold=True, show_cents=show_cents)
+                     has_prior=has_prior, bold=True, show_cents=show_cents, is_total=True)
 
     # ---- Current Liabilities (new page) ----
     # Page break before liabilities section so it starts on its own page
-    _add_statement_footer(doc)
-    doc.add_page_break()
-    _add_header_block(doc, entity,
-                      f"Detailed Balance Sheet {_get_as_at_text(fy)} (continued)", None)
-    _add_column_headers(doc, year, has_prior=has_prior, prior_year=prior_year_str,
-                        include_note=True, show_cents=show_cents)
+    # New section for liabilities (repeating headers will handle continuation)
+    _start_report_section(doc, entity,
+                          f"Detailed Balance Sheet {_get_as_at_text(fy)}",
+                          footer_type="statement",
+                          year=year, prior_year=prior_year_str,
+                          has_prior=has_prior, show_column_headers=True,
+                          include_note=True, show_cents=show_cents)
 
     total_cl = Decimal("0")
     total_cl_prior = Decimal("0")
@@ -1164,7 +1345,7 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
                                  show_cents=show_cents)
 
         _add_amount_line(doc, "Total Current Liabilities", total_cl, total_cl_prior,
-                         has_prior=has_prior, bold=True, show_cents=show_cents)
+                         has_prior=has_prior, bold=True, show_cents=show_cents, is_subtotal=True)
 
     # ---- Non-Current Liabilities ----
     total_ncl = Decimal("0")
@@ -1224,21 +1405,21 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
                                  show_cents=show_cents)
 
         _add_amount_line(doc, "Total Non-Current Liabilities", total_ncl, total_ncl_prior,
-                         has_prior=has_prior, bold=True, show_cents=show_cents)
+                         has_prior=has_prior, bold=True, show_cents=show_cents, is_subtotal=True)
 
     # Total Liabilities
     total_liabilities = total_cl + total_ncl
     total_liabilities_prior = total_cl_prior + total_ncl_prior
     doc.add_paragraph().paragraph_format.space_after = Pt(2)
     _add_amount_line(doc, "Total Liabilities", total_liabilities, total_liabilities_prior,
-                     has_prior=has_prior, bold=True, show_cents=show_cents)
+                     has_prior=has_prior, bold=True, show_cents=show_cents, is_total=True)
 
     # Net Assets
     net_assets = total_assets - total_liabilities
     net_assets_prior = total_assets_prior - total_liabilities_prior
     doc.add_paragraph().paragraph_format.space_after = Pt(2)
     _add_amount_line(doc, "Net Assets (Liabilities)", net_assets, net_assets_prior,
-                     has_prior=has_prior, bold=True, show_cents=show_cents)
+                     has_prior=has_prior, bold=True, show_cents=show_cents, is_total=True)
 
     # ---- Equity (for non-sole-trader) ----
     if entity_type != "sole_trader":
@@ -1280,10 +1461,7 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
             total_equity_prior = net_assets_prior
 
         _add_amount_line(doc, "Total Equity", total_equity, total_equity_prior,
-                         has_prior=has_prior, bold=True, show_cents=show_cents)
-
-    _add_statement_footer(doc)
-    doc.add_page_break()
+                         has_prior=has_prior, bold=True, show_cents=show_cents, is_total=True)
 
 
 # =============================================================================
@@ -1293,14 +1471,16 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
 def _add_summary_pnl(doc, entity, fy, sections, show_cents=False,
                      net_profit=Decimal("0"), net_profit_prior=Decimal("0")):
     """Add the Summary Profit and Loss Statement (companies only)."""
-    _add_header_block(doc, entity, "Profit and Loss Statement", _get_period_text(fy))
-
     has_prior = _has_prior_year(fy)
     year = str(fy.end_date.year)
     prior_year_str = str(fy.end_date.year - 1) if has_prior else None
 
-    _add_column_headers(doc, year, has_prior=has_prior, prior_year=prior_year_str,
-                        include_note=False, show_cents=show_cents)
+    _start_report_section(doc, entity,
+                          f"Profit and Loss Statement\n{_get_period_text(fy)}",
+                          footer_type="statement",
+                          year=year, prior_year=prior_year_str,
+                          has_prior=has_prior, show_column_headers=True,
+                          include_note=True, show_cents=show_cents)
 
     # Operating profit
     _add_amount_line(doc, "Operating profit before income tax", net_profit, net_profit_prior,
@@ -1324,7 +1504,7 @@ def _add_summary_pnl(doc, entity, fy, sections, show_cents=False,
 
     _add_amount_line(doc, "Operating profit after income tax", profit_after_tax,
                      profit_after_tax_prior, has_prior=has_prior, bold=True,
-                     show_cents=show_cents)
+                     show_cents=show_cents, is_total=True)
 
     doc.add_paragraph().paragraph_format.space_after = Pt(4)
 
@@ -1354,7 +1534,7 @@ def _add_summary_pnl(doc, entity, fy, sections, show_cents=False,
 
     _add_amount_line(doc, "Total available for appropriation",
                      total_available, total_available_prior,
-                     has_prior=has_prior, bold=True, show_cents=show_cents)
+                     has_prior=has_prior, bold=True, show_cents=show_cents, is_subtotal=True)
 
     if dividends > 0 or dividends_prior > 0:
         _add_amount_line(doc, "Dividends provided for or paid",
@@ -1366,10 +1546,7 @@ def _add_summary_pnl(doc, entity, fy, sections, show_cents=False,
 
     _add_amount_line(doc, "Retained profits at end of year",
                      closing_retained, closing_retained_prior,
-                     has_prior=has_prior, bold=True, show_cents=show_cents)
-
-    _add_statement_footer(doc)
-    doc.add_page_break()
+                     has_prior=has_prior, bold=True, show_cents=show_cents, is_total=True)
 
 
 # =============================================================================
@@ -1378,9 +1555,10 @@ def _add_summary_pnl(doc, entity, fy, sections, show_cents=False,
 
 def _add_notes(doc, entity, fy, sections, show_cents=False):
     """Add notes matching the real PDF format."""
-    _add_header_block(doc, entity,
-                      "Notes to the Financial Statements",
-                      _get_period_text(fy))
+    _start_report_section(doc, entity,
+                          f"Notes to the Financial Statements\n{_get_period_text(fy)}",
+                          footer_type="notes",
+                          show_column_headers=False)
 
     entity_type = entity.entity_type
     entity_ref_str = _entity_ref(entity_type)
@@ -1657,13 +1835,11 @@ def _add_notes(doc, entity, fy, sections, show_cents=False):
         first_line_indent=Cm(1.5))
     policy_letter += 1
 
-    _add_notes_footer(doc)
-    doc.add_page_break()
-
     # ---- Note 2: Revenue ----
-    _add_header_block(doc, entity,
-                      "Notes to the Financial Statements",
-                      _get_period_text(fy))
+    _start_report_section(doc, entity,
+                          f"Notes to the Financial Statements\n{_get_period_text(fy)}",
+                          footer_type="notes",
+                          show_column_headers=False)
 
     has_prior = _has_prior_year(fy)
     year = str(fy.end_date.year)
@@ -1831,8 +2007,6 @@ def _add_notes(doc, entity, fy, sections, show_cents=False):
         _add_amount_line(doc, "Bad and doubtful debts", bad_debts, bad_debts_prior,
                          has_prior=has_prior, show_cents=show_cents)
 
-    _add_notes_footer(doc)
-    doc.add_page_break()
 
 
 # =============================================================================
@@ -1860,7 +2034,7 @@ def _add_depreciation_schedule(doc, entity, fy, show_cents=False):
             categories[asset.category] = []
         categories[asset.category].append(asset)
 
-    def _fmt(val, dp=2):
+    def _dep_fmt(val):
         """Format a decimal value for the depreciation schedule."""
         if val is None or val == 0:
             return ""
@@ -1878,21 +2052,21 @@ def _add_depreciation_schedule(doc, entity, fy, show_cents=False):
             return ""
         return d.strftime("%d/%m/%y")
 
-    for cat_name, cat_assets in categories.items():
-        # Add a new landscape section for each category (or first one)
-        new_section = doc.add_section(WD_ORIENT.LANDSCAPE)
-        new_section.orientation = WD_ORIENT.LANDSCAPE
-        new_section.page_width = Cm(29.7)
-        new_section.page_height = Cm(21.0)
-        new_section.top_margin = Cm(1.5)
-        new_section.bottom_margin = Cm(1.5)
-        new_section.left_margin = Cm(1.5)
-        new_section.right_margin = Cm(1.5)
+    # Column widths in cm for the 14-column depreciation table
+    # Asset | Total | Priv% | OWDV | Date | Consid | Date | Cost | Value | T | Rate | Deprec | Priv | CWDV
+    _DEP_COL_WIDTHS_CM = [5.0, 1.7, 0.9, 1.7, 1.4, 1.4, 1.4, 1.4, 1.4, 0.5, 1.1, 1.7, 1.1, 1.7]
 
-        # Header
-        _add_header_block(doc, entity,
-                          f"Depreciation Schedule",
-                          f"for the year ended {fy.end_date.strftime('%-d %B, %Y')}")
+    for cat_name, cat_assets in categories.items():
+        # New landscape section for each depreciation category
+        _start_report_section(doc, entity,
+                              f"Depreciation Schedule\nfor the year ended {fy.end_date.strftime('%-d %B, %Y')}",
+                              footer_type="statement",
+                              show_column_headers=False, landscape=True)
+
+        # Reduce margins for landscape depreciation schedule to give more room
+        current_section = doc.sections[-1]
+        current_section.left_margin = Cm(1.0)
+        current_section.right_margin = Cm(1.0)
 
         _add_paragraph(doc, cat_name, size=FONT_SIZE_BODY, bold=True,
                        underline=True, space_after=6)
@@ -1908,7 +2082,18 @@ def _add_depreciation_schedule(doc, entity, fy, show_cents=False):
         num_cols = len(col_headers)
         table = doc.add_table(rows=1, cols=num_cols)
         table.alignment = WD_TABLE_ALIGNMENT.CENTER
-        table.autofit = True
+        table.autofit = False
+
+        # Force fixed table layout so Word respects our column widths exactly
+        tbl = table._tbl
+        tbl_pr = tbl.tblPr if tbl.tblPr is not None else parse_xml(f'<w:tblPr {nsdecls("w")}/>')
+        tbl_layout = parse_xml(f'<w:tblLayout {nsdecls("w")} w:type="fixed"/>')
+        tbl_pr.append(tbl_layout)
+
+        # Set explicit column widths to prevent text wrapping
+        for row in table.rows:
+            for i, width_cm in enumerate(_DEP_COL_WIDTHS_CM):
+                row.cells[i].width = Cm(width_cm)
 
         # Style header row
         hdr_cells = table.rows[0].cells
@@ -1940,23 +2125,24 @@ def _add_depreciation_schedule(doc, entity, fy, show_cents=False):
             row_cells = table.add_row().cells
             values = [
                 asset.asset_name,
-                _fmt(asset.total_cost),
+                _dep_fmt(asset.total_cost),
                 f"{asset.private_use_pct:.2f}" if asset.private_use_pct else "",
-                _fmt(asset.opening_wdv),
+                _dep_fmt(asset.opening_wdv),
                 _fmt_date(asset.disposal_date),
-                _fmt(asset.disposal_consideration),
+                _dep_fmt(asset.disposal_consideration),
                 _fmt_date(asset.addition_date),
-                _fmt(asset.addition_cost),
-                _fmt(asset.depreciable_value),
+                _dep_fmt(asset.addition_cost),
+                _dep_fmt(asset.depreciable_value),
                 asset.get_method_display()[0] if asset.method else "",
                 _fmt_rate(asset.rate),
-                _fmt(asset.depreciation_amount),
-                _fmt(asset.private_depreciation),
-                _fmt(asset.closing_wdv),
+                _dep_fmt(asset.depreciation_amount),
+                _dep_fmt(asset.private_depreciation),
+                _dep_fmt(asset.closing_wdv),
             ]
 
             for i, val in enumerate(values):
                 cell = row_cells[i]
+                cell.width = Cm(_DEP_COL_WIDTHS_CM[i])
                 p = cell.paragraphs[0]
                 p.alignment = WD_ALIGN_PARAGRAPH.RIGHT if i > 0 else WD_ALIGN_PARAGRAPH.LEFT
                 run = p.add_run(str(val))
@@ -1976,14 +2162,15 @@ def _add_depreciation_schedule(doc, entity, fy, show_cents=False):
         sub_row = table.add_row().cells
         sub_values = [
             "Subtotals",
-            _fmt(cat_total_cost), "", _fmt(cat_owdv),
-            "", _fmt(cat_disp_consid),
-            "", _fmt(cat_add_cost),
+            _dep_fmt(cat_total_cost), "", _dep_fmt(cat_owdv),
+            "", _dep_fmt(cat_disp_consid),
+            "", _dep_fmt(cat_add_cost),
             "", "", "",
-            _fmt(cat_deprec), _fmt(cat_priv_dep), _fmt(cat_cwdv),
+            _dep_fmt(cat_deprec), _dep_fmt(cat_priv_dep), _dep_fmt(cat_cwdv),
         ]
         for i, val in enumerate(sub_values):
             cell = sub_row[i]
+            cell.width = Cm(_DEP_COL_WIDTHS_CM[i])
             p = cell.paragraphs[0]
             p.alignment = WD_ALIGN_PARAGRAPH.RIGHT if i > 0 else WD_ALIGN_PARAGRAPH.LEFT
             run = p.add_run(str(val))
@@ -1994,25 +2181,18 @@ def _add_depreciation_schedule(doc, entity, fy, show_cents=False):
         # Net depreciation line
         net_dep = cat_deprec - cat_priv_dep
         doc.add_paragraph().paragraph_format.space_after = Pt(4)
-        _add_paragraph(doc, f"Deduct Private Portion: {_fmt(cat_priv_dep)}",
+        _add_paragraph(doc, f"Deduct Private Portion: {_dep_fmt(cat_priv_dep)}",
                        size=Pt(8), space_after=2)
         p = doc.add_paragraph()
-        run = p.add_run(f"Net Depreciation: {_fmt(net_dep)}")
+        run = p.add_run(f"Net Depreciation: {_dep_fmt(net_dep)}")
         run.font.size = Pt(8)
         run.font.name = FONT_NAME
         run.font.bold = True
         run.font.underline = True
         p.paragraph_format.space_after = Pt(6)
 
-    # Return to portrait for remaining pages
-    new_section = doc.add_section(WD_ORIENT.PORTRAIT)
-    new_section.orientation = WD_ORIENT.PORTRAIT
-    new_section.page_width = Cm(21.0)
-    new_section.page_height = Cm(29.7)
-    new_section.top_margin = Cm(2.54)
-    new_section.bottom_margin = Cm(2.54)
-    new_section.left_margin = Cm(2.54)
-    new_section.right_margin = Cm(2.54)
+    # Note: No need to return to portrait here — the next report's
+    # _start_report_section() call will create a new portrait section automatically.
 
 
 # =============================================================================
@@ -2022,14 +2202,15 @@ def _add_depreciation_schedule(doc, entity, fy, show_cents=False):
 def _add_partners_distribution(doc, entity, fy, sections, show_cents=False,
                                net_profit=Decimal("0"), net_profit_prior=Decimal("0")):
     """Add the partners' profit distribution summary (partnership only)."""
-    _add_header_block(doc, entity,
-                      "Partners' Profit Distribution Summary",
-                      _get_period_text(fy))
-
     has_prior = _has_prior_year(fy)
     year = str(fy.end_date.year)
 
-    _add_column_headers(doc, year, has_prior=False, include_note=False, show_cents=show_cents)
+    _start_report_section(doc, entity,
+                          f"Partners' Profit Distribution Summary\n{_get_period_text(fy)}",
+                          footer_type="statement",
+                          year=year, has_prior=False,
+                          show_column_headers=True,
+                          include_note=False, show_cents=show_cents)
 
     _add_paragraph(doc, "Partners' Share of Profit", size=FONT_SIZE_BODY, bold=True, space_after=6)
 
@@ -2048,8 +2229,6 @@ def _add_partners_distribution(doc, entity, fy, sections, show_cents=False,
     _add_amount_line(doc, "Total Profit Distributed", net_profit, has_prior=False, bold=True,
                      show_cents=show_cents)
 
-    doc.add_page_break()
-
 
 # =============================================================================
 # Declaration
@@ -2057,8 +2236,6 @@ def _add_partners_distribution(doc, entity, fy, sections, show_cents=False,
 
 def _add_declaration(doc, entity, fy):
     """Add the declaration page — always starts on a new page for signing."""
-    # Ensure declaration starts on its own page
-    doc.add_page_break()
     entity_type = entity.entity_type
     signatories = entity.officers.filter(
         is_signatory=True,
@@ -2070,7 +2247,8 @@ def _add_declaration(doc, entity, fy):
 
     if entity_type == "company":
         title = "Director's Declaration" if singular else "Directors' Declaration"
-        _add_header_block(doc, entity, title, None)
+        _start_report_section(doc, entity, title,
+                              footer_type="none", show_column_headers=False)
 
         director_word = "director" if singular else "directors"
         has_have = "has" if singular else "have"
@@ -2114,7 +2292,8 @@ def _add_declaration(doc, entity, fy):
             _add_paragraph(doc, "Director", size=FONT_SIZE_BODY, space_after=6)
 
     elif entity_type == "trust":
-        _add_header_block(doc, entity, "Trustee's Declaration", None)
+        _start_report_section(doc, entity, "Trustee's Declaration",
+                              footer_type="none", show_column_headers=False)
 
         _add_paragraph(
             doc,
@@ -2154,7 +2333,8 @@ def _add_declaration(doc, entity, fy):
             _add_paragraph(doc, "(Trustee)", size=FONT_SIZE_BODY, space_after=6)
 
     elif entity_type == "partnership":
-        _add_header_block(doc, entity, "Partner Declaration", None)
+        _start_report_section(doc, entity, "Partner Declaration",
+                              footer_type="none", show_column_headers=False)
 
         _add_paragraph(
             doc,
@@ -2189,7 +2369,8 @@ def _add_declaration(doc, entity, fy):
             _add_paragraph(doc, "Partner", size=FONT_SIZE_BODY, space_after=6)
 
     else:  # sole_trader
-        _add_header_block(doc, entity, "Proprietor Declaration", None)
+        _start_report_section(doc, entity, "Proprietor Declaration",
+                              footer_type="none", show_column_headers=False)
 
         _add_paragraph(
             doc,
@@ -2224,8 +2405,6 @@ def _add_declaration(doc, entity, fy):
 
     _add_paragraph(doc, "Dated:", size=FONT_SIZE_BODY, space_after=2)
 
-    doc.add_page_break()
-
 
 # =============================================================================
 # Compilation Report
@@ -2233,8 +2412,9 @@ def _add_declaration(doc, entity, fy):
 
 def _add_compilation_report(doc, entity, fy):
     """Add the compilation report (APES 315)."""
-    _add_header_block(doc, entity,
-                      f"Compilation Report to {entity.entity_name}", None)
+    _start_report_section(doc, entity,
+                          f"Compilation Report to {entity.entity_name}",
+                          footer_type="none", show_column_headers=False)
 
     entity_type = entity.entity_type
     end_date_str = fy.end_date.strftime('%-d %B %Y')
