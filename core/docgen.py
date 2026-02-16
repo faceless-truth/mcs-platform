@@ -202,13 +202,18 @@ def _start_report_section(doc, entity, report_title, footer_type="statement",
     section.left_margin = Cm(2.54)
     section.right_margin = Cm(2.54)
     
+    # Use explicit A4 dimensions to avoid swap-based bugs when consecutive
+    # sections share the same orientation (e.g., multiple landscape depreciation pages).
+    A4_SHORT = Cm(21.0)   # 210mm
+    A4_LONG  = Cm(29.7)   # 297mm
     if landscape:
         section.orientation = WD_ORIENT.LANDSCAPE
-        new_width, new_height = section.page_height, section.page_width
-        section.page_width = new_width
-        section.page_height = new_height
+        section.page_width  = A4_LONG
+        section.page_height = A4_SHORT
     else:
         section.orientation = WD_ORIENT.PORTRAIT
+        section.page_width  = A4_SHORT
+        section.page_height = A4_LONG
     
     # Different first page = False (same header on all pages)
     section.different_first_page_header_footer = False
