@@ -28,6 +28,7 @@ urlpatterns = [
     # Trial Balance
     path("years/<uuid:pk>/import/", views.trial_balance_import, name="trial_balance_import"),
     path("years/<uuid:pk>/trial-balance/", views.trial_balance_view, name="trial_balance_view"),
+    path("years/<uuid:pk>/trial-balance/pdf/", views.trial_balance_pdf, name="trial_balance_pdf"),
 
     # Account Mapping
     path("mapping/", views.account_mapping_list, name="account_mapping_list"),
@@ -41,6 +42,7 @@ urlpatterns = [
     path("journals/<uuid:pk>/post/", views.journal_post, name="journal_post"),
     path("journals/<uuid:pk>/delete/", views.journal_delete, name="journal_delete"),
     path("years/<uuid:pk>/accounts-api/", views.account_list_api, name="account_list_api"),
+    path("years/<uuid:pk>/journals/pdf/", views.journals_pdf, name="journals_pdf"),
 
     # Financial Statements Preview
     path("years/<uuid:pk>/statements/", views.financial_statements_view, name="financial_statements_view"),
