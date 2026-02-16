@@ -861,3 +861,53 @@ def entity_officer_delete(request, pk):
     officer.delete()
     messages.success(request, f"Removed {name}.")
     return redirect("core:entity_officers", pk=entity.pk)
+
+
+# ---------------------------------------------------------------------------
+# Access Ledger Import
+# ---------------------------------------------------------------------------
+@login_required
+def access_ledger_import(request):
+    """Import an Access Ledger ZIP export."""
+    from .access_ledger_import import import_access_ledger_zip
+
+    result = None
+
+    if request.method == "POST":
+        zip_file = request.FILES.get("zip_file")
+        if not zip_file:
+            messages.error(request, "Please select a ZIP file.")
+        elif not zip_file.name.lower().endswith(".zip"):
+            messages.error(request, "File must be a .zip file.")
+        else:
+            replace = request.POST.get("replace_existing") == "1"
+            try:
+                result = import_access_ledger_zip(
+                    zip_file,
+                    replace_existing=replace,
+                )
+                if result["errors"]:
+                    messages.warning(
+                        request,
+                        f"Import completed with {len(result['errors'])} error(s)."
+                    )
+                else:
+                    messages.success(
+                        request,
+                        f"Successfully imported {result['entity'].entity_name}: "
+                        f"{result['years_imported']} years, "
+                        f"{result['total_tb_lines']} TB lines, "
+                        f"{result['total_dep_assets']} depreciation assets."
+                    )
+                _log_action(
+                    request, "import",
+                    f"Imported Access Ledger ZIP: {zip_file.name} "
+                    f"({result['years_imported']} years)",
+                    result.get("entity"),
+                )
+            except Exception as e:
+                messages.error(request, f"Import failed: {str(e)}")
+
+    return render(request, "core/access_ledger_import.html", {
+        "result": result,
+    })

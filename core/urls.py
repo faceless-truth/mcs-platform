@@ -50,6 +50,9 @@ urlpatterns = [
     path("officers/<uuid:pk>/edit/", views.entity_officer_edit, name="entity_officer_edit"),
     path("officers/<uuid:pk>/delete/", views.entity_officer_delete, name="entity_officer_delete"),
 
+    # Access Ledger Import
+    path("import/access-ledger/", views.access_ledger_import, name="access_ledger_import"),
+
     # HTMX partials
     path("htmx/client-search/", views.htmx_client_search, name="htmx_client_search"),
     path("htmx/tb-line/<uuid:pk>/map/", views.htmx_map_tb_line, name="htmx_map_tb_line"),

@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}Import from Access Ledger - StatementHub{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-10 mx-auto">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="{% url 'core:dashboard' %}">Dashboard</a></li>
+                <li class="breadcrumb-item active">Import from Access Ledger</li>
+            </ol>
+        </nav>
+
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-file-earmark-zip"></i> Import from Access Ledger</h5>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-info">
+                    <h6 class="alert-heading">Access Ledger ZIP Export</h6>
+                    <p class="mb-1">Upload a <strong>.zip</strong> file exported from Access Ledger (HSoft). The ZIP should contain year folders with the entity's data files.</p>
+                    <p class="mb-1 mt-2"><strong>Expected structure:</strong></p>
+                    <pre class="bg-white p-2 border rounded small mb-2">HL_CODE.zip
+├── HL_CODE_2016/
+│   ├── Client.txt
+│   ├── Entity.txt
+│   ├── Year.txt
+│   ├── Chart.txt
+│   ├── Balance.txt
+│   ├── AssetMaster.txt
+│   └── ...
+├── HL_CODE_2017/
+│   └── ...
+└── HL_CODE_2025/
+    └── ...</pre>
+                    <p class="mb-0"><strong>What gets imported:</strong></p>
+                    <ul class="mb-0 small">
+                        <li>Entity details (name, ABN, TFN, type, address, directors/trustees)</li>
+                        <li>All financial years with prior year linking for comparatives</li>
+                        <li>Trial balance data for each year (current + prior year figures)</li>
+                        <li>Depreciation schedules with full asset details</li>
+                        <li>Chart of accounts with automatic account mapping</li>
+                    </ul>
+                </div>
+
+                {% if result %}
+                <div class="alert {% if result.errors %}alert-danger{% else %}alert-success{% endif %} mt-3">
+                    <h6 class="alert-heading">
+                        {% if result.errors %}
+                        <i class="bi bi-exclamation-triangle"></i> Import completed with errors
+                        {% else %}
+                        <i class="bi bi-check-circle"></i> Import successful
+                        {% endif %}
+                    </h6>
+
+                    {% if result.entity %}
+                    <table class="table table-sm table-bordered bg-white mt-2 mb-2">
+                        <tbody>
+                            <tr><th style="width:200px">Entity</th><td>{{ result.entity.entity_name }}</td></tr>
+                            <tr><th>Type</th><td>{{ result.entity.get_entity_type_display }}</td></tr>
+                            <tr><th>ABN</th><td>{{ result.entity.abn|default:"N/A" }}</td></tr>
+                            <tr><th>Status</th><td>{% if result.entity_created %}<span class="badge bg-success">New</span>{% else %}<span class="badge bg-info">Existing</span>{% endif %}</td></tr>
+                            <tr><th>Years imported</th><td>{{ result.years_imported }}</td></tr>
+                            <tr><th>Trial balance lines</th><td>{{ result.total_tb_lines }}</td></tr>
+                            <tr><th>Depreciation assets</th><td>{{ result.total_dep_assets }}</td></tr>
+                            <tr><th>Officers created</th><td>{{ result.officers_created }}</td></tr>
+                        </tbody>
+                    </table>
+                    {% endif %}
+
+                    {% if result.warnings %}
+                    <div class="mt-2">
+                        <strong>Warnings:</strong>
+                        <ul class="mb-0 small">
+                            {% for w in result.warnings %}
+                            <li class="text-warning">{{ w }}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    {% endif %}
+
+                    {% if result.errors %}
+                    <div class="mt-2">
+                        <strong>Errors:</strong>
+                        <ul class="mb-0 small">
+                            {% for e in result.errors %}
+                            <li class="text-danger">{{ e }}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    {% endif %}
+
+                    {% if result.entity %}
+                    <div class="mt-3">
+                        <a href="{% url 'core:entity_detail' pk=result.entity.pk %}" class="btn btn-sm btn-primary">
+                            <i class="bi bi-arrow-right"></i> View Entity
+                        </a>
+                    </div>
+                    {% endif %}
+                </div>
+                {% endif %}
+
+                <form method="post" enctype="multipart/form-data" class="mt-3">
+                    {% csrf_token %}
+                    <div class="mb-3">
+                        <label for="id_zip_file" class="form-label">Select Access Ledger ZIP File</label>
+                        <input type="file" name="zip_file" id="id_zip_file" class="form-control" accept=".zip" required>
+                        <div class="form-text">Maximum file size: 100MB</div>
+                    </div>
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input type="checkbox" name="replace_existing" id="id_replace" class="form-check-input" value="1">
+                            <label for="id_replace" class="form-check-label">
+                                Replace existing data if entity already exists
+                            </label>
+                            <div class="form-text text-danger">Warning: This will delete all existing financial year data for this entity.</div>
+                        </div>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-upload"></i> Import
+                        </button>
+                        <a href="{% url 'core:dashboard' %}" class="btn btn-outline-secondary">Cancel</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
