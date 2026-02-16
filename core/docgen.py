@@ -351,8 +351,13 @@ def _has_cogs(sections):
 def _add_amount_line(doc, label, current, prior=None, has_prior=False,
                      bold=False, indent=0, size=FONT_SIZE_BODY, note_ref="",
                      is_section_heading=False, heading_size=None,
-                     show_cents=False):
-    """Add a single line to a financial statement using tab stops."""
+                     show_cents=False, underline_amount=False,
+                     double_underline_amount=False):
+    """Add a single line to a financial statement using tab stops.
+    
+    underline_amount: adds a single underline below the amount (for subtotals)
+    double_underline_amount: adds a double underline below the amount (for grand totals)
+    """
     p = doc.add_paragraph()
     pf = p.paragraph_format
     pf.space_before = Pt(1)
@@ -390,11 +395,19 @@ def _add_amount_line(doc, label, current, prior=None, has_prior=False,
         current_str = _fmt(current, show_cents) if current is not None else ""
         run = p.add_run(f"\t{current_str}")
         _set_run_font(run, size=size, bold=bold)
+        if underline_amount:
+            run.font.underline = True
+        if double_underline_amount:
+            run.font.underline = 3  # WD_UNDERLINE.DOUBLE
 
         if has_prior:
             prior_str = _fmt(prior, show_cents) if prior is not None else ""
             run = p.add_run(f"\t{prior_str}")
             _set_run_font(run, size=size, bold=bold)
+            if underline_amount:
+                run.font.underline = True
+            if double_underline_amount:
+                run.font.underline = 3  # WD_UNDERLINE.DOUBLE
 
     return p
 
@@ -595,17 +608,19 @@ def _add_trading_account(doc, entity, fy, sections, show_cents=False):
                      is_section_heading=True, heading_size=FONT_SIZE_SUBHEADING, bold=True,
                      show_cents=show_cents)
 
-    for code, name, balance, prior in sections["trading_income"]:
+    for i, (code, name, balance, prior) in enumerate(sections["trading_income"]):
         val = abs(balance)
         prior_val = abs(prior) if prior else Decimal("0")
         total_trading_income += val
         total_trading_income_prior += prior_val
+        # Last item in the list gets an underline on the amount
+        is_last = (i == len(sections["trading_income"]) - 1)
         _add_amount_line(doc, name, val, prior_val, has_prior=has_prior, indent=1,
-                         show_cents=show_cents)
+                         show_cents=show_cents, underline_amount=is_last)
 
     _add_amount_line(doc, "Total Trading Income", total_trading_income,
-                     total_trading_income_prior, has_prior=has_prior, bold=False,
-                     show_cents=show_cents)
+                     total_trading_income_prior, has_prior=has_prior, bold=True,
+                     show_cents=show_cents, underline_amount=True)
 
     doc.add_paragraph().paragraph_format.space_after = Pt(4)
 
@@ -632,37 +647,46 @@ def _add_trading_account(doc, entity, fy, sections, show_cents=False):
             other_cogs.append((code, name, balance, prior))
 
     # Add: Opening Stock + Purchases
-    if opening_stock:
-        _add_paragraph(doc, "Add:", size=FONT_SIZE_BODY, bold=False, space_after=2)
-    for code, name, balance, prior in opening_stock:
-        val = abs(balance) if balance else Decimal("0")
-        prior_val = abs(prior) if prior else Decimal("0")
-        total_cogs += val
-        total_cogs_prior += prior_val
-        _add_amount_line(doc, name, val, prior_val, has_prior=has_prior, indent=1,
-                         show_cents=show_cents)
+    add_items = opening_stock + other_cogs
+    if add_items:
+        _add_paragraph(doc, "Add:", size=FONT_SIZE_BODY, bold=True, space_after=2)
 
-    for code, name, balance, prior in other_cogs:
+    add_subtotal = Decimal("0")
+    add_subtotal_prior = Decimal("0")
+    for i, (code, name, balance, prior) in enumerate(add_items):
         val = abs(balance) if balance else Decimal("0")
         prior_val = abs(prior) if prior else Decimal("0")
+        add_subtotal += val
+        add_subtotal_prior += prior_val
         total_cogs += val
         total_cogs_prior += prior_val
+        # Last add item gets underline
+        is_last = (i == len(add_items) - 1)
         _add_amount_line(doc, name, val, prior_val, has_prior=has_prior, indent=1,
-                         show_cents=show_cents)
+                         show_cents=show_cents, underline_amount=is_last)
+
+    # Show add subtotal if there are multiple add items
+    if len(add_items) > 1:
+        _add_amount_line(doc, "", add_subtotal, add_subtotal_prior,
+                         has_prior=has_prior, show_cents=show_cents,
+                         underline_amount=True)
 
     # Less: Closing Stock
     if closing_stock:
-        _add_paragraph(doc, "Less:", size=FONT_SIZE_BODY, bold=False, space_after=2)
+        _add_paragraph(doc, "Less:", size=FONT_SIZE_BODY, bold=True, space_after=2)
         for code, name, balance, prior in closing_stock:
             val = abs(balance) if balance else Decimal("0")
             prior_val = abs(prior) if prior else Decimal("0")
             total_cogs -= val  # Closing stock reduces COGS
             total_cogs_prior -= prior_val
             _add_amount_line(doc, name, val, prior_val, has_prior=has_prior, indent=1,
-                             show_cents=show_cents)
+                             show_cents=show_cents, underline_amount=True)
+
+    doc.add_paragraph().paragraph_format.space_after = Pt(2)
 
     _add_amount_line(doc, "Cost of Sales", total_cogs, total_cogs_prior,
-                     has_prior=has_prior, bold=False, show_cents=show_cents)
+                     has_prior=has_prior, bold=True, show_cents=show_cents,
+                     underline_amount=True)
 
     doc.add_paragraph().paragraph_format.space_after = Pt(4)
 
@@ -671,7 +695,8 @@ def _add_trading_account(doc, entity, fy, sections, show_cents=False):
     gross_profit_prior = total_trading_income_prior - total_cogs_prior
 
     _add_amount_line(doc, "Gross Profit from Trading", gross_profit, gross_profit_prior,
-                     has_prior=has_prior, bold=True, show_cents=show_cents)
+                     has_prior=has_prior, bold=True, show_cents=show_cents,
+                     double_underline_amount=True)
 
     _add_statement_footer(doc)
     doc.add_page_break()
@@ -1041,7 +1066,15 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
     _add_amount_line(doc, "Total Assets", total_assets, total_assets_prior,
                      has_prior=has_prior, bold=True, show_cents=show_cents)
 
-    # ---- Current Liabilities ----
+    # ---- Current Liabilities (new page) ----
+    # Page break before liabilities section so it starts on its own page
+    _add_statement_footer(doc)
+    doc.add_page_break()
+    _add_header_block(doc, entity,
+                      f"Detailed Balance Sheet {_get_as_at_text(fy)} (continued)", None)
+    _add_column_headers(doc, year, has_prior=has_prior, prior_year=prior_year_str,
+                        include_note=True, show_cents=show_cents)
+
     total_cl = Decimal("0")
     total_cl_prior = Decimal("0")
 
@@ -2023,7 +2056,9 @@ def _add_partners_distribution(doc, entity, fy, sections, show_cents=False,
 # =============================================================================
 
 def _add_declaration(doc, entity, fy):
-    """Add the declaration page."""
+    """Add the declaration page — always starts on a new page for signing."""
+    # Ensure declaration starts on its own page
+    doc.add_page_break()
     entity_type = entity.entity_type
     signatories = entity.officers.filter(
         is_signatory=True,
