@@ -32,6 +32,14 @@
         <a href="{% url 'core:adjustment_create' pk=fy.pk %}" class="btn btn-outline-primary btn-sm">
             <i class="bi bi-journal-plus"></i> New Journal Entry
         </a>
+        {% elif fy.is_locked %}
+        <button class="btn btn-outline-success btn-sm" disabled title="Change status to Draft to import trial balance">
+            <i class="bi bi-upload"></i> Import TB
+        </button>
+        <button class="btn btn-outline-primary btn-sm" disabled title="Change status to Draft to create journal entries"
+                onclick="alert('This financial year is finalised. Change the status back to Draft to create journal entries.');">
+            <i class="bi bi-lock"></i> New Journal Entry
+        </button>
         {% endif %}
         {% if unmapped_count > 0 %}
         <a href="{% url 'core:map_client_accounts' pk=fy.pk %}" class="btn btn-warning btn-sm">
@@ -163,15 +171,25 @@
 
     <!-- Journals Tab -->
     <div class="tab-pane fade p-3" id="tab-journals">
-        {% if not fy.is_locked and user.can_edit %}
         <div class="d-flex justify-content-between align-items-center mb-3">
             <h6 class="mb-0">Journal Entries</h6>
+            {% if not fy.is_locked and user.can_edit %}
             <a href="{% url 'core:adjustment_create' pk=fy.pk %}" class="btn btn-primary btn-sm">
                 <i class="bi bi-journal-plus"></i> New Journal Entry
             </a>
+            {% else %}
+            <button class="btn btn-primary btn-sm" disabled
+                    title="Change status to Draft to create journal entries"
+                    onclick="alert('This financial year is finalised. Change the status back to Draft to create journal entries.');">
+                <i class="bi bi-lock"></i> New Journal Entry
+            </button>
+            {% endif %}
         </div>
-        {% else %}
-        <h6 class="mb-3">Journal Entries</h6>
+        {% if fy.is_locked %}
+        <div class="alert alert-info py-2 mb-3">
+            <i class="bi bi-lock-fill"></i>
+            <strong>Journals are locked.</strong> This financial year is finalised. To add, edit, or delete journal entries, change the status back to <strong>Draft</strong> using the status dropdown above.
+        </div>
         {% endif %}
 
         {% for adj in adjustments %}
@@ -252,6 +270,8 @@
             <a href="{% url 'core:adjustment_create' pk=fy.pk %}" class="btn btn-primary btn-sm">
                 <i class="bi bi-journal-plus"></i> Create First Journal Entry
             </a>
+            {% else %}
+            <p class="small text-muted">Change the status to <strong>Draft</strong> to create journal entries.</p>
             {% endif %}
         </div>
         {% endfor %}
