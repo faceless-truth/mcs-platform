@@ -34,9 +34,14 @@ urlpatterns = [
     path("mapping/create/", views.account_mapping_create, name="account_mapping_create"),
     path("years/<uuid:pk>/map-accounts/", views.map_client_accounts, name="map_client_accounts"),
 
-    # Adjusting Journals
+    # Journal Entries
     path("years/<uuid:pk>/adjustments/", views.adjustment_list, name="adjustment_list"),
     path("years/<uuid:pk>/adjustments/create/", views.adjustment_create, name="adjustment_create"),
+    path("journals/<uuid:pk>/", views.journal_detail, name="journal_detail"),
+    path("journals/<uuid:pk>/post/", views.journal_post, name="journal_post"),
+    path("journals/<uuid:pk>/reverse/", views.journal_reverse, name="journal_reverse"),
+    path("journals/<uuid:pk>/delete/", views.journal_delete, name="journal_delete"),
+    path("years/<uuid:pk>/accounts-api/", views.account_list_api, name="account_list_api"),
 
     # Financial Statements Preview
     path("years/<uuid:pk>/statements/", views.financial_statements_view, name="financial_statements_view"),

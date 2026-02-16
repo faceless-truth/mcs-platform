@@ -30,7 +30,7 @@
             <i class="bi bi-upload"></i> Import TB
         </a>
         <a href="{% url 'core:adjustment_create' pk=fy.pk %}" class="btn btn-outline-primary btn-sm">
-            <i class="bi bi-journal-plus"></i> Add Adjustment
+            <i class="bi bi-journal-plus"></i> New Journal Entry
         </a>
         {% endif %}
         {% if unmapped_count > 0 %}
@@ -86,8 +86,8 @@
         </button>
     </li>
     <li class="nav-item">
-        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-adj" type="button">
-            <i class="bi bi-journal-text"></i> Adjustments ({{ adjustments.count }})
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-journals" type="button">
+            <i class="bi bi-journal-text"></i> Journals ({{ adjustments.count }})
         </button>
     </li>
     <li class="nav-item">
@@ -161,34 +161,102 @@
         {% endif %}
     </div>
 
-    <!-- Adjustments Tab -->
-    <div class="tab-pane fade p-3" id="tab-adj">
+    <!-- Journals Tab -->
+    <div class="tab-pane fade p-3" id="tab-journals">
+        {% if not fy.is_locked and user.can_edit %}
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h6 class="mb-0">Journal Entries</h6>
+            <a href="{% url 'core:adjustment_create' pk=fy.pk %}" class="btn btn-primary btn-sm">
+                <i class="bi bi-journal-plus"></i> New Journal Entry
+            </a>
+        </div>
+        {% else %}
+        <h6 class="mb-3">Journal Entries</h6>
+        {% endif %}
+
         {% for adj in adjustments %}
-        <div class="card mb-2">
+        <div class="card mb-2 {% if adj.status == 'reversed' %}border-secondary{% elif adj.status == 'posted' %}border-success{% else %}border-warning{% endif %}">
             <div class="card-body py-2">
-                <div class="d-flex justify-content-between">
+                <div class="d-flex justify-content-between align-items-start">
                     <div>
-                        <strong>{{ adj.journal_date|date:"d M Y" }}</strong> &mdash; {{ adj.description }}
+                        <a href="{% url 'core:journal_detail' pk=adj.pk %}" class="text-decoration-none">
+                            <strong class="me-2">{{ adj.reference_number|default:"DRAFT" }}</strong>
+                        </a>
+                        <span class="badge bg-{% if adj.status == 'draft' %}warning text-dark{% elif adj.status == 'posted' %}success{% else %}secondary{% endif %} me-1">
+                            {{ adj.get_status_display }}
+                        </span>
+                        <span class="badge bg-light text-dark border me-1">{{ adj.get_journal_type_display }}</span>
+                        <span class="text-muted ms-2">{{ adj.journal_date|date:"d M Y" }}</span>
                     </div>
-                    <small class="text-muted">by {{ adj.created_by.get_full_name|default:"System" }} on {{ adj.created_at|date:"d/m/Y H:i" }}</small>
+                    <div class="d-flex align-items-center gap-2">
+                        <small class="text-muted">
+                            {{ adj.created_by.get_full_name|default:"System" }} &middot; {{ adj.created_at|date:"d/m/Y H:i" }}
+                        </small>
+                        {% if adj.status == 'draft' and not fy.is_locked %}
+                        <form method="post" action="{% url 'core:journal_post' pk=adj.pk %}" class="d-inline">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-sm btn-outline-success" title="Post journal">
+                                <i class="bi bi-check-circle"></i> Post
+                            </button>
+                        </form>
+                        {% elif adj.status == 'posted' and not fy.is_locked %}
+                        <form method="post" action="{% url 'core:journal_reverse' pk=adj.pk %}" class="d-inline"
+                              onsubmit="return confirm('Are you sure you want to reverse this journal? A reversing entry will be created.');">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-sm btn-outline-danger" title="Reverse journal">
+                                <i class="bi bi-arrow-counterclockwise"></i> Reverse
+                            </button>
+                        </form>
+                        {% endif %}
+                    </div>
                 </div>
-                <table class="table table-sm mt-2 mb-0" style="max-width: 500px;">
-                    <thead><tr><th>Account</th><th class="text-end">Debit</th><th class="text-end">Credit</th></tr></thead>
+                <p class="mb-1 mt-1">{{ adj.description }}</p>
+                {% if adj.reversal_of_journal %}
+                <small class="text-info"><i class="bi bi-arrow-return-left"></i> Reversal of {{ adj.reversal_of_journal.reference_number }}</small>
+                {% endif %}
+                {% if adj.reversed_by %}
+                <small class="text-secondary"><i class="bi bi-arrow-right"></i> Reversed by {{ adj.reversed_by.reference_number }}</small>
+                {% endif %}
+                <table class="table table-sm mt-2 mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width: 120px;">Account</th>
+                            <th>Name</th>
+                            <th>Description</th>
+                            <th class="text-end" style="width: 120px;">Debit</th>
+                            <th class="text-end" style="width: 120px;">Credit</th>
+                        </tr>
+                    </thead>
                     <tbody>
                         {% for line in adj.lines.all %}
                         <tr>
-                            <td><code>{{ line.account_code }}</code> {{ line.account_name }}</td>
-                            <td class="text-end">{{ line.debit|floatformat:2 }}</td>
-                            <td class="text-end">{{ line.credit|floatformat:2 }}</td>
+                            <td><code>{{ line.account_code }}</code></td>
+                            <td>{{ line.account_name }}</td>
+                            <td class="text-muted">{{ line.description }}</td>
+                            <td class="text-end">{% if line.debit %}{{ line.debit|floatformat:2 }}{% endif %}</td>
+                            <td class="text-end">{% if line.credit %}{{ line.credit|floatformat:2 }}{% endif %}</td>
                         </tr>
                         {% endfor %}
                     </tbody>
+                    <tfoot class="table-light">
+                        <tr>
+                            <td colspan="3" class="text-end fw-bold">Totals:</td>
+                            <td class="text-end fw-bold">${{ adj.total_debit|floatformat:2 }}</td>
+                            <td class="text-end fw-bold">${{ adj.total_credit|floatformat:2 }}</td>
+                        </tr>
+                    </tfoot>
                 </table>
             </div>
         </div>
         {% empty %}
         <div class="text-center py-4 text-muted">
-            <p>No adjustments yet.</p>
+            <i class="bi bi-journal-text" style="font-size: 2.5rem;"></i>
+            <p class="mt-2">No journal entries yet.</p>
+            {% if not fy.is_locked and user.can_edit %}
+            <a href="{% url 'core:adjustment_create' pk=fy.pk %}" class="btn btn-primary btn-sm">
+                <i class="bi bi-journal-plus"></i> Create First Journal Entry
+            </a>
+            {% endif %}
         </div>
         {% endfor %}
     </div>

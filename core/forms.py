@@ -88,29 +88,49 @@ class ClientAccountMappingForm(forms.Form):
     )
 
 
+# ---------------------------------------------------------------------------
+# Enhanced Journal Entry Forms
+# ---------------------------------------------------------------------------
 class AdjustingJournalForm(forms.ModelForm):
     class Meta:
         model = AdjustingJournal
-        fields = ("journal_date", "description")
+        fields = ("journal_type", "journal_date", "description", "narration")
         widgets = {
             "journal_date": forms.DateInput(attrs={"type": "date"}),
+            "description": forms.TextInput(attrs={"placeholder": "Brief description of the journal entry"}),
+            "narration": forms.Textarea(attrs={"rows": 2, "placeholder": "Additional notes for audit trail (optional)"}),
         }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         for field in self.fields.values():
             field.widget.attrs["class"] = "form-control"
+        self.fields["narration"].required = False
 
 
 class JournalLineForm(forms.ModelForm):
+    """Enhanced journal line form with account picker support."""
+
+    # Hidden field for account selection via JavaScript
+    account_select = forms.CharField(
+        required=False,
+        widget=forms.HiddenInput(),
+    )
+
     class Meta:
         model = JournalLine
-        fields = ("account_code", "account_name", "debit", "credit")
+        fields = ("account_code", "account_name", "description", "debit", "credit")
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         for field in self.fields.values():
             field.widget.attrs["class"] = "form-control form-control-sm"
+        self.fields["description"].required = False
+        self.fields["description"].widget.attrs["placeholder"] = "Line description (optional)"
+        self.fields["debit"].widget.attrs["step"] = "0.01"
+        self.fields["debit"].widget.attrs["min"] = "0"
+        self.fields["credit"].widget.attrs["step"] = "0.01"
+        self.fields["credit"].widget.attrs["min"] = "0"
 
 
 JournalLineFormSet = forms.inlineformset_factory(

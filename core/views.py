@@ -539,7 +539,7 @@ def map_client_accounts(request, pk):
 
 
 # ---------------------------------------------------------------------------
-# Adjusting Journals
+# Journal Entries (Enhanced)
 # ---------------------------------------------------------------------------
 @login_required
 def adjustment_list(request, pk):
@@ -553,12 +553,19 @@ def adjustment_create(request, pk):
     fy = get_object_or_404(FinancialYear, pk=pk)
 
     if fy.is_locked:
-        messages.error(request, "Cannot add adjustments to a finalised year.")
+        messages.error(request, "Cannot add journals to a finalised year.")
         return redirect("core:financial_year_detail", pk=pk)
 
     if not request.user.can_edit:
         messages.error(request, "You do not have permission.")
         return redirect("core:financial_year_detail", pk=pk)
+
+    # Get available accounts for the account picker
+    accounts = list(
+        ClientAccountMapping.objects.filter(entity=fy.entity)
+        .order_by("client_account_code")
+        .values("client_account_code", "client_account_name")
+    )
 
     if request.method == "POST":
         form = AdjustingJournalForm(request.POST)
@@ -567,7 +574,7 @@ def adjustment_create(request, pk):
             journal = form.save(commit=False)
             journal.financial_year = fy
             journal.created_by = request.user
-            journal.save()
+            journal.save()  # This auto-generates reference_number
 
             formset.instance = journal
             lines = formset.save()
@@ -577,40 +584,219 @@ def adjustment_create(request, pk):
             total_cr = sum(l.credit for l in lines)
             if total_dr != total_cr:
                 journal.delete()
-                messages.error(request, f"Journal does not balance: Dr {total_dr} != Cr {total_cr}")
+                messages.error(request, f"Journal does not balance: Dr ${total_dr:,.2f} \u2260 Cr ${total_cr:,.2f}")
                 return render(request, "core/adjustment_form.html", {
-                    "form": form, "formset": formset, "fy": fy
+                    "form": form, "formset": formset, "fy": fy, "accounts": accounts
                 })
 
-            # Create adjustment trial balance lines
-            for line in lines:
-                mapping = ClientAccountMapping.objects.filter(
-                    entity=fy.entity, client_account_code=line.account_code
-                ).first()
-                mapped_item = mapping.mapped_line_item if mapping else None
+            # Update cached totals
+            journal.total_debit = total_dr
+            journal.total_credit = total_cr
+            journal.save(update_fields=["total_debit", "total_credit"])
 
-                TrialBalanceLine.objects.create(
-                    financial_year=fy,
-                    account_code=line.account_code,
-                    account_name=line.account_name,
-                    opening_balance=Decimal("0"),
-                    debit=line.debit,
-                    credit=line.credit,
-                    closing_balance=line.debit - line.credit,
-                    mapped_line_item=mapped_item,
-                    is_adjustment=True,
-                )
-
-            _log_action(request, "adjustment", f"Created adjustment: {journal.description}", journal)
-            messages.success(request, "Adjusting journal created.")
+            _log_action(request, "adjustment", f"Created journal {journal.reference_number}: {journal.description}", journal)
+            messages.success(request, f"Journal {journal.reference_number} created as Draft.")
             return redirect("core:financial_year_detail", pk=pk)
     else:
-        form = AdjustingJournalForm()
+        form = AdjustingJournalForm(initial={"journal_date": fy.end_date})
         formset = JournalLineFormSet()
 
     return render(request, "core/adjustment_form.html", {
-        "form": form, "formset": formset, "fy": fy
+        "form": form, "formset": formset, "fy": fy, "accounts": accounts
     })
+
+
+@login_required
+def journal_detail(request, pk):
+    """View a single journal entry with all its lines and audit info."""
+    journal = get_object_or_404(
+        AdjustingJournal.objects.select_related(
+            "financial_year", "financial_year__entity",
+            "created_by", "posted_by", "reversed_by", "reversal_of_journal"
+        ).prefetch_related("lines"),
+        pk=pk,
+    )
+    fy = journal.financial_year
+    entity = fy.entity
+    client = entity.client
+    return render(request, "core/journal_detail.html", {
+        "journal": journal, "fy": fy, "entity": entity, "client": client,
+    })
+
+
+@login_required
+def journal_post(request, pk):
+    """Post a draft journal — creates adjustment TB lines."""
+    journal = get_object_or_404(AdjustingJournal, pk=pk)
+    fy = journal.financial_year
+
+    if journal.status != AdjustingJournal.JournalStatus.DRAFT:
+        messages.error(request, "Only draft journals can be posted.")
+        return redirect("core:journal_detail", pk=pk)
+
+    if not journal.is_balanced:
+        messages.error(request, "Journal does not balance. Cannot post.")
+        return redirect("core:journal_detail", pk=pk)
+
+    if fy.is_locked:
+        messages.error(request, "Cannot post to a finalised year.")
+        return redirect("core:journal_detail", pk=pk)
+
+    # Create adjustment trial balance lines
+    for line in journal.lines.all():
+        mapping = ClientAccountMapping.objects.filter(
+            entity=fy.entity, client_account_code=line.account_code
+        ).first()
+        mapped_item = mapping.mapped_line_item if mapping else None
+
+        TrialBalanceLine.objects.create(
+            financial_year=fy,
+            account_code=line.account_code,
+            account_name=line.account_name,
+            opening_balance=Decimal("0"),
+            debit=line.debit,
+            credit=line.credit,
+            closing_balance=line.debit - line.credit,
+            mapped_line_item=mapped_item,
+            is_adjustment=True,
+        )
+
+    # Update journal status
+    journal.status = AdjustingJournal.JournalStatus.POSTED
+    journal.posted_by = request.user
+    journal.posted_at = timezone.now()
+    journal.save(update_fields=["status", "posted_by", "posted_at"])
+
+    _log_action(request, "adjustment", f"Posted journal {journal.reference_number}", journal)
+    messages.success(request, f"Journal {journal.reference_number} has been posted.")
+    return redirect("core:financial_year_detail", pk=fy.pk)
+
+
+@login_required
+def journal_reverse(request, pk):
+    """Reverse a posted journal — creates a new reversing entry."""
+    original = get_object_or_404(AdjustingJournal, pk=pk)
+    fy = original.financial_year
+
+    if original.status != AdjustingJournal.JournalStatus.POSTED:
+        messages.error(request, "Only posted journals can be reversed.")
+        return redirect("core:journal_detail", pk=pk)
+
+    if fy.is_locked:
+        messages.error(request, "Cannot reverse in a finalised year.")
+        return redirect("core:journal_detail", pk=pk)
+
+    # Create reversing journal
+    reversing = AdjustingJournal(
+        financial_year=fy,
+        journal_type=AdjustingJournal.JournalType.REVERSING,
+        journal_date=timezone.now().date(),
+        description=f"Reversal of {original.reference_number}: {original.description}",
+        narration=f"Auto-generated reversal of journal {original.reference_number}",
+        reversal_of_journal=original,
+        created_by=request.user,
+    )
+    reversing.save()  # Auto-generates reference number
+
+    # Create reversed lines (swap debit/credit)
+    total_dr = Decimal("0")
+    total_cr = Decimal("0")
+    for line in original.lines.all():
+        JournalLine.objects.create(
+            journal=reversing,
+            line_number=line.line_number,
+            account_code=line.account_code,
+            account_name=line.account_name,
+            description=f"Reversal: {line.description}" if line.description else "Reversal",
+            debit=line.credit,   # Swap
+            credit=line.debit,   # Swap
+        )
+        total_dr += line.credit
+        total_cr += line.debit
+
+    # Update reversing journal totals and post it immediately
+    reversing.total_debit = total_dr
+    reversing.total_credit = total_cr
+    reversing.status = AdjustingJournal.JournalStatus.POSTED
+    reversing.posted_by = request.user
+    reversing.posted_at = timezone.now()
+    reversing.save()
+
+    # Create reversing TB lines
+    for line in reversing.lines.all():
+        mapping = ClientAccountMapping.objects.filter(
+            entity=fy.entity, client_account_code=line.account_code
+        ).first()
+        mapped_item = mapping.mapped_line_item if mapping else None
+
+        TrialBalanceLine.objects.create(
+            financial_year=fy,
+            account_code=line.account_code,
+            account_name=line.account_name,
+            opening_balance=Decimal("0"),
+            debit=line.debit,
+            credit=line.credit,
+            closing_balance=line.debit - line.credit,
+            mapped_line_item=mapped_item,
+            is_adjustment=True,
+        )
+
+    # Mark original as reversed
+    original.status = AdjustingJournal.JournalStatus.REVERSED
+    original.reversed_by = reversing
+    original.save(update_fields=["status", "reversed_by"])
+
+    _log_action(request, "adjustment", f"Reversed journal {original.reference_number} with {reversing.reference_number}", reversing)
+    messages.success(request, f"Journal {original.reference_number} reversed. Reversing entry {reversing.reference_number} posted.")
+    return redirect("core:financial_year_detail", pk=fy.pk)
+
+
+@login_required
+def journal_delete(request, pk):
+    """Delete a draft journal (only drafts can be deleted)."""
+    journal = get_object_or_404(AdjustingJournal, pk=pk)
+    fy = journal.financial_year
+
+    if journal.status != AdjustingJournal.JournalStatus.DRAFT:
+        messages.error(request, "Only draft journals can be deleted. Posted journals must be reversed.")
+        return redirect("core:journal_detail", pk=pk)
+
+    ref = journal.reference_number
+    journal.delete()
+    _log_action(request, "adjustment", f"Deleted draft journal {ref}")
+    messages.success(request, f"Draft journal {ref} deleted.")
+    return redirect("core:financial_year_detail", pk=fy.pk)
+
+
+@login_required
+def account_list_api(request, pk):
+    """JSON API endpoint returning available accounts for a financial year's entity."""
+    fy = get_object_or_404(FinancialYear, pk=pk)
+    accounts = list(
+        ClientAccountMapping.objects.filter(entity=fy.entity)
+        .order_by("client_account_code")
+        .values("client_account_code", "client_account_name")
+    )
+    # Also include accounts from the trial balance that may not be mapped
+    tb_accounts = list(
+        fy.trial_balance_lines.filter(is_adjustment=False)
+        .values("account_code", "account_name")
+        .distinct()
+        .order_by("account_code")
+    )
+    # Merge: use TB accounts as base, supplement with mapped accounts
+    account_dict = {}
+    for a in tb_accounts:
+        account_dict[a["account_code"]] = a["account_name"]
+    for a in accounts:
+        if a["client_account_code"] not in account_dict:
+            account_dict[a["client_account_code"]] = a["client_account_name"]
+
+    result = [
+        {"code": code, "name": name}
+        for code, name in sorted(account_dict.items())
+    ]
+    return JsonResponse(result, safe=False)
 
 
 # ---------------------------------------------------------------------------

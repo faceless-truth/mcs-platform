@@ -1,38 +1,52 @@
 {% extends "base.html" %}
-{% block title %}Create Adjustment - StatementHub{% endblock %}
-
+{% block title %}Create Journal Entry - StatementHub{% endblock %}
 {% block content %}
 <div class="row">
-    <div class="col-md-10 mx-auto">
+    <div class="col-lg-10 mx-auto">
         <nav aria-label="breadcrumb">
             <ol class="breadcrumb">
                 <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy.entity.entity_name }} - {{ fy.year_label }}</a></li>
-                <li class="breadcrumb-item active">Create Adjusting Journal</li>
+                <li class="breadcrumb-item active">Create Journal Entry</li>
             </ol>
         </nav>
-
         <div class="card">
-            <div class="card-header"><h5 class="mb-0"><i class="bi bi-journal-plus"></i> Create Adjusting Journal Entry</h5></div>
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-journal-plus"></i> Create Journal Entry</h5>
+                <small class="text-muted">Journals are created as Draft. Post them to apply to the trial balance.</small>
+            </div>
             <div class="card-body">
-                <form method="post">
+                <form method="post" id="journal-form">
                     {% csrf_token %}
-
+                    <!-- Journal Header -->
                     <div class="row mb-3">
-                        <div class="col-md-4">
+                        <div class="col-md-3">
+                            <label class="form-label">Type</label>
+                            {{ form.journal_type }}
+                            {% if form.journal_type.errors %}<div class="invalid-feedback d-block">{{ form.journal_type.errors.0 }}</div>{% endif %}
+                        </div>
+                        <div class="col-md-3">
                             <label class="form-label">Journal Date</label>
                             {{ form.journal_date }}
                             {% if form.journal_date.errors %}<div class="invalid-feedback d-block">{{ form.journal_date.errors.0 }}</div>{% endif %}
                         </div>
-                        <div class="col-md-8">
-                            <label class="form-label">Description</label>
+                        <div class="col-md-6">
+                            <label class="form-label">Description <span class="text-danger">*</span></label>
                             {{ form.description }}
                             {% if form.description.errors %}<div class="invalid-feedback d-block">{{ form.description.errors.0 }}</div>{% endif %}
                         </div>
                     </div>
+                    <div class="row mb-3">
+                        <div class="col-12">
+                            <label class="form-label">Narration / Notes <small class="text-muted">(optional, for audit trail)</small></label>
+                            {{ form.narration }}
+                        </div>
+                    </div>
 
-                    <h6 class="mt-4 mb-3">Journal Lines</h6>
-                    <div class="alert alert-info small">
-                        Total debits must equal total credits for the journal to balance.
+                    <!-- Journal Lines -->
+                    <h6 class="mt-4 mb-2">Journal Lines</h6>
+                    <div class="alert alert-info small py-2 d-flex justify-content-between align-items-center">
+                        <span><i class="bi bi-info-circle"></i> Total debits must equal total credits. Select accounts from the dropdown or type a code.</span>
+                        <span id="balance-indicator" class="fw-bold"></span>
                     </div>
 
                     {{ formset.management_form }}
@@ -40,35 +54,188 @@
                         <table class="table table-sm" id="journal-lines">
                             <thead class="table-light">
                                 <tr>
-                                    <th>Account Code</th>
-                                    <th>Account Name</th>
-                                    <th>Debit</th>
-                                    <th>Credit</th>
-                                    <th>Delete</th>
+                                    <th style="width: 200px;">Account</th>
+                                    <th style="width: 200px;">Account Name</th>
+                                    <th>Description</th>
+                                    <th style="width: 130px;">Debit</th>
+                                    <th style="width: 130px;">Credit</th>
+                                    <th style="width: 50px;">Del</th>
                                 </tr>
                             </thead>
-                            <tbody>
+                            <tbody id="line-tbody">
                                 {% for line_form in formset %}
-                                <tr>
-                                    <td>{{ line_form.account_code }}</td>
-                                    <td>{{ line_form.account_name }}</td>
+                                <tr class="journal-line-row">
+                                    <td>
+                                        <select class="form-select form-select-sm account-picker" data-row="{{ forloop.counter0 }}">
+                                            <option value="">-- Select Account --</option>
+                                        </select>
+                                        <div class="d-none">{{ line_form.account_code }}</div>
+                                    </td>
+                                    <td>
+                                        {{ line_form.account_name }}
+                                    </td>
+                                    <td>{{ line_form.description }}</td>
                                     <td>{{ line_form.debit }}</td>
                                     <td>{{ line_form.credit }}</td>
-                                    <td>{{ line_form.DELETE }}</td>
-                                    {% for hidden in line_form.hidden_fields %}{{ hidden }}{% endfor %}
+                                    <td class="text-center">
+                                        {{ line_form.DELETE }}
+                                        {% for hidden in line_form.hidden_fields %}{{ hidden }}{% endfor %}
+                                    </td>
                                 </tr>
                                 {% endfor %}
                             </tbody>
+                            <tfoot>
+                                <tr class="table-light fw-bold">
+                                    <td colspan="3" class="text-end">Totals:</td>
+                                    <td class="text-end" id="total-debit">$0.00</td>
+                                    <td class="text-end" id="total-credit">$0.00</td>
+                                    <td></td>
+                                </tr>
+                            </tfoot>
                         </table>
                     </div>
 
-                    <div class="d-flex gap-2 mt-3">
-                        <button type="submit" class="btn btn-primary">Save Journal</button>
-                        <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-secondary">Cancel</a>
+                    <div class="d-flex justify-content-between mt-3">
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="add-line-btn">
+                            <i class="bi bi-plus-lg"></i> Add Line
+                        </button>
+                        <div class="d-flex gap-2">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-save"></i> Save as Draft
+                            </button>
+                            <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-secondary">Cancel</a>
+                        </div>
                     </div>
                 </form>
             </div>
         </div>
     </div>
 </div>
+
+<script>
+// Account data from server
+const ACCOUNTS = {{ accounts|safe }};
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Populate all account pickers
+    function populateAccountPicker(select) {
+        while (select.options.length > 1) select.remove(1);
+        ACCOUNTS.forEach(function(acc) {
+            const code = acc.client_account_code || acc.code;
+            const name = acc.client_account_name || acc.name;
+            const opt = document.createElement('option');
+            opt.value = code;
+            opt.textContent = code + ' - ' + name;
+            opt.dataset.name = name;
+            select.appendChild(opt);
+        });
+    }
+
+    // Initialize existing pickers
+    document.querySelectorAll('.account-picker').forEach(function(sel) {
+        populateAccountPicker(sel);
+        const row = sel.closest('tr');
+        const codeInput = row.querySelector('[name$="-account_code"]');
+        if (codeInput && codeInput.value) {
+            sel.value = codeInput.value;
+        }
+    });
+
+    // Account picker change handler
+    document.addEventListener('change', function(e) {
+        if (e.target.classList.contains('account-picker')) {
+            const row = e.target.closest('tr');
+            const codeInput = row.querySelector('[name$="-account_code"]');
+            const nameInput = row.querySelector('[name$="-account_name"]');
+            const selected = e.target.options[e.target.selectedIndex];
+            if (selected.value) {
+                codeInput.value = selected.value;
+                nameInput.value = selected.dataset.name || '';
+            }
+        }
+    });
+
+    // Debit/Credit calculation
+    function updateTotals() {
+        let totalDr = 0, totalCr = 0;
+        document.querySelectorAll('.journal-line-row').forEach(function(row) {
+            const delCheck = row.querySelector('[name$="-DELETE"]');
+            if (delCheck && delCheck.checked) return;
+            const dr = parseFloat(row.querySelector('[name$="-debit"]')?.value) || 0;
+            const cr = parseFloat(row.querySelector('[name$="-credit"]')?.value) || 0;
+            totalDr += dr;
+            totalCr += cr;
+        });
+        document.getElementById('total-debit').textContent = '$' + totalDr.toFixed(2);
+        document.getElementById('total-credit').textContent = '$' + totalCr.toFixed(2);
+
+        const indicator = document.getElementById('balance-indicator');
+        const diff = Math.abs(totalDr - totalCr);
+        if (totalDr === 0 && totalCr === 0) {
+            indicator.textContent = '';
+        } else if (diff < 0.01) {
+            indicator.innerHTML = '<span class="text-success"><i class="bi bi-check-circle"></i> Balanced</span>';
+        } else {
+            indicator.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle"></i> Out of balance by $' + diff.toFixed(2) + '</span>';
+        }
+    }
+
+    document.addEventListener('input', function(e) {
+        if (e.target.name && (e.target.name.endsWith('-debit') || e.target.name.endsWith('-credit'))) {
+            updateTotals();
+        }
+    });
+    document.addEventListener('change', function(e) {
+        if (e.target.name && e.target.name.endsWith('-DELETE')) {
+            updateTotals();
+        }
+    });
+
+    // Add line button
+    document.getElementById('add-line-btn').addEventListener('click', function() {
+        const totalForms = document.getElementById('id_lines-TOTAL_FORMS');
+        const idx = parseInt(totalForms.value);
+        const tbody = document.getElementById('line-tbody');
+
+        const tr = document.createElement('tr');
+        tr.className = 'journal-line-row';
+        tr.innerHTML = `
+            <td>
+                <select class="form-select form-select-sm account-picker" data-row="${idx}">
+                    <option value="">-- Select Account --</option>
+                </select>
+                <div class="d-none">
+                    <input type="text" name="lines-${idx}-account_code" class="form-control form-control-sm" id="id_lines-${idx}-account_code">
+                </div>
+            </td>
+            <td>
+                <input type="text" name="lines-${idx}-account_name" class="form-control form-control-sm" id="id_lines-${idx}-account_name">
+            </td>
+            <td>
+                <input type="text" name="lines-${idx}-description" class="form-control form-control-sm" id="id_lines-${idx}-description" placeholder="Line description (optional)">
+            </td>
+            <td>
+                <input type="number" name="lines-${idx}-debit" step="0.01" min="0" class="form-control form-control-sm" id="id_lines-${idx}-debit">
+            </td>
+            <td>
+                <input type="number" name="lines-${idx}-credit" step="0.01" min="0" class="form-control form-control-sm" id="id_lines-${idx}-credit">
+            </td>
+            <td class="text-center">
+                <input type="checkbox" name="lines-${idx}-DELETE" id="id_lines-${idx}-DELETE">
+                <input type="hidden" name="lines-${idx}-id" id="id_lines-${idx}-id">
+                <input type="hidden" name="lines-${idx}-journal" id="id_lines-${idx}-journal">
+            </td>
+        `;
+        tbody.appendChild(tr);
+
+        const newPicker = tr.querySelector('.account-picker');
+        populateAccountPicker(newPicker);
+
+        totalForms.value = idx + 1;
+    });
+
+    // Initial totals
+    updateTotals();
+});
+</script>
 {% endblock %}

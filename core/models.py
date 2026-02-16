@@ -547,25 +547,132 @@ class NoteTemplate(models.Model):
 class AdjustingJournal(models.Model):
     """An adjusting journal entry for a financial year."""
 
+    class JournalType(models.TextChoices):
+        GENERAL = "general", "General Journal"
+        ADJUSTING = "adjusting", "Adjusting Entry"
+        REVERSING = "reversing", "Reversing Entry"
+        YEAR_END = "year_end", "Year-End Entry"
+        DEPRECIATION = "depreciation", "Depreciation Entry"
+        TAX = "tax", "Tax Adjustment"
+
+    class JournalStatus(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        POSTED = "posted", "Posted"
+        REVERSED = "reversed", "Reversed"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     financial_year = models.ForeignKey(
         FinancialYear, on_delete=models.CASCADE, related_name="adjusting_journals"
     )
+    reference_number = models.CharField(
+        max_length=20, blank=True,
+        help_text="Auto-generated sequential reference, e.g. JE-001",
+    )
+    journal_type = models.CharField(
+        max_length=20,
+        choices=JournalType.choices,
+        default=JournalType.GENERAL,
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=JournalStatus.choices,
+        default=JournalStatus.DRAFT,
+    )
     journal_date = models.DateField()
     description = models.TextField()
+    narration = models.TextField(
+        blank=True,
+        help_text="Additional notes or explanation for audit purposes",
+    )
+    total_debit = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Cached total debit for quick display",
+    )
+    total_credit = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Cached total credit for quick display",
+    )
+    # Reversal tracking
+    reversed_by = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="reversal_of",
+        help_text="The reversing journal that reversed this entry",
+    )
+    reversal_of_journal = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="reversed_journal",
+        help_text="The original journal this entry reverses",
+    )
+    # Audit fields
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
         related_name="created_journals",
     )
+    posted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="posted_journals",
+    )
+    posted_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["-journal_date", "-created_at"]
 
     def __str__(self):
-        return f"Journal {self.journal_date}: {self.description[:50]}"
+        ref = self.reference_number or "DRAFT"
+        return f"{ref} - {self.journal_date}: {self.description[:50]}"
+
+    def save(self, *args, **kwargs):
+        """Auto-generate reference number on first save."""
+        if not self.reference_number and self.financial_year_id:
+            last = (
+                AdjustingJournal.objects
+                .filter(financial_year=self.financial_year)
+                .exclude(reference_number="")
+                .order_by("-reference_number")
+                .first()
+            )
+            if last and last.reference_number:
+                try:
+                    num = int(last.reference_number.split("-")[1]) + 1
+                except (IndexError, ValueError):
+                    num = 1
+            else:
+                num = 1
+            self.reference_number = f"JE-{num:03d}"
+        super().save(*args, **kwargs)
+
+    @property
+    def is_balanced(self):
+        return self.total_debit == self.total_credit
+
+    @property
+    def can_post(self):
+        return self.status == self.JournalStatus.DRAFT and self.is_balanced
+
+    @property
+    def can_reverse(self):
+        return self.status == self.JournalStatus.POSTED
+
+    def recalculate_totals(self):
+        """Recalculate cached totals from lines."""
+        from django.db.models import Sum as DSum
+        agg = self.lines.aggregate(dr=DSum("debit"), cr=DSum("credit"))
+        self.total_debit = agg["dr"] or 0
+        self.total_credit = agg["cr"] or 0
+        self.save(update_fields=["total_debit", "total_credit"])
 
 
 class JournalLine(models.Model):
@@ -575,13 +682,21 @@ class JournalLine(models.Model):
     journal = models.ForeignKey(
         AdjustingJournal, on_delete=models.CASCADE, related_name="lines"
     )
+    line_number = models.IntegerField(
+        default=0,
+        help_text="Display order within the journal",
+    )
     account_code = models.CharField(max_length=20)
     account_name = models.CharField(max_length=255)
+    description = models.CharField(
+        max_length=255, blank=True,
+        help_text="Optional per-line description",
+    )
     debit = models.DecimalField(max_digits=15, decimal_places=2, default=0)
     credit = models.DecimalField(max_digits=15, decimal_places=2, default=0)
 
     class Meta:
-        ordering = ["id"]
+        ordering = ["line_number", "id"]
 
     def __str__(self):
         return f"{self.account_code}: Dr {self.debit} / Cr {self.credit}"

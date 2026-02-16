@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+{% block title %}{{ journal.reference_number }} - StatementHub{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'core:client_list' %}">Clients</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'core:client_detail' pk=client.pk %}">{{ client.name }}</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy.year_label }}</a></li>
+        <li class="breadcrumb-item active">{{ journal.reference_number }}</li>
+    </ol>
+</nav>
+
+<div class="row">
+    <div class="col-lg-9">
+        <!-- Journal Header -->
+        <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <div>
+                    <h5 class="mb-0">
+                        <i class="bi bi-journal-text"></i>
+                        {{ journal.reference_number }}
+                        <span class="badge bg-{% if journal.status == 'draft' %}warning text-dark{% elif journal.status == 'posted' %}success{% else %}secondary{% endif %} ms-2">
+                            {{ journal.get_status_display }}
+                        </span>
+                    </h5>
+                </div>
+                <div class="d-flex gap-2">
+                    {% if journal.status == 'draft' and not fy.is_locked %}
+                    <form method="post" action="{% url 'core:journal_post' pk=journal.pk %}" class="d-inline">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-success btn-sm" {% if not journal.is_balanced %}disabled title="Journal must balance before posting"{% endif %}>
+                            <i class="bi bi-check-circle"></i> Post Journal
+                        </button>
+                    </form>
+                    <form method="post" action="{% url 'core:journal_delete' pk=journal.pk %}" class="d-inline"
+                          onsubmit="return confirm('Delete this draft journal? This cannot be undone.');">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-outline-danger btn-sm">
+                            <i class="bi bi-trash"></i> Delete
+                        </button>
+                    </form>
+                    {% elif journal.status == 'posted' and not fy.is_locked %}
+                    <form method="post" action="{% url 'core:journal_reverse' pk=journal.pk %}" class="d-inline"
+                          onsubmit="return confirm('Reverse this journal? A new reversing entry will be created and posted.');">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-outline-danger btn-sm">
+                            <i class="bi bi-arrow-counterclockwise"></i> Reverse Journal
+                        </button>
+                    </form>
+                    {% endif %}
+                    <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-secondary btn-sm">
+                        <i class="bi bi-arrow-left"></i> Back
+                    </a>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="row mb-3">
+                    <div class="col-md-3">
+                        <label class="form-label text-muted small mb-0">Type</label>
+                        <div><span class="badge bg-light text-dark border">{{ journal.get_journal_type_display }}</span></div>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label text-muted small mb-0">Date</label>
+                        <div class="fw-semibold">{{ journal.journal_date|date:"d M Y" }}</div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label text-muted small mb-0">Description</label>
+                        <div>{{ journal.description }}</div>
+                    </div>
+                </div>
+                {% if journal.narration %}
+                <div class="mb-3">
+                    <label class="form-label text-muted small mb-0">Narration / Notes</label>
+                    <div class="bg-light p-2 rounded small">{{ journal.narration }}</div>
+                </div>
+                {% endif %}
+
+                {% if journal.reversal_of_journal %}
+                <div class="alert alert-info py-2 mb-3">
+                    <i class="bi bi-arrow-return-left"></i>
+                    This is a reversal of
+                    <a href="{% url 'core:journal_detail' pk=journal.reversal_of_journal.pk %}">
+                        {{ journal.reversal_of_journal.reference_number }}
+                    </a>
+                </div>
+                {% endif %}
+
+                {% if journal.reversed_by %}
+                <div class="alert alert-warning py-2 mb-3">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    This journal has been reversed by
+                    <a href="{% url 'core:journal_detail' pk=journal.reversed_by.pk %}">
+                        {{ journal.reversed_by.reference_number }}
+                    </a>
+                </div>
+                {% endif %}
+
+                <!-- Journal Lines -->
+                <h6 class="mt-3 mb-2">Journal Lines</h6>
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover">
+                        <thead class="table-light">
+                            <tr>
+                                <th style="width: 40px;">#</th>
+                                <th style="width: 100px;">Account</th>
+                                <th>Account Name</th>
+                                <th>Description</th>
+                                <th class="text-end" style="width: 130px;">Debit</th>
+                                <th class="text-end" style="width: 130px;">Credit</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for line in journal.lines.all %}
+                            <tr>
+                                <td class="text-muted">{{ forloop.counter }}</td>
+                                <td><code>{{ line.account_code }}</code></td>
+                                <td>{{ line.account_name }}</td>
+                                <td class="text-muted small">{{ line.description }}</td>
+                                <td class="text-end">{% if line.debit %}<strong>{{ line.debit|floatformat:2 }}</strong>{% else %}&mdash;{% endif %}</td>
+                                <td class="text-end">{% if line.credit %}<strong>{{ line.credit|floatformat:2 }}</strong>{% else %}&mdash;{% endif %}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                        <tfoot class="table-light fw-bold">
+                            <tr>
+                                <td colspan="4" class="text-end">Totals:</td>
+                                <td class="text-end">${{ journal.total_debit|floatformat:2 }}</td>
+                                <td class="text-end">${{ journal.total_credit|floatformat:2 }}</td>
+                            </tr>
+                            <tr>
+                                <td colspan="4" class="text-end">Balance:</td>
+                                <td colspan="2" class="text-center {% if journal.is_balanced %}text-success{% else %}text-danger{% endif %}">
+                                    {% if journal.is_balanced %}
+                                    <i class="bi bi-check-circle"></i> Balanced
+                                    {% else %}
+                                    <i class="bi bi-x-circle"></i> Out of balance by ${{ journal.total_debit|floatformat:2 }}
+                                    {% endif %}
+                                </td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Audit Sidebar -->
+    <div class="col-lg-3">
+        <div class="card">
+            <div class="card-header">
+                <h6 class="mb-0"><i class="bi bi-clock-history"></i> Audit Trail</h6>
+            </div>
+            <div class="card-body p-0">
+                <ul class="list-group list-group-flush small">
+                    <li class="list-group-item">
+                        <div class="text-muted">Created</div>
+                        <div>{{ journal.created_by.get_full_name|default:"System" }}</div>
+                        <div class="text-muted">{{ journal.created_at|date:"d/m/Y H:i:s" }}</div>
+                    </li>
+                    {% if journal.posted_at %}
+                    <li class="list-group-item">
+                        <div class="text-muted">Posted</div>
+                        <div>{{ journal.posted_by.get_full_name|default:"System" }}</div>
+                        <div class="text-muted">{{ journal.posted_at|date:"d/m/Y H:i:s" }}</div>
+                    </li>
+                    {% endif %}
+                    {% if journal.reversed_by %}
+                    <li class="list-group-item">
+                        <div class="text-muted">Reversed</div>
+                        <div>
+                            <a href="{% url 'core:journal_detail' pk=journal.reversed_by.pk %}">
+                                {{ journal.reversed_by.reference_number }}
+                            </a>
+                        </div>
+                        <div class="text-muted">{{ journal.reversed_by.created_at|date:"d/m/Y H:i:s" }}</div>
+                    </li>
+                    {% endif %}
+                    <li class="list-group-item">
+                        <div class="text-muted">Last Modified</div>
+                        <div class="text-muted">{{ journal.updated_at|date:"d/m/Y H:i:s" }}</div>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
