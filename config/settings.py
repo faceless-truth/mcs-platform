@@ -124,7 +124,26 @@ SESSION_COOKIE_SECURE = not DEBUG
 # CSRF trusted origins (for proxy/tunnel access)
 CSRF_TRUSTED_ORIGINS = [
     "https://*.manus.computer",
+    "https://statementhub.com.au",
+    "https://www.statementhub.com.au",
 ]
+
+# Email configuration
+# Development: console backend (emails printed to terminal)
+# Production: set EMAIL_BACKEND, EMAIL_HOST, EMAIL_PORT, etc. in .env
+EMAIL_BACKEND = os.environ.get(
+    "EMAIL_BACKEND",
+    "django.core.mail.backends.console.EmailBackend",
+)
+EMAIL_HOST = os.environ.get("EMAIL_HOST", "")
+EMAIL_PORT = int(os.environ.get("EMAIL_PORT", 587))
+EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "True").lower() == "true"
+EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
+DEFAULT_FROM_EMAIL = os.environ.get(
+    "DEFAULT_FROM_EMAIL",
+    "StatementHub <noreply@statementhub.com.au>",
+)
 
 # Security settings (enforced in production)
 if not DEBUG:
