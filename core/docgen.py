@@ -248,12 +248,18 @@ def _get_tb_sections(fy):
 
     for line in lines:
         try:
-            code_num = int(line.account_code)
+            code_num = int(line.account_code.split('.')[0])
         except (ValueError, TypeError):
             continue
 
-        prior = _get_prior_balance(fy, line.account_code)
-        entry = (line.account_code, line.account_name, line.closing_balance, prior)
+        # Calculate current year amount: debit - credit gives net movement
+        # For income (credit balances): debit=0, credit=X -> net = -X (negative = income)
+        # For expenses (debit balances): debit=X, credit=0 -> net = X (positive = expense)
+        # For assets (debit balances): debit=X, credit=0 -> net = X (positive = asset)
+        # For liabilities (credit balances): debit=0, credit=X -> net = -X (negative = liability)
+        current_amount = line.debit - line.credit
+        prior_amount = line.prior_debit - line.prior_credit
+        entry = (line.account_code, line.account_name, current_amount, prior_amount)
 
         # Check for COGS/trading accounts (code range 5000-5999 or specific patterns)
         name_lower = line.account_name.lower()
@@ -264,34 +270,52 @@ def _get_tb_sections(fy):
         )
 
         if code_num < 1000:
+            # 0000-0999: Income accounts
             # Determine if this is trading income or other income
-            # Trading income: sales, accommodation, conference, meals, bar, etc.
             is_trading = (
                 "sales" in name_lower or "income" in name_lower or
                 "takings" in name_lower or "revenue" in name_lower or
-                "rent" in name_lower or "fees" in name_lower
+                "accommodation" in name_lower or "conference" in name_lower or
+                "meals" in name_lower or "bar" in name_lower or
+                "trading" in name_lower
             )
-            if is_trading:
+            is_other_income = (
+                "interest" in name_lower or "other" in name_lower or
+                "fbt" in name_lower or "contribution" in name_lower or
+                "dividend" in name_lower or "sundry" in name_lower
+            )
+            if is_other_income:
+                sections["income"].append(entry)
+            elif is_trading:
                 sections["trading_income"].append(entry)
             else:
                 sections["income"].append(entry)
+        elif code_num < 1200:
+            # 1000-1199: COGS / Cost of Sales accounts
+            sections["cogs"].append(entry)
         elif code_num < 2000:
+            # 1200-1999: Expense accounts
             if is_cogs:
                 sections["cogs"].append(entry)
             else:
                 sections["expenses"].append(entry)
         elif code_num < 2500:
+            # 2000-2499: Current assets
             sections["current_assets"].append(entry)
         elif code_num < 3000:
+            # 2500-2999: Non-current assets (PPE, loans receivable, etc.)
             sections["noncurrent_assets"].append(entry)
         elif code_num < 3500:
+            # 3000-3499: Current liabilities
             sections["current_liabilities"].append(entry)
         elif code_num < 4000:
+            # 3500-3999: Non-current liabilities
             sections["noncurrent_liabilities"].append(entry)
         elif code_num < 5000:
+            # 4000-4999: Equity accounts
             sections["equity"].append(entry)
         elif code_num < 6000:
-            # 5000-5999 range: COGS/trading
+            # 5000-5999 range: COGS/trading (alternative code range)
             sections["cogs"].append(entry)
 
     return sections

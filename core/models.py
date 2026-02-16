@@ -373,6 +373,14 @@ class TrialBalanceLine(models.Model):
     closing_balance = models.DecimalField(
         max_digits=15, decimal_places=2, default=0
     )
+    prior_debit = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Prior year debit amount for comparative column",
+    )
+    prior_credit = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Prior year credit amount for comparative column",
+    )
     mapped_line_item = models.ForeignKey(
         AccountMapping,
         on_delete=models.SET_NULL,
