@@ -29,7 +29,7 @@ from docx.oxml import parse_xml
 
 from .models import (
     Entity, FinancialYear, TrialBalanceLine, AccountMapping,
-    EntityOfficer, NoteTemplate,
+    EntityOfficer, NoteTemplate, DepreciationAsset,
 )
 
 # =============================================================================
@@ -100,7 +100,8 @@ def _set_run_font(run, size=FONT_SIZE_BODY, bold=False, italic=False, name=FONT_
 
 
 def _add_paragraph(doc, text="", size=FONT_SIZE_BODY, bold=False, italic=False,
-                   alignment=WD_ALIGN_PARAGRAPH.LEFT, space_before=0, space_after=Pt(4),
+                   underline=False, alignment=WD_ALIGN_PARAGRAPH.LEFT,
+                   space_before=0, space_after=Pt(4),
                    first_line_indent=None):
     """Add a formatted paragraph."""
     p = doc.add_paragraph()
@@ -113,6 +114,8 @@ def _add_paragraph(doc, text="", size=FONT_SIZE_BODY, bold=False, italic=False,
     if text:
         run = p.add_run(text)
         _set_run_font(run, size=size, bold=bold, italic=italic)
+        if underline:
+            run.font.underline = True
     return p
 
 
@@ -458,11 +461,15 @@ def _add_cover_page(doc, entity, fy):
 # Contents Page
 # =============================================================================
 
-def _get_section_order(entity, sections):
+def _get_section_order(entity, sections, fy=None):
     """Determine the section order based on entity type and data."""
     entity_type = entity.entity_type
     has_trading = _has_cogs(sections)
-    has_ppe = len(sections["noncurrent_assets"]) > 0
+    # Only show depreciation schedule if DepreciationAsset records exist
+    has_dep_schedule = False
+    if fy:
+        has_dep_schedule = DepreciationAsset.objects.filter(financial_year=fy).exists()
+    has_ppe = has_dep_schedule  # Only show if actual depreciation assets are entered
 
     if entity_type == "company":
         items = []
@@ -505,6 +512,7 @@ def _get_section_order(entity, sections):
         items.append("Partners' Profit Distribution Summary")
         if has_ppe:
             items.append("Depreciation Schedule")
+        items.append("Notes to the Financial Statements")
         items.append("Partner Declaration")
         items.append("Compilation Report")
         return items
@@ -531,7 +539,7 @@ def _add_contents_page(doc, entity, fy, sections):
 
     _add_paragraph(doc, "Contents", size=FONT_SIZE_HEADING, bold=True, space_after=12)
 
-    items = _get_section_order(entity, sections)
+    items = _get_section_order(entity, sections, fy=fy)
     for item in items:
         p = _add_paragraph(doc, item, size=Pt(11), space_after=6)
         for run in p.runs:
@@ -1771,6 +1779,186 @@ def _add_notes(doc, entity, fy, sections, show_cents=False):
 
 
 # =============================================================================
+# Depreciation Schedule
+# =============================================================================
+
+def _add_depreciation_schedule(doc, entity, fy, show_cents=False):
+    """
+    Add the depreciation schedule in LANDSCAPE orientation.
+    Assets are grouped by category with subtotals per category.
+    Columns: Asset | Total | Priv% | OWDV | Disposal(Date,Consid) | Addition(Date,Cost) |
+             Value | T | Rate | Deprec | Priv | CWDV | Profit(Upto+,Above) | Loss(Total-,Priv)
+    """
+    assets = DepreciationAsset.objects.filter(
+        financial_year=fy
+    ).order_by("category", "display_order", "asset_name")
+
+    if not assets.exists():
+        return
+
+    # Group assets by category
+    categories = OrderedDict()
+    for asset in assets:
+        if asset.category not in categories:
+            categories[asset.category] = []
+        categories[asset.category].append(asset)
+
+    def _fmt(val, dp=2):
+        """Format a decimal value for the depreciation schedule."""
+        if val is None or val == 0:
+            return ""
+        if show_cents:
+            return f"{val:,.2f}"
+        return f"{val:,.0f}"
+
+    def _fmt_rate(val):
+        if val is None or val == 0:
+            return "0.00"
+        return f"{val:.2f}"
+
+    def _fmt_date(d):
+        if d is None:
+            return ""
+        return d.strftime("%d/%m/%y")
+
+    for cat_name, cat_assets in categories.items():
+        # Add a new landscape section for each category (or first one)
+        new_section = doc.add_section(WD_ORIENT.LANDSCAPE)
+        new_section.orientation = WD_ORIENT.LANDSCAPE
+        new_section.page_width = Cm(29.7)
+        new_section.page_height = Cm(21.0)
+        new_section.top_margin = Cm(1.5)
+        new_section.bottom_margin = Cm(1.5)
+        new_section.left_margin = Cm(1.5)
+        new_section.right_margin = Cm(1.5)
+
+        # Header
+        _add_header_block(doc, entity,
+                          f"Depreciation Schedule",
+                          f"for the year ended {fy.end_date.strftime('%-d %B, %Y')}")
+
+        _add_paragraph(doc, cat_name, size=FONT_SIZE_BODY, bold=True,
+                       underline=True, space_after=6)
+
+        # Create table with headers
+        col_headers = [
+            "Asset", "Total", "Priv\n%", "OWDV",
+            "Date", "Consid",  # Disposal
+            "Date", "Cost",    # Addition
+            "Value", "T", "Rate", "Deprec", "Priv", "CWDV",
+        ]
+
+        num_cols = len(col_headers)
+        table = doc.add_table(rows=1, cols=num_cols)
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
+        table.autofit = True
+
+        # Style header row
+        hdr_cells = table.rows[0].cells
+        for i, header in enumerate(col_headers):
+            cell = hdr_cells[i]
+            p = cell.paragraphs[0]
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = p.add_run(header)
+            run.font.size = Pt(7)
+            run.font.name = FONT_NAME
+            run.font.bold = True
+            # Shade header
+            shading = parse_xml(f'<w:shd {nsdecls("w")} w:fill="D9E2F3"/>')
+            cell._tc.get_or_add_tcPr().append(shading)
+
+        # Add group header rows (DISPOSAL / ADDITION)
+        # We'll add a second header row for the group labels
+
+        # Add asset rows
+        cat_total_cost = Decimal("0")
+        cat_owdv = Decimal("0")
+        cat_deprec = Decimal("0")
+        cat_priv_dep = Decimal("0")
+        cat_cwdv = Decimal("0")
+        cat_add_cost = Decimal("0")
+        cat_disp_consid = Decimal("0")
+
+        for asset in cat_assets:
+            row_cells = table.add_row().cells
+            values = [
+                asset.asset_name,
+                _fmt(asset.total_cost),
+                f"{asset.private_use_pct:.2f}" if asset.private_use_pct else "",
+                _fmt(asset.opening_wdv),
+                _fmt_date(asset.disposal_date),
+                _fmt(asset.disposal_consideration),
+                _fmt_date(asset.addition_date),
+                _fmt(asset.addition_cost),
+                _fmt(asset.depreciable_value),
+                asset.get_method_display()[0] if asset.method else "",
+                _fmt_rate(asset.rate),
+                _fmt(asset.depreciation_amount),
+                _fmt(asset.private_depreciation),
+                _fmt(asset.closing_wdv),
+            ]
+
+            for i, val in enumerate(values):
+                cell = row_cells[i]
+                p = cell.paragraphs[0]
+                p.alignment = WD_ALIGN_PARAGRAPH.RIGHT if i > 0 else WD_ALIGN_PARAGRAPH.LEFT
+                run = p.add_run(str(val))
+                run.font.size = Pt(7)
+                run.font.name = FONT_NAME
+
+            # Accumulate category totals
+            cat_total_cost += asset.total_cost or Decimal("0")
+            cat_owdv += asset.opening_wdv or Decimal("0")
+            cat_deprec += asset.depreciation_amount or Decimal("0")
+            cat_priv_dep += asset.private_depreciation or Decimal("0")
+            cat_cwdv += asset.closing_wdv or Decimal("0")
+            cat_add_cost += asset.addition_cost or Decimal("0")
+            cat_disp_consid += asset.disposal_consideration or Decimal("0")
+
+        # Subtotals row
+        sub_row = table.add_row().cells
+        sub_values = [
+            "Subtotals",
+            _fmt(cat_total_cost), "", _fmt(cat_owdv),
+            "", _fmt(cat_disp_consid),
+            "", _fmt(cat_add_cost),
+            "", "", "",
+            _fmt(cat_deprec), _fmt(cat_priv_dep), _fmt(cat_cwdv),
+        ]
+        for i, val in enumerate(sub_values):
+            cell = sub_row[i]
+            p = cell.paragraphs[0]
+            p.alignment = WD_ALIGN_PARAGRAPH.RIGHT if i > 0 else WD_ALIGN_PARAGRAPH.LEFT
+            run = p.add_run(str(val))
+            run.font.size = Pt(7)
+            run.font.name = FONT_NAME
+            run.font.bold = True
+
+        # Net depreciation line
+        net_dep = cat_deprec - cat_priv_dep
+        doc.add_paragraph().paragraph_format.space_after = Pt(4)
+        _add_paragraph(doc, f"Deduct Private Portion: {_fmt(cat_priv_dep)}",
+                       size=Pt(8), space_after=2)
+        p = doc.add_paragraph()
+        run = p.add_run(f"Net Depreciation: {_fmt(net_dep)}")
+        run.font.size = Pt(8)
+        run.font.name = FONT_NAME
+        run.font.bold = True
+        run.font.underline = True
+        p.paragraph_format.space_after = Pt(6)
+
+    # Return to portrait for remaining pages
+    new_section = doc.add_section(WD_ORIENT.PORTRAIT)
+    new_section.orientation = WD_ORIENT.PORTRAIT
+    new_section.page_width = Cm(21.0)
+    new_section.page_height = Cm(29.7)
+    new_section.top_margin = Cm(2.54)
+    new_section.bottom_margin = Cm(2.54)
+    new_section.left_margin = Cm(2.54)
+    new_section.right_margin = Cm(2.54)
+
+
+# =============================================================================
 # Partners' Profit Distribution Summary
 # =============================================================================
 
@@ -2146,61 +2334,69 @@ def generate_financial_statements(financial_year_id) -> io.BytesIO:
 
     # =========================================================================
     # Build document in entity-type-specific order
+    # Each entity type has a different section ordering based on the real
+    # Access Ledger PDF output.
     # =========================================================================
 
-    # 1. Cover Page
+    # Common: Cover + Contents
     _add_cover_page(doc, entity, fy)
-
-    # 2. Contents Page
     _add_contents_page(doc, entity, fy, sections)
 
-    # 3. For complex companies: Compilation Report comes first
-    if entity_type == "company" and has_trading:
-        _add_compilation_report(doc, entity, fy)
-
-    # 4. Trading Account (if COGS exist)
+    # Common: Trading Account (if COGS exist)
     gross_profit = None
     gross_profit_prior = None
     if has_trading:
+        # Company with trading: Compilation Report comes FIRST
+        if entity_type == "company":
+            _add_compilation_report(doc, entity, fy)
         gross_profit, gross_profit_prior = _add_trading_account(
             doc, entity, fy, sections, show_cents=show_cents)
 
-    # 5. Detailed P&L
+    # Common: Detailed P&L
     net_profit, net_profit_prior = _add_detailed_pnl(
         doc, entity, fy, sections, show_cents=show_cents,
         gross_profit=gross_profit, gross_profit_prior=gross_profit_prior)
 
-    # 6. Detailed Balance Sheet
+    # Common: Detailed Balance Sheet
     _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=show_cents,
                                 net_profit=net_profit, net_profit_prior=net_profit_prior)
 
-    # 7. Summary P&L (companies with trading account only)
-    if entity_type == "company" and has_trading:
-        _add_summary_pnl(doc, entity, fy, sections, show_cents=show_cents,
-                         net_profit=net_profit, net_profit_prior=net_profit_prior)
+    # ---- Entity-type-specific ordering from here ----
 
-    # 8. Notes (all entity types)
-    _add_notes(doc, entity, fy, sections, show_cents=show_cents)
+    if entity_type == "company":
+        # Company order: Summary P&L > Depreciation > Notes > Declaration > [Compilation if simple]
+        if has_trading:
+            _add_summary_pnl(doc, entity, fy, sections, show_cents=show_cents,
+                             net_profit=net_profit, net_profit_prior=net_profit_prior)
+        _add_depreciation_schedule(doc, entity, fy, show_cents=show_cents)
+        _add_notes(doc, entity, fy, sections, show_cents=show_cents)
+        _add_declaration(doc, entity, fy)
+        if not has_trading:
+            # Simple company: compilation report LAST
+            _add_compilation_report(doc, entity, fy)
 
-    # 9. Partners' Distribution (partnership only)
-    if entity_type == "partnership":
+    elif entity_type == "trust":
+        # Trust order: Notes > Depreciation > Trustee's Declaration > Compilation Report
+        _add_notes(doc, entity, fy, sections, show_cents=show_cents)
+        _add_depreciation_schedule(doc, entity, fy, show_cents=show_cents)
+        _add_declaration(doc, entity, fy)
+        _add_compilation_report(doc, entity, fy)
+
+    elif entity_type == "partnership":
+        # Partnership order: Distribution > Depreciation > Notes > Declaration > Compilation
         _add_partners_distribution(doc, entity, fy, sections, show_cents=show_cents,
                                    net_profit=net_profit, net_profit_prior=net_profit_prior)
-
-    # 10. Sole trader: Compilation Report before Declaration
-    if entity_type == "sole_trader":
+        _add_depreciation_schedule(doc, entity, fy, show_cents=show_cents)
+        _add_notes(doc, entity, fy, sections, show_cents=show_cents)
+        _add_declaration(doc, entity, fy)
         _add_compilation_report(doc, entity, fy)
 
-    # 11. Declaration
-    _add_declaration(doc, entity, fy)
-
-    # 12. Compilation Report (for trust and simple company — goes last)
-    if entity_type == "trust" or (entity_type == "company" and not has_trading):
+    else:  # sole_trader
+        # Sole trader order: Notes > Depreciation > Compilation > Declaration
+        _add_notes(doc, entity, fy, sections, show_cents=show_cents)
+        _add_depreciation_schedule(doc, entity, fy, show_cents=show_cents)
         _add_compilation_report(doc, entity, fy)
-
-    # Partnership: compilation report last
-    if entity_type == "partnership":
-        _add_compilation_report(doc, entity, fy)
+        _add_declaration(doc, entity, fy)
 
     # Save to BytesIO
     buffer = io.BytesIO()

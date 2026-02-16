@@ -394,6 +394,97 @@ class TrialBalanceLine(models.Model):
 
 
 # ---------------------------------------------------------------------------
+# Depreciation Asset
+# ---------------------------------------------------------------------------
+class DepreciationAsset(models.Model):
+    """
+    An individual depreciable asset for the depreciation schedule.
+    Grouped by category (Furniture & Fixtures, Plant & Equipment, etc.).
+    """
+
+    class DepreciationMethod(models.TextChoices):
+        DIMINISHING = "D", "Diminishing Value"
+        PRIME_COST = "P", "Prime Cost"
+        WRITTEN_OFF = "W", "Written Off"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    financial_year = models.ForeignKey(
+        FinancialYear, on_delete=models.CASCADE, related_name="depreciation_assets"
+    )
+    category = models.CharField(
+        max_length=100,
+        help_text='Asset category, e.g. "Furniture and Fixtures", "Motor Vehicles"',
+    )
+    asset_name = models.CharField(max_length=255)
+    purchase_date = models.DateField(null=True, blank=True)
+    total_cost = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Original purchase cost",
+    )
+    private_use_pct = models.DecimalField(
+        max_digits=5, decimal_places=2, default=0,
+        help_text="Private use percentage (0-100)",
+    )
+    opening_wdv = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        verbose_name="Opening WDV",
+    )
+    # Disposal fields
+    disposal_date = models.DateField(null=True, blank=True)
+    disposal_consideration = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+    )
+    # Addition fields
+    addition_date = models.DateField(null=True, blank=True)
+    addition_cost = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+    )
+    # Depreciation fields
+    depreciable_value = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Value on which depreciation is calculated",
+    )
+    method = models.CharField(
+        max_length=1,
+        choices=DepreciationMethod.choices,
+        default=DepreciationMethod.DIMINISHING,
+    )
+    rate = models.DecimalField(
+        max_digits=7, decimal_places=2, default=0,
+        help_text="Depreciation rate as percentage",
+    )
+    depreciation_amount = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Depreciation charged this year",
+    )
+    private_depreciation = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Private portion of depreciation",
+    )
+    closing_wdv = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        verbose_name="Closing WDV",
+    )
+    # Profit/Loss on disposal
+    profit_on_disposal = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+    )
+    loss_on_disposal = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+    )
+    display_order = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["category", "display_order", "asset_name"]
+        verbose_name = "Depreciation Asset"
+        verbose_name_plural = "Depreciation Assets"
+
+    def __str__(self):
+        return f"{self.asset_name} ({self.category}) - WDV: {self.closing_wdv}"
+
+
+# ---------------------------------------------------------------------------
 # Note / Disclosure Template
 # ---------------------------------------------------------------------------
 class NoteTemplate(models.Model):

@@ -3,7 +3,7 @@ from .models import (
     Client, Entity, FinancialYear, TrialBalanceLine,
     AccountMapping, ClientAccountMapping, NoteTemplate,
     AdjustingJournal, JournalLine, FinancialStatementTemplate,
-    GeneratedDocument, AuditLog, EntityOfficer,
+    GeneratedDocument, AuditLog, EntityOfficer, DepreciationAsset,
 )
 
 
@@ -81,6 +81,13 @@ class EntityOfficerAdmin(admin.ModelAdmin):
     list_display = ("full_name", "role", "entity", "title", "is_signatory", "date_appointed", "date_ceased")
     list_filter = ("role", "is_signatory")
     search_fields = ("full_name", "entity__entity_name")
+
+
+@admin.register(DepreciationAsset)
+class DepreciationAssetAdmin(admin.ModelAdmin):
+    list_display = ("asset_name", "category", "financial_year", "opening_wdv", "depreciation_amount", "closing_wdv")
+    list_filter = ("category", "method")
+    search_fields = ("asset_name", "category")
 
 
 @admin.register(AuditLog)
