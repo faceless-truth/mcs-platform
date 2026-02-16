@@ -710,12 +710,13 @@ def generate_document(request, pk):
     _log_action(request, "generate", f"Generated financial statements for {fy}", fy)
 
     # Save record
-    GeneratedDocument.objects.create(
+    from django.core.files.base import ContentFile
+    doc = GeneratedDocument(
         financial_year=fy,
         file_format="docx",
         generated_by=request.user,
-        file_path=filename,
     )
+    doc.file.save(filename, ContentFile(buffer.getvalue()), save=True)
 
     return response
 
