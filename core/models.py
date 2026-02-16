@@ -119,6 +119,14 @@ class Entity(models.Model):
         blank=True,
         related_name="entities",
     )
+    trading_as = models.CharField(
+        max_length=255, blank=True,
+        help_text="Trading name, e.g. 'Southy's Structures'",
+    )
+    show_cents = models.BooleanField(
+        default=False,
+        help_text="Show amounts with cents (2 decimal places). Default for trusts and sole traders.",
+    )
     metadata = models.JSONField(
         default=dict, blank=True,
         help_text="Flexible storage: directors, trustees, partners, registered address, etc.",

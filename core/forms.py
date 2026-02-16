@@ -25,9 +25,9 @@ class EntityForm(forms.ModelForm):
     class Meta:
         model = Entity
         fields = (
-            "entity_name", "entity_type", "abn", "acn",
+            "entity_name", "trading_as", "entity_type", "abn", "acn",
             "registration_date", "financial_year_end",
-            "reporting_framework", "company_size",
+            "reporting_framework", "company_size", "show_cents",
         )
         widgets = {
             "registration_date": forms.DateInput(attrs={"type": "date"}),
@@ -35,8 +35,11 @@ class EntityForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        for field in self.fields.values():
-            field.widget.attrs["class"] = "form-control"
+        for name, field in self.fields.items():
+            if isinstance(field.widget, forms.CheckboxInput):
+                field.widget.attrs["class"] = "form-check-input"
+            else:
+                field.widget.attrs["class"] = "form-control"
 
 
 class FinancialYearForm(forms.ModelForm):
