@@ -1,6 +1,7 @@
 """MCS Platform - Core URL Configuration"""
 from django.urls import path
 from . import views
+from . import views_audit
 
 app_name = "core"
 
@@ -56,6 +57,16 @@ urlpatterns = [
 
     # Access Ledger Import
     path("import/access-ledger/", views.access_ledger_import, name="access_ledger_import"),
+
+    # Chart of Accounts
+    path("chart-of-accounts/", views_audit.chart_of_accounts, name="chart_of_accounts"),
+
+    # Audit Library
+    path("audit-library/", views_audit.audit_library, name="audit_library"),
+
+    # Risk Flags
+    path("years/<uuid:pk>/risk-flags/", views_audit.risk_flags_view, name="risk_flags"),
+    path("risk-flags/<uuid:pk>/resolve/", views_audit.resolve_risk_flag, name="resolve_risk_flag"),
 
     # HTMX partials
     path("htmx/client-search/", views.htmx_client_search, name="htmx_client_search"),

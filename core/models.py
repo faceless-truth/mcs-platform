@@ -795,3 +795,191 @@ class AuditLog(models.Model):
 
     def __str__(self):
         return f"{self.timestamp:%Y-%m-%d %H:%M} - {self.user} - {self.get_action_display()}"
+
+
+# ---------------------------------------------------------------------------
+# Risk Rule (Audit Risk Engine)
+# ---------------------------------------------------------------------------
+class RiskRule(models.Model):
+    """
+    Defines an audit risk rule that is evaluated against financial year data.
+    Each rule has a trigger configuration and produces RiskFlags when triggered.
+    """
+
+    class Category(models.TextChoices):
+        VARIANCE = "variance", "Variance Analysis"
+        CGT = "cgt", "Capital Gains Tax"
+        DIVISION_7A = "division_7a", "Division 7A"
+        EXPENSES = "expenses", "Expense Analysis"
+        FBT = "fbt", "Fringe Benefits Tax"
+        GENERAL = "general", "General"
+        GST = "gst", "GST"
+        SOLVENCY = "solvency", "Solvency"
+        SUPERANNUATION = "superannuation", "Superannuation"
+        TRUST = "trust", "Trust"
+        RELATED_PARTY = "related_party", "Related Party"
+
+    class Severity(models.TextChoices):
+        CRITICAL = "CRITICAL", "Critical"
+        HIGH = "HIGH", "High"
+        MEDIUM = "MEDIUM", "Medium"
+        LOW = "LOW", "Low"
+
+    rule_id = models.CharField(max_length=20, primary_key=True)
+    category = models.CharField(max_length=30, choices=Category.choices)
+    title = models.CharField(max_length=255)
+    description = models.TextField()
+    severity = models.CharField(max_length=10, choices=Severity.choices)
+    tier = models.IntegerField(
+        help_text="Processing tier: 1=variance analysis, 2=compliance checks"
+    )
+    applicable_entities = models.JSONField(
+        default=list,
+        help_text='Entity types this rule applies to, e.g. ["company", "trust"]',
+    )
+    trigger_config = models.JSONField(
+        default=dict,
+        help_text="Configuration for how this rule evaluates data",
+    )
+    recommended_action = models.TextField()
+    legislation_ref = models.CharField(max_length=255, blank=True)
+    is_active = models.BooleanField(default=True)
+    last_updated = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["tier", "rule_id"]
+
+    def __str__(self):
+        return f"[{self.rule_id}] {self.title} ({self.get_severity_display()})"
+
+
+# ---------------------------------------------------------------------------
+# Risk Reference Data
+# ---------------------------------------------------------------------------
+class RiskReferenceData(models.Model):
+    """
+    Reference thresholds and values used by risk rules.
+    E.g., GST registration threshold, super guarantee rate, etc.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    key = models.CharField(max_length=100, unique=True)
+    value = models.CharField(max_length=255)
+    description = models.TextField()
+    applicable_fy = models.CharField(
+        max_length=10, blank=True,
+        help_text='Financial year this applies to, e.g. "FY2025" or blank for all',
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="updated_reference_data",
+    )
+
+    class Meta:
+        ordering = ["key"]
+        verbose_name = "Risk Reference Data"
+        verbose_name_plural = "Risk Reference Data"
+
+    def __str__(self):
+        return f"{self.key} = {self.value}"
+
+
+# ---------------------------------------------------------------------------
+# Risk Flag (Audit Risk Alert)
+# ---------------------------------------------------------------------------
+class RiskFlag(models.Model):
+    """
+    A specific risk flag raised against a financial year after running the
+    audit risk engine. Each flag references a RiskRule and contains the
+    specific details of what was found.
+    """
+
+    class Status(models.TextChoices):
+        OPEN = "open", "Open"
+        REVIEWED = "reviewed", "Reviewed"
+        RESOLVED = "resolved", "Resolved"
+        AUTO_RESOLVED = "auto_resolved", "Auto-Resolved"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    financial_year = models.ForeignKey(
+        FinancialYear, on_delete=models.CASCADE, related_name="risk_flags"
+    )
+    run_id = models.UUIDField(
+        help_text="Groups flags from the same analysis run"
+    )
+    rule_id = models.CharField(max_length=20)
+    tier = models.IntegerField()
+    severity = models.CharField(max_length=10)
+    title = models.CharField(max_length=255)
+    description = models.TextField()
+    affected_accounts = models.JSONField(default=list)
+    calculated_values = models.JSONField(default=dict)
+    recommended_action = models.TextField()
+    legislation_ref = models.CharField(max_length=255, blank=True)
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.OPEN
+    )
+    resolution_notes = models.TextField(blank=True)
+    resolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="resolved_risk_flags",
+    )
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["financial_year", "status"]),
+            models.Index(fields=["financial_year", "severity"]),
+            models.Index(fields=["run_id"]),
+        ]
+
+    def __str__(self):
+        return f"[{self.severity}] {self.title} - {self.financial_year}"
+
+
+# ---------------------------------------------------------------------------
+# Client Associate (Related Parties)
+# ---------------------------------------------------------------------------
+class ClientAssociate(models.Model):
+    """
+    Tracks related parties and associates of a client.
+    Used for related party transaction detection in the audit risk engine.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    client = models.ForeignKey(
+        Client, on_delete=models.CASCADE, related_name="associates"
+    )
+    name = models.CharField(max_length=255)
+    relationship_type = models.CharField(
+        max_length=50,
+        help_text='e.g. "Director", "Related Entity", "Shareholder"',
+    )
+    abn = models.CharField(max_length=11, blank=True, verbose_name="ABN")
+    email = models.EmailField(blank=True)
+    phone = models.CharField(max_length=50, blank=True)
+    notes = models.TextField(blank=True)
+    related_entity = models.ForeignKey(
+        Entity, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="associated_as",
+        help_text="Link to an entity in the system if applicable",
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["client", "name"]
+
+    def __str__(self):
+        return f"{self.name} ({self.relationship_type}) - {self.client.name}"

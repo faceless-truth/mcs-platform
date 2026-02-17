@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% block title %}Audit Library - StatementHub{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h4 class="fw-bold mb-1"><i class="bi bi-shield-check"></i> Audit Library</h4>
+        <p class="text-muted mb-0">{{ active_rules }} active rules &middot; {{ total_open_flags }} open flags across all clients</p>
+    </div>
+</div>
+
+<!-- Summary Cards -->
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body text-center">
+                <div style="font-size: 2rem; font-weight: 700; color: #1a1a2e;">{{ total_rules }}</div>
+                <small class="text-muted">Total Rules</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body text-center">
+                <div style="font-size: 2rem; font-weight: 700; color: #198754;">{{ active_rules }}</div>
+                <small class="text-muted">Active Rules</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body text-center">
+                <div style="font-size: 2rem; font-weight: 700; color: #dc3545;">{{ total_open_flags }}</div>
+                <small class="text-muted">Open Flags</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body text-center">
+                <div style="font-size: 2rem; font-weight: 700; color: #6c757d;">{{ reference_data|length }}</div>
+                <small class="text-muted">Reference Values</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card mb-4">
+    <div class="card-body py-2">
+        <form method="get" class="row g-2 align-items-center">
+            <div class="col-md-4">
+                <input type="text" name="q" class="form-control form-control-sm" placeholder="Search rules..." value="{{ query }}">
+            </div>
+            <div class="col-md-3">
+                <select name="category" class="form-select form-select-sm">
+                    <option value="">All Categories</option>
+                    {% for value, label in category_choices %}
+                    <option value="{{ value }}" {% if category_filter == value %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <select name="severity" class="form-select form-select-sm">
+                    <option value="">All Severities</option>
+                    {% for value, label in severity_choices %}
+                    <option value="{{ value }}" {% if severity_filter == value %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <button type="submit" class="btn btn-sm btn-primary w-100"><i class="bi bi-search"></i> Filter</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Risk Rules by Category -->
+{% for category, rules in grouped_rules.items %}
+<div class="card mb-4">
+    <div class="card-header bg-dark text-white">
+        <h6 class="mb-0 fw-bold">{{ category }}</h6>
+    </div>
+    <div class="card-body p-0">
+        <table class="table table-sm table-hover mb-0">
+            <thead>
+                <tr class="small text-muted">
+                    <th style="width: 90px;">Rule ID</th>
+                    <th>Title</th>
+                    <th style="width: 90px;">Severity</th>
+                    <th style="width: 60px;">Tier</th>
+                    <th style="width: 120px;">Entities</th>
+                    <th style="width: 80px;">Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for rule in rules %}
+                <tr>
+                    <td><code class="text-primary">{{ rule.rule_id }}</code></td>
+                    <td>
+                        <strong>{{ rule.title }}</strong>
+                        <div class="text-muted" style="font-size: 0.78rem;">{{ rule.description|truncatewords:20 }}</div>
+                        {% if rule.legislation_ref %}
+                        <small class="text-info"><i class="bi bi-book"></i> {{ rule.legislation_ref }}</small>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <span class="badge
+                            {% if rule.severity == 'CRITICAL' %}bg-danger
+                            {% elif rule.severity == 'HIGH' %}bg-danger
+                            {% elif rule.severity == 'MEDIUM' %}bg-warning text-dark
+                            {% else %}bg-info text-dark{% endif %}">
+                            {{ rule.get_severity_display }}
+                        </span>
+                    </td>
+                    <td class="text-muted">{{ rule.tier }}</td>
+                    <td>
+                        {% for et in rule.applicable_entities %}
+                        <span class="badge bg-secondary bg-opacity-25 text-dark" style="font-size: 0.68rem;">{{ et }}</span>
+                        {% endfor %}
+                    </td>
+                    <td>
+                        {% if rule.is_active %}
+                        <span class="badge bg-success bg-opacity-25 text-success">Active</span>
+                        {% else %}
+                        <span class="badge bg-secondary bg-opacity-25 text-secondary">Inactive</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% empty %}
+<div class="text-center py-5">
+    <i class="bi bi-shield-check text-muted" style="font-size: 3rem;"></i>
+    <h5 class="mt-3 text-muted">No rules found</h5>
+    <p class="text-muted">{% if query %}Try adjusting your search.{% else %}No audit risk rules have been configured yet.{% endif %}</p>
+</div>
+{% endfor %}
+
+<!-- Reference Data -->
+{% if reference_data %}
+<div class="card mb-4">
+    <div class="card-header bg-dark text-white">
+        <h6 class="mb-0 fw-bold"><i class="bi bi-database"></i> Reference Data</h6>
+    </div>
+    <div class="card-body p-0">
+        <table class="table table-sm table-hover mb-0">
+            <thead>
+                <tr class="small text-muted">
+                    <th style="width: 250px;">Key</th>
+                    <th style="width: 150px;">Value</th>
+                    <th>Description</th>
+                    <th style="width: 100px;">FY</th>
+                    <th style="width: 120px;">Updated</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for ref in reference_data %}
+                <tr>
+                    <td><code>{{ ref.key }}</code></td>
+                    <td><strong>{{ ref.value }}</strong></td>
+                    <td class="text-muted" style="font-size: 0.85rem;">{{ ref.description }}</td>
+                    <td>{{ ref.applicable_fy|default:"All" }}</td>
+                    <td class="text-muted" style="font-size: 0.78rem;">{{ ref.updated_at|date:"d/m/Y" }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

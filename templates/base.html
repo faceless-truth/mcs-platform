@@ -34,8 +34,13 @@
                         </a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="{% url 'core:account_mapping_list' %}">
-                            <i class="bi bi-diagram-3"></i> Mappings
+                        <a class="nav-link" href="{% url 'core:chart_of_accounts' %}">
+                            <i class="bi bi-diagram-3"></i> Chart of Accounts
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'core:audit_library' %}">
+                            <i class="bi bi-shield-check"></i> Audit Library
                         </a>
                     </li>
                     {% if user.is_admin %}

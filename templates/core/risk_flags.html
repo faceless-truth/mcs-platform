@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% block title %}Risk Flags - {{ financial_year.entity.entity_name }} - StatementHub{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h4 class="fw-bold mb-1">
+            <i class="bi bi-shield-exclamation text-danger"></i> Risk Flags
+        </h4>
+        <p class="text-muted mb-0">
+            {{ financial_year.entity.entity_name }} &middot; {{ financial_year.year_label }}
+        </p>
+    </div>
+    <a href="{% url 'core:financial_year_detail' pk=financial_year.pk %}" class="btn btn-outline-secondary btn-sm">
+        <i class="bi bi-arrow-left"></i> Back to Workspace
+    </a>
+</div>
+
+<!-- Summary -->
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm border-start border-4 border-danger">
+            <div class="card-body text-center py-3">
+                <div style="font-size: 1.8rem; font-weight: 700; color: #dc3545;">{{ high_count }}</div>
+                <small class="text-muted">High / Critical</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm border-start border-4 border-warning">
+            <div class="card-body text-center py-3">
+                <div style="font-size: 1.8rem; font-weight: 700; color: #ffc107;">{{ medium_count }}</div>
+                <small class="text-muted">Medium</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm border-start border-4 border-info">
+            <div class="card-body text-center py-3">
+                <div style="font-size: 1.8rem; font-weight: 700; color: #0dcaf0;">{{ low_count }}</div>
+                <small class="text-muted">Low</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm border-start border-4 border-dark">
+            <div class="card-body text-center py-3">
+                <div style="font-size: 1.8rem; font-weight: 700; color: #1a1a2e;">{{ total_open }}</div>
+                <small class="text-muted">Total Open</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card mb-4">
+    <div class="card-body py-2">
+        <form method="get" class="row g-2 align-items-center">
+            <div class="col-md-4">
+                <select name="severity" class="form-select form-select-sm">
+                    <option value="">All Severities</option>
+                    <option value="CRITICAL" {% if severity_filter == 'CRITICAL' %}selected{% endif %}>Critical</option>
+                    <option value="HIGH" {% if severity_filter == 'HIGH' %}selected{% endif %}>High</option>
+                    <option value="MEDIUM" {% if severity_filter == 'MEDIUM' %}selected{% endif %}>Medium</option>
+                    <option value="LOW" {% if severity_filter == 'LOW' %}selected{% endif %}>Low</option>
+                </select>
+            </div>
+            <div class="col-md-4">
+                <select name="status" class="form-select form-select-sm">
+                    <option value="">All Statuses</option>
+                    <option value="open" {% if status_filter == 'open' %}selected{% endif %}>Open</option>
+                    <option value="resolved" {% if status_filter == 'resolved' %}selected{% endif %}>Resolved</option>
+                    <option value="dismissed" {% if status_filter == 'dismissed' %}selected{% endif %}>Dismissed</option>
+                </select>
+            </div>
+            <div class="col-md-4">
+                <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-funnel"></i> Filter</button>
+                <a href="{% url 'core:risk_flags' pk=financial_year.pk %}" class="btn btn-sm btn-outline-secondary">Clear</a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Flags List -->
+{% for flag in flags %}
+<div class="card mb-3 border-start border-4
+    {% if flag.severity == 'CRITICAL' or flag.severity == 'HIGH' %}border-danger
+    {% elif flag.severity == 'MEDIUM' %}border-warning
+    {% else %}border-info{% endif %}
+    {% if flag.status == 'resolved' %}opacity-50{% endif %}">
+    <div class="card-body">
+        <div class="d-flex justify-content-between align-items-start">
+            <div>
+                <h6 class="fw-bold mb-1">
+                    {{ flag.title }}
+                    <span class="badge ms-1
+                        {% if flag.severity == 'CRITICAL' or flag.severity == 'HIGH' %}bg-danger
+                        {% elif flag.severity == 'MEDIUM' %}bg-warning text-dark
+                        {% else %}bg-info text-dark{% endif %}">
+                        {{ flag.severity }}
+                    </span>
+                    {% if flag.status == 'resolved' %}
+                    <span class="badge bg-success ms-1">Resolved</span>
+                    {% elif flag.status == 'dismissed' %}
+                    <span class="badge bg-secondary ms-1">Dismissed</span>
+                    {% endif %}
+                </h6>
+                <p class="text-muted mb-1" style="font-size: 0.88rem;">{{ flag.description }}</p>
+                {% if flag.rule %}
+                <small class="text-info"><i class="bi bi-book"></i> Rule: {{ flag.rule.rule_id }} — {{ flag.rule.title }}</small>
+                {% endif %}
+                {% if flag.affected_accounts %}
+                <div class="mt-1">
+                    <small class="text-muted">Affected: </small>
+                    {% for acc in flag.affected_accounts %}
+                    <code class="text-primary" style="font-size: 0.75rem;">{{ acc }}</code>
+                    {% endfor %}
+                </div>
+                {% endif %}
+                {% if flag.resolution_notes %}
+                <div class="mt-2 p-2 bg-light rounded" style="font-size: 0.82rem;">
+                    <strong>Resolution:</strong> {{ flag.resolution_notes }}
+                    {% if flag.resolved_by %}
+                    <span class="text-muted">— {{ flag.resolved_by.get_full_name|default:flag.resolved_by.username }}, {{ flag.resolved_at|date:"d/m/Y" }}</span>
+                    {% endif %}
+                </div>
+                {% endif %}
+            </div>
+            {% if flag.status == 'open' %}
+            <div class="ms-3">
+                <form method="post" action="{% url 'core:resolve_risk_flag' pk=flag.pk %}" class="d-inline">
+                    {% csrf_token %}
+                    <input type="hidden" name="resolution_notes" value="Resolved by {{ request.user.get_full_name|default:request.user.username }}">
+                    <button type="submit" class="btn btn-sm btn-outline-success" title="Resolve">
+                        <i class="bi bi-check-lg"></i> Resolve
+                    </button>
+                </form>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% empty %}
+<div class="text-center py-5">
+    <i class="bi bi-shield-check text-success" style="font-size: 3rem;"></i>
+    <h5 class="mt-3 text-muted">No risk flags</h5>
+    <p class="text-muted">{% if severity_filter or status_filter %}Try adjusting your filters.{% else %}No risk flags have been raised for this financial year.{% endif %}</p>
+</div>
+{% endfor %}
+{% endblock %}

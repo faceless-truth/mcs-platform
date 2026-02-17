@@ -204,12 +204,19 @@ def _sync_from_airtable():
 @login_required
 def review_dashboard(request):
     """
-    Dashboard view showing pending reviews and recent activity.
+    Dashboard view showing audit risk alerts, pending reviews,
+    unfinalised client files, and recent activity.
     """
+    from core.models import (
+        Client, Entity, FinancialYear, RiskFlag, AuditLog,
+    )
+    from django.db.models import Q, Count
+
     # Sync from Airtable if configured
     if _airtable_configured():
         _sync_from_airtable()
 
+    # --- Pending bank statement reviews ---
     pending_jobs = ReviewJob.objects.filter(
         status__in=["awaiting_review", "in_progress"]
     ).order_by("-received_at")
@@ -223,7 +230,61 @@ def review_dashboard(request):
     # Learning stats
     total_patterns = TransactionPattern.objects.count()
 
-    # Time-based greeting (Melbourne time)
+    # --- Audit Risk Alerts ---
+    # Get clients that have open risk flags, grouped by client with severity counts
+    user = request.user
+    if user.is_admin:
+        client_qs = Client.objects.filter(is_active=True)
+    else:
+        client_qs = Client.objects.filter(
+            Q(assigned_accountant=user) & Q(is_active=True)
+        )
+
+    # Find financial years with open risk flags
+    flagged_years = (
+        FinancialYear.objects.filter(
+            entity__client__in=client_qs,
+            risk_flags__status="open",
+        )
+        .select_related("entity", "entity__client")
+        .distinct()
+    )
+
+    risk_alerts = []
+    for fy in flagged_years:
+        open_flags = fy.risk_flags.filter(status="open")
+        high_count = open_flags.filter(severity__in=["HIGH", "CRITICAL"]).count()
+        medium_count = open_flags.filter(severity="MEDIUM").count()
+        low_count = open_flags.filter(severity="LOW").count()
+        total_flags = open_flags.count()
+        if total_flags > 0:
+            risk_alerts.append({
+                "client_name": fy.entity.client.name,
+                "entity_name": fy.entity.entity_name,
+                "year_label": fy.year_label,
+                "financial_year": fy,
+                "high_count": high_count,
+                "medium_count": medium_count,
+                "low_count": low_count,
+                "total_flags": total_flags,
+            })
+    # Sort by high count descending
+    risk_alerts.sort(key=lambda x: (x["high_count"], x["total_flags"]), reverse=True)
+
+    # --- Unfinalised Client Files ---
+    unfinalised_years = (
+        FinancialYear.objects.filter(
+            entity__client__in=client_qs,
+            status__in=["draft", "in_review", "reviewed"],
+        )
+        .select_related("entity", "entity__client")
+        .order_by("-end_date")[:10]
+    )
+
+    # --- Recent Activity (from AuditLog) ---
+    recent_audit_logs = AuditLog.objects.all().order_by("-timestamp")[:10]
+
+    # --- Time-based greeting (Melbourne time) ---
     from datetime import datetime
     import zoneinfo
     now = datetime.now(zoneinfo.ZoneInfo("Australia/Melbourne"))
@@ -243,6 +304,9 @@ def review_dashboard(request):
         "completed_jobs": completed_jobs,
         "activities": activities,
         "total_patterns": total_patterns,
+        "risk_alerts": risk_alerts,
+        "unfinalised_years": unfinalised_years,
+        "recent_audit_logs": recent_audit_logs,
     }
     return render(request, "review/dashboard.html", context)
 
