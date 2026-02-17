@@ -221,6 +221,13 @@ class EntityOfficer(models.Model):
 class FinancialYear(models.Model):
     """A financial year for an entity. Links to prior year for comparatives."""
 
+    class PeriodType(models.TextChoices):
+        ANNUAL = "annual", "Annual (Full Year)"
+        HALF_YEAR = "half_year", "Half-Year"
+        QUARTERLY = "quarterly", "Quarterly"
+        MONTHLY = "monthly", "Monthly"
+        INTERIM = "interim", "Interim (Custom Period)"
+
     class Status(models.TextChoices):
         DRAFT = "draft", "Draft"
         IN_REVIEW = "in_review", "In Review"
@@ -231,7 +238,13 @@ class FinancialYear(models.Model):
     entity = models.ForeignKey(
         Entity, on_delete=models.CASCADE, related_name="financial_years"
     )
-    year_label = models.CharField(max_length=20, help_text='e.g. "FY2025"')
+    year_label = models.CharField(max_length=20, help_text='e.g. "FY2025" or "Q1 2025"')
+    period_type = models.CharField(
+        max_length=20,
+        choices=PeriodType.choices,
+        default=PeriodType.ANNUAL,
+        help_text="Type of reporting period",
+    )
     start_date = models.DateField()
     end_date = models.DateField()
     prior_year = models.ForeignKey(

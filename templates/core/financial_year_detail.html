@@ -19,6 +19,8 @@
         <p class="text-muted mb-0">
             {{ fy.start_date|date:"d M Y" }} to {{ fy.end_date|date:"d M Y" }}
             &middot;
+            <span class="badge bg-secondary fs-6">{{ fy.get_period_type_display }}</span>
+            &middot;
             <span class="badge bg-{% if fy.status == 'draft' %}warning text-dark{% elif fy.status == 'in_review' %}info{% elif fy.status == 'reviewed' %}primary{% else %}success{% endif %} fs-6">
                 {{ fy.get_status_display }}
             </span>

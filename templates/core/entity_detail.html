@@ -75,6 +75,7 @@
             <thead class="table-light">
                 <tr>
                     <th>Year</th>
+                    <th>Type</th>
                     <th>Period</th>
                     <th>Status</th>
                     <th>TB Lines</th>
@@ -90,6 +91,7 @@
                             {{ fy.year_label }}
                         </a>
                     </td>
+                    <td><span class="badge bg-secondary">{{ fy.get_period_type_display }}</span></td>
                     <td>{{ fy.start_date|date:"d M Y" }} &mdash; {{ fy.end_date|date:"d M Y" }}</td>
                     <td>
                         <span class="badge bg-{% if fy.status == 'draft' %}warning text-dark{% elif fy.status == 'in_review' %}info{% elif fy.status == 'reviewed' %}primary{% else %}success{% endif %}">
@@ -105,7 +107,7 @@
                     </td>
                 </tr>
                 {% empty %}
-                <tr><td colspan="6" class="text-center text-muted py-3">No financial years yet.</td></tr>
+                <tr><td colspan="7" class="text-center text-muted py-3">No financial years yet.</td></tr>
                 {% endfor %}
             </tbody>
         </table>

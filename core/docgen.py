@@ -349,8 +349,39 @@ def _start_report_section(doc, entity, report_title, footer_type="statement",
 
 
 def _get_period_text(fy):
-    """Get 'For the year ended DD Month YYYY'."""
-    return f"For the year ended {fy.end_date.strftime('%-d %B %Y')}"
+    """
+    Get the period description based on the financial year's period_type.
+    Annual:   'For the year ended 30 June 2025'
+    Half:     'For the half-year ended 31 December 2024'
+    Quarter:  'For the quarter ended 30 September 2024'
+    Monthly:  'For the month ended 31 January 2025'
+    Interim:  'For the period ended 31 March 2025'
+    """
+    end_str = fy.end_date.strftime('%-d %B %Y')
+    period_type = getattr(fy, 'period_type', 'annual') or 'annual'
+
+    period_labels = {
+        'annual': 'year',
+        'half_year': 'half-year',
+        'quarterly': 'quarter',
+        'monthly': 'month',
+        'interim': 'period',
+    }
+    label = period_labels.get(period_type, 'year')
+    return f"For the {label} ended {end_str}"
+
+
+def _get_period_label(fy):
+    """Get just the period label word (year, quarter, month, etc.)."""
+    period_type = getattr(fy, 'period_type', 'annual') or 'annual'
+    period_labels = {
+        'annual': 'year',
+        'half_year': 'half-year',
+        'quarterly': 'quarter',
+        'monthly': 'month',
+        'interim': 'period',
+    }
+    return period_labels.get(period_type, 'year')
 
 
 def _get_as_at_text(fy):
@@ -2167,7 +2198,7 @@ def _add_depreciation_schedule(doc, entity, fy, show_cents=False):
     for cat_name, cat_assets in categories.items():
         # New landscape section for each depreciation category
         _start_report_section(doc, entity,
-                              f"Depreciation Schedule\nfor the year ended {fy.end_date.strftime('%-d %B, %Y')}",
+                              f"Depreciation Schedule\n{_get_period_text(fy)}",
                               footer_type="statement",
                               show_column_headers=False, landscape=True)
 
@@ -2376,7 +2407,7 @@ def _add_declaration(doc, entity, fy):
         _add_paragraph(
             doc,
             f"1.  the financial statements and notes, present fairly the company's financial "
-            f"position as at {fy.end_date.strftime('%-d %B %Y')} and its performance for the year "
+            f"position as at {fy.end_date.strftime('%-d %B %Y')} and its performance for the {_get_period_label(fy)} "
             f"ended on that date in accordance with the accounting policies described in Note 1 "
             f"to the financial statements;",
             size=FONT_SIZE_BODY, alignment=WD_ALIGN_PARAGRAPH.JUSTIFY, space_after=6)
@@ -2418,7 +2449,7 @@ def _add_declaration(doc, entity, fy):
         _add_paragraph(
             doc,
             f"(i)  the financial statements and notes present fairly the trust's financial "
-            f"position as at {fy.end_date.strftime('%-d %B %Y')} and its performance for the year "
+            f"position as at {fy.end_date.strftime('%-d %B %Y')} and its performance for the {_get_period_label(fy)} "
             f"ended on that date in accordance with the accounting policies described in Note 1 "
             f"to the financial statements;",
             size=FONT_SIZE_BODY, alignment=WD_ALIGN_PARAGRAPH.JUSTIFY, space_after=6)
@@ -2461,7 +2492,7 @@ def _add_declaration(doc, entity, fy):
         _add_paragraph(
             doc,
             f"(b) the financial statements present fairly the partnership's financial position as at "
-            f"{fy.end_date.strftime('%-d %B %Y')} and its performance for the year ended on that date.",
+            f"{fy.end_date.strftime('%-d %B %Y')} and its performance for the {_get_period_label(fy)} ended on that date.",
             size=FONT_SIZE_BODY, alignment=WD_ALIGN_PARAGRAPH.JUSTIFY, space_after=6)
 
         _add_paragraph(
@@ -2495,7 +2526,7 @@ def _add_declaration(doc, entity, fy):
         _add_paragraph(
             doc,
             f"1.  the financial statements present fairly the business's financial position as at "
-            f"{fy.end_date.strftime('%-d %B %Y')} and its performance for the year ended on that date "
+            f"{fy.end_date.strftime('%-d %B %Y')} and its performance for the {_get_period_label(fy)} ended on that date "
             f"in accordance with the accounting policies described in the financial statements;",
             size=FONT_SIZE_BODY, alignment=WD_ALIGN_PARAGRAPH.JUSTIFY, space_after=6)
 
@@ -2532,7 +2563,7 @@ def _add_compilation_report(doc, entity, fy):
         doc,
         f"We have compiled the accompanying special purpose financial statements of "
         f"{entity.entity_name}, which comprise the balance sheet as at {end_date_str}, "
-        f"the Statement of Profit and Loss for the year then ended, a summary of significant "
+        f"the Statement of Profit and Loss for the {_get_period_label(fy)} then ended, a summary of significant "
         f"accounting policies and other explanatory notes. The specific purpose for which the "
         f"special purpose financial statements have been prepared is set out in Note 1 to the "
         f"financial statements.",

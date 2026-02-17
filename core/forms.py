@@ -45,7 +45,7 @@ class EntityForm(forms.ModelForm):
 class FinancialYearForm(forms.ModelForm):
     class Meta:
         model = FinancialYear
-        fields = ("year_label", "start_date", "end_date")
+        fields = ("year_label", "period_type", "start_date", "end_date")
         widgets = {
             "start_date": forms.DateInput(attrs={"type": "date"}),
             "end_date": forms.DateInput(attrs={"type": "date"}),
