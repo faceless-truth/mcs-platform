@@ -1,0 +1,250 @@
+{% extends "base.html" %}
+{% block title %}Review Import - {{ fy.entity.entity_name }} - StatementHub{% endblock %}
+
+{% block extra_head %}
+<style>
+    .mapping-row.learned { background-color: #f0fff0; }
+    .mapping-row.new { background-color: #fff8f0; }
+    .confidence-badge.learned { background-color: #198754; }
+    .confidence-badge.new { background-color: #fd7e14; }
+    .mapping-select { min-width: 300px; }
+    .amount-cell { text-align: right; font-family: monospace; white-space: nowrap; }
+    .sticky-header th { position: sticky; top: 0; z-index: 10; }
+    .filter-bar { position: sticky; top: 0; z-index: 20; background: white; padding: 1rem 0; border-bottom: 1px solid #dee2e6; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="{% url 'core:client_list' %}">Clients</a></li>
+                <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=fy.entity.pk %}">{{ fy.entity.entity_name }}</a></li>
+                <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">FY{{ fy.end_date|date:"Y" }}</a></li>
+                <li class="breadcrumb-item active">Review Import</li>
+            </ol>
+        </nav>
+
+        <h4 class="mb-3">
+            <i class="bi bi-cloud-arrow-down"></i> Review Trial Balance Import
+        </h4>
+
+        <!-- Summary Cards -->
+        <div class="row g-3 mb-4">
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body py-2">
+                        <div class="text-muted small">Source</div>
+                        <strong>{{ provider_name }}</strong>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body py-2">
+                        <div class="text-muted small">Total Lines</div>
+                        <strong class="fs-5">{{ total }}</strong>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center border-success">
+                    <div class="card-body py-2">
+                        <div class="text-muted small">Auto-Mapped (Learned)</div>
+                        <strong class="fs-5 text-success">{{ auto_mapped }}</strong>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center border-warning">
+                    <div class="card-body py-2">
+                        <div class="text-muted small">Needs Mapping</div>
+                        <strong class="fs-5 text-warning">{{ unmapped }}</strong>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Filter Bar -->
+        <div class="card mb-3">
+            <div class="card-body py-2">
+                <div class="row align-items-center">
+                    <div class="col-md-4">
+                        <div class="input-group input-group-sm">
+                            <span class="input-group-text"><i class="bi bi-search"></i></span>
+                            <input type="text" id="searchFilter" class="form-control" placeholder="Search accounts...">
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="btn-group btn-group-sm" role="group">
+                            <button type="button" class="btn btn-outline-secondary active filter-btn" data-filter="all">All</button>
+                            <button type="button" class="btn btn-outline-success filter-btn" data-filter="learned">Learned</button>
+                            <button type="button" class="btn btn-outline-warning filter-btn" data-filter="new">Unmapped</button>
+                        </div>
+                    </div>
+                    <div class="col-md-4 text-end">
+                        <button type="button" class="btn btn-sm btn-outline-primary" id="approveAllLearned">
+                            <i class="bi bi-check-all"></i> Approve All Learned
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Import Form -->
+        <form method="post" action="{% url 'integrations:commit_import' fy_pk=fy.pk %}" id="importForm">
+            {% csrf_token %}
+
+            <div class="card">
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-sm table-hover mb-0" id="importTable">
+                            <thead class="table-dark sticky-header">
+                                <tr>
+                                    <th style="width: 40px;">#</th>
+                                    <th style="width: 80px;">Code</th>
+                                    <th style="width: 200px;">Account Name</th>
+                                    <th class="amount-cell" style="width: 100px;">Opening</th>
+                                    <th class="amount-cell" style="width: 100px;">Debit</th>
+                                    <th class="amount-cell" style="width: 100px;">Credit</th>
+                                    <th style="width: 80px;">Status</th>
+                                    <th>Map To (MC&S Chart)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for line in lines %}
+                                <tr class="mapping-row {{ line.confidence }}" data-confidence="{{ line.confidence }}">
+                                    <td class="text-muted small">{{ forloop.counter }}</td>
+                                    <td><code>{{ line.account_code }}</code></td>
+                                    <td>{{ line.account_name }}</td>
+                                    <td class="amount-cell">{{ line.opening_balance }}</td>
+                                    <td class="amount-cell">{{ line.debit }}</td>
+                                    <td class="amount-cell">{{ line.credit }}</td>
+                                    <td>
+                                        {% if line.confidence == "learned" %}
+                                        <span class="badge confidence-badge learned" title="Previously mapped for this client">
+                                            <i class="bi bi-lightbulb"></i> Learned
+                                        </span>
+                                        {% else %}
+                                        <span class="badge confidence-badge new" title="New account - needs mapping">
+                                            <i class="bi bi-question-circle"></i> New
+                                        </span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <select name="mapping_{{ forloop.counter0 }}"
+                                                class="form-select form-select-sm mapping-select"
+                                                data-learned-value="{{ line.mapped_id }}">
+                                            <option value="">— Not mapped —</option>
+                                        </select>
+                                        {% if line.mapped_label %}
+                                        <small class="text-success d-block mt-1">
+                                            <i class="bi bi-arrow-right"></i> {{ line.mapped_label }}
+                                        </small>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="d-flex justify-content-between mt-3 mb-4">
+                <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-secondary">
+                    <i class="bi bi-x-lg"></i> Cancel Import
+                </a>
+                <div>
+                    <button type="submit" class="btn btn-success btn-lg">
+                        <i class="bi bi-check-circle"></i> Confirm &amp; Import {{ total }} Lines
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Parse standard accounts from server
+    const standardAccounts = {{ standard_accounts_json|safe }};
+
+    // Populate all mapping dropdowns
+    const selects = document.querySelectorAll('.mapping-select');
+    selects.forEach(function(select) {
+        // Group by statement section
+        const groups = {};
+        standardAccounts.forEach(function(acct) {
+            const section = acct.statement_section || 'Other';
+            if (!groups[section]) groups[section] = [];
+            groups[section].push(acct);
+        });
+
+        Object.keys(groups).sort().forEach(function(section) {
+            const optgroup = document.createElement('optgroup');
+            optgroup.label = section;
+            groups[section].forEach(function(acct) {
+                const option = document.createElement('option');
+                option.value = acct.id;
+                option.textContent = acct.standard_code + ' - ' + acct.line_item_label;
+                optgroup.appendChild(option);
+            });
+            select.appendChild(optgroup);
+        });
+
+        // Set learned value if available
+        const learnedValue = select.dataset.learnedValue;
+        if (learnedValue) {
+            select.value = learnedValue;
+        }
+    });
+
+    // Search filter
+    document.getElementById('searchFilter').addEventListener('input', function() {
+        const query = this.value.toLowerCase();
+        document.querySelectorAll('.mapping-row').forEach(function(row) {
+            const text = row.textContent.toLowerCase();
+            row.style.display = text.includes(query) ? '' : 'none';
+        });
+    });
+
+    // Confidence filter buttons
+    document.querySelectorAll('.filter-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
+            const filter = this.dataset.filter;
+
+            document.querySelectorAll('.mapping-row').forEach(function(row) {
+                if (filter === 'all') {
+                    row.style.display = '';
+                } else {
+                    row.style.display = row.dataset.confidence === filter ? '' : 'none';
+                }
+            });
+        });
+    });
+
+    // Approve All Learned button - ensures all learned mappings are set
+    document.getElementById('approveAllLearned').addEventListener('click', function() {
+        let count = 0;
+        selects.forEach(function(select) {
+            const learnedValue = select.dataset.learnedValue;
+            if (learnedValue && select.value !== learnedValue) {
+                select.value = learnedValue;
+                count++;
+            }
+        });
+        if (count > 0) {
+            alert('Restored ' + count + ' learned mapping(s).');
+        } else {
+            alert('All learned mappings are already set.');
+        }
+    });
+});
+</script>
+{% endblock %}

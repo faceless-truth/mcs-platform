@@ -219,8 +219,8 @@ def review_detail(request, pk):
     # Use local account mappings from the core app
     from core.models import AccountMapping
     accounts = list(
-        AccountMapping.objects.values_list("code", "aasb_label")
-        .order_by("code")
+        AccountMapping.objects.values_list("standard_code", "line_item_label")
+        .order_by("standard_code")
     )
     accounts = [{"code": a[0], "name": a[1]} for a in accounts]
 

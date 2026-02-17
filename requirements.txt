@@ -34,3 +34,4 @@ weasyprint==68.1
 webencodings==0.5.1
 whitenoise==6.11.0
 zopfli==0.4.0
+requests>=2.32.0

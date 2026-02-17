@@ -11,6 +11,8 @@ urlpatterns = [
     path("", include("review.urls")),
     # Core app handles clients, entities, financial years, etc.
     path("", include("core.urls")),
+    # Integrations app handles Xero/MYOB/QB connections and cloud imports
+    path("integrations/", include("integrations.urls")),
 ]
 
 if settings.DEBUG:

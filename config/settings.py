@@ -34,6 +34,7 @@ INSTALLED_APPS = [
     "accounts.apps.AccountsConfig",
     "core.apps.CoreConfig",
     "review.apps.ReviewConfig",
+    "integrations.apps.IntegrationsConfig",
 ]
 
 MIDDLEWARE = [
@@ -162,3 +163,16 @@ MCS_LOGO_PATH = BASE_DIR / "static" / "MCSlogo.png"
 
 # Airtable integration (for Bank Statement Review module)
 AIRTABLE_API_KEY = os.environ.get("AIRTABLE_API_KEY", "")
+
+# Accounting platform integrations (OAuth2 credentials)
+# Xero
+XERO_CLIENT_ID = os.environ.get("XERO_CLIENT_ID", "")
+XERO_CLIENT_SECRET = os.environ.get("XERO_CLIENT_SECRET", "")
+
+# MYOB
+MYOB_CLIENT_ID = os.environ.get("MYOB_CLIENT_ID", "")
+MYOB_CLIENT_SECRET = os.environ.get("MYOB_CLIENT_SECRET", "")
+
+# QuickBooks Online
+QBO_CLIENT_ID = os.environ.get("QBO_CLIENT_ID", "")
+QBO_CLIENT_SECRET = os.environ.get("QBO_CLIENT_SECRET", "")

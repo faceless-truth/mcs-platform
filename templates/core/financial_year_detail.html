@@ -29,6 +29,9 @@
         <a href="{% url 'core:trial_balance_import' pk=fy.pk %}" class="btn btn-outline-success btn-sm">
             <i class="bi bi-upload"></i> Import TB
         </a>
+        <a href="{% url 'integrations:import_from_cloud' fy_pk=fy.pk %}" class="btn btn-outline-info btn-sm">
+            <i class="bi bi-cloud-arrow-down"></i> Import from Cloud
+        </a>
         <a href="{% url 'core:adjustment_create' pk=fy.pk %}" class="btn btn-outline-primary btn-sm">
             <i class="bi bi-journal-plus"></i> New Journal Entry
         </a>
@@ -202,11 +205,16 @@
         {% else %}
         <div class="text-center py-5 text-muted">
             <i class="bi bi-upload" style="font-size: 3rem;"></i>
-            <p class="mt-2">No trial balance data yet. Import an Excel file to get started.</p>
+            <p class="mt-2">No trial balance data yet. Import an Excel file or pull from your accounting platform.</p>
             {% if not fy.is_locked and user.can_edit %}
-            <a href="{% url 'core:trial_balance_import' pk=fy.pk %}" class="btn btn-primary">
-                <i class="bi bi-upload"></i> Import Trial Balance
-            </a>
+            <div class="d-flex gap-2 justify-content-center">
+                <a href="{% url 'core:trial_balance_import' pk=fy.pk %}" class="btn btn-primary">
+                    <i class="bi bi-upload"></i> Import Excel
+                </a>
+                <a href="{% url 'integrations:import_from_cloud' fy_pk=fy.pk %}" class="btn btn-info">
+                    <i class="bi bi-cloud-arrow-down"></i> Import from Xero / MYOB / QB
+                </a>
+            </div>
             {% endif %}
         </div>
         {% endif %}

@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Select Organisation - StatementHub{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-6 mx-auto">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-building"></i> Select Organisation</h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted">
+                    Multiple organisations were found in your {{ provider_name }} account.
+                    Select the one to connect to <strong>{{ entity.entity_name }}</strong>:
+                </p>
+                <form method="post">
+                    {% csrf_token %}
+                    <div class="list-group mb-3">
+                        {% for tenant in tenants %}
+                        <label class="list-group-item list-group-item-action">
+                            <input type="radio" name="tenant_id" value="{{ tenant.id }}"
+                                   class="form-check-input me-2"
+                                   {% if forloop.first %}checked{% endif %}>
+                            <strong>{{ tenant.name }}</strong>
+                        </label>
+                        {% endfor %}
+                    </div>
+                    <div class="d-flex justify-content-between">
+                        <a href="{% url 'integrations:connection_manage' entity_pk=entity.pk %}"
+                           class="btn btn-outline-secondary">Cancel</a>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-plug"></i> Connect
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

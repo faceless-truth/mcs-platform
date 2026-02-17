@@ -237,10 +237,10 @@
                             {% endif %}
                         </span>
                     </td>
-                    <td style="white-space: nowrap;">{{ txn.date|date:"d/m/Y" }}</td>
+                    <td style="white-space: nowrap;">{{ txn.date }}</td>
                     <td>{{ txn.description }}</td>
                     <td class="text-end {% if txn.amount < 0 %}amount-debit{% else %}amount-credit{% endif %}" style="white-space: nowrap;">
-                        {% if txn.amount < 0 %}-{% endif %}${{ txn.amount|floatformat:2 }}
+                        ${{ txn.amount|floatformat:2 }}
                     </td>
                     <td>
                         <div>

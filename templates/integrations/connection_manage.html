@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block title %}Connections - {{ entity.entity_name }} - StatementHub{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-10 mx-auto">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="{% url 'core:client_list' %}">Clients</a></li>
+                <li class="breadcrumb-item"><a href="{% url 'core:client_detail' pk=entity.client.pk %}">{{ entity.client.name }}</a></li>
+                <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
+                <li class="breadcrumb-item active">Connections</li>
+            </ol>
+        </nav>
+
+        <h4 class="mb-4"><i class="bi bi-cloud-arrow-down"></i> Accounting Platform Connections</h4>
+
+        <!-- Active Connections -->
+        {% if connections %}
+        <div class="card mb-4">
+            <div class="card-header"><h6 class="mb-0">Current Connections</h6></div>
+            <div class="card-body p-0">
+                <table class="table table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Platform</th>
+                            <th>Organisation</th>
+                            <th>Status</th>
+                            <th>Connected</th>
+                            <th>Last Sync</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for conn in connections %}
+                        <tr>
+                            <td>
+                                <strong>{{ conn.get_provider_display }}</strong>
+                            </td>
+                            <td>{{ conn.tenant_name|default:"—" }}</td>
+                            <td>
+                                {% if conn.status == "active" %}
+                                <span class="badge bg-success">Active</span>
+                                {% elif conn.status == "expired" %}
+                                <span class="badge bg-warning text-dark">Token Expired</span>
+                                {% elif conn.status == "disconnected" %}
+                                <span class="badge bg-secondary">Disconnected</span>
+                                {% else %}
+                                <span class="badge bg-danger">Error</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ conn.connected_at|date:"d M Y" }}</td>
+                            <td>{{ conn.last_sync_at|date:"d M Y H:i"|default:"Never" }}</td>
+                            <td class="text-end">
+                                {% if conn.status == "active" %}
+                                <form method="post" action="{% url 'integrations:disconnect' connection_pk=conn.pk %}" class="d-inline">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-sm btn-outline-danger"
+                                            onclick="return confirm('Disconnect from {{ conn.get_provider_display }}?')">
+                                        <i class="bi bi-x-circle"></i> Disconnect
+                                    </button>
+                                </form>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% if conn.last_error %}
+                        <tr>
+                            <td colspan="6">
+                                <small class="text-danger"><i class="bi bi-exclamation-triangle"></i> {{ conn.last_error }}</small>
+                            </td>
+                        </tr>
+                        {% endif %}
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Connect New Platform -->
+        <div class="card">
+            <div class="card-header"><h6 class="mb-0">Connect a Platform</h6></div>
+            <div class="card-body">
+                {% if configured_providers %}
+                <p class="text-muted mb-3">
+                    Connect {{ entity.entity_name }} to an accounting platform to pull trial balance data directly.
+                </p>
+                <div class="row g-3">
+                    {% for provider in configured_providers %}
+                    <div class="col-md-4">
+                        <div class="card h-100 {% if provider.name in connected_names %}border-success{% endif %}">
+                            <div class="card-body text-center">
+                                <h5 class="card-title">
+                                    {% if provider.name == "xero" %}
+                                    <i class="bi bi-cloud fs-1 text-primary d-block mb-2"></i>
+                                    {% elif provider.name == "myob" %}
+                                    <i class="bi bi-cloud fs-1 text-info d-block mb-2"></i>
+                                    {% else %}
+                                    <i class="bi bi-cloud fs-1 text-success d-block mb-2"></i>
+                                    {% endif %}
+                                    {{ provider.display_name }}
+                                </h5>
+                                {% if provider.name in connected_names %}
+                                <span class="badge bg-success mb-2">Connected</span><br>
+                                <a href="{% url 'integrations:oauth_connect' entity_pk=entity.pk provider_name=provider.name %}"
+                                   class="btn btn-sm btn-outline-primary mt-2">
+                                    <i class="bi bi-arrow-repeat"></i> Reconnect
+                                </a>
+                                {% else %}
+                                <a href="{% url 'integrations:oauth_connect' entity_pk=entity.pk provider_name=provider.name %}"
+                                   class="btn btn-primary mt-2">
+                                    <i class="bi bi-plug"></i> Connect
+                                </a>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="alert alert-info mb-0">
+                    <i class="bi bi-info-circle"></i>
+                    No accounting platform integrations have been configured yet.
+                    API credentials for Xero, MYOB, or QuickBooks need to be added to the system settings.
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="mt-3">
+            <a href="{% url 'core:entity_detail' pk=entity.pk %}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> Back to {{ entity.entity_name }}
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}
