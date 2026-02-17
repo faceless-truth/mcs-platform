@@ -118,7 +118,7 @@ def client_list(request):
 def client_create(request):
     if not request.user.can_edit:
         messages.error(request, "You do not have permission to create clients.")
-        return redirect("core:dashboard")
+        return redirect("review:dashboard")
 
     if request.method == "POST":
         form = ClientForm(request.POST)

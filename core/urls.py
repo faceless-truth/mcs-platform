@@ -5,8 +5,6 @@ from . import views
 app_name = "core"
 
 urlpatterns = [
-    # Dashboard
-    path("", views.dashboard, name="dashboard"),
 
     # Clients
     path("clients/", views.client_list, name="client_list"),

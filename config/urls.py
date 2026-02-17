@@ -7,6 +7,9 @@ from django.conf.urls.static import static
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("accounts/", include("accounts.urls")),
+    # Review app handles the dashboard (homepage) and review pages
+    path("", include("review.urls")),
+    # Core app handles clients, entities, financial years, etc.
     path("", include("core.urls")),
 ]
 

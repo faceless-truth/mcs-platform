@@ -91,7 +91,7 @@ def invitation_list(request):
     """List all invitations. Admin only."""
     if not request.user.is_admin:
         messages.error(request, "You do not have permission to manage invitations.")
-        return redirect("core:dashboard")
+        return redirect("review:dashboard")
 
     # Auto-expire old invitations
     Invitation.objects.filter(
@@ -108,7 +108,7 @@ def invitation_create(request):
     """Create and send a new invitation. Admin only."""
     if not request.user.is_admin:
         messages.error(request, "You do not have permission to send invitations.")
-        return redirect("core:dashboard")
+        return redirect("review:dashboard")
 
     # Check user limit (7 users max)
     active_users = User.objects.filter(is_active=True).count()
@@ -146,7 +146,7 @@ def invitation_resend(request, pk):
     """Resend an invitation email. Admin only."""
     if not request.user.is_admin:
         messages.error(request, "You do not have permission.")
-        return redirect("core:dashboard")
+        return redirect("review:dashboard")
 
     invitation = get_object_or_404(Invitation, pk=pk)
     if not invitation.is_valid:
@@ -165,7 +165,7 @@ def invitation_revoke(request, pk):
     """Revoke a pending invitation. Admin only."""
     if not request.user.is_admin:
         messages.error(request, "You do not have permission.")
-        return redirect("core:dashboard")
+        return redirect("review:dashboard")
 
     invitation = get_object_or_404(Invitation, pk=pk)
     if invitation.status == Invitation.Status.PENDING:
@@ -297,7 +297,7 @@ def profile_view(request):
 def user_list(request):
     if not request.user.is_admin:
         messages.error(request, "You do not have permission to manage users.")
-        return redirect("core:dashboard")
+        return redirect("review:dashboard")
     users = User.objects.all()
     invitations = Invitation.objects.filter(status=Invitation.Status.PENDING)
     return render(request, "accounts/user_list.html", {
@@ -310,7 +310,7 @@ def user_list(request):
 def user_create(request):
     if not request.user.is_admin:
         messages.error(request, "You do not have permission to create users.")
-        return redirect("core:dashboard")
+        return redirect("review:dashboard")
     if request.method == "POST":
         form = UserCreateForm(request.POST)
         if form.is_valid():
@@ -326,7 +326,7 @@ def user_create(request):
 def user_edit(request, pk):
     if not request.user.is_admin:
         messages.error(request, "You do not have permission to edit users.")
-        return redirect("core:dashboard")
+        return redirect("review:dashboard")
     user = get_object_or_404(User, pk=pk)
     if request.method == "POST":
         form = UserEditForm(request.POST, instance=user)
@@ -344,7 +344,7 @@ def user_reset_2fa(request, pk):
     """Reset a user's TOTP 2FA. Admin only. User will need to re-setup on next login."""
     if not request.user.is_admin:
         messages.error(request, "You do not have permission.")
-        return redirect("core:dashboard")
+        return redirect("review:dashboard")
     user = get_object_or_404(User, pk=pk)
     user.totp_secret = ""
     user.totp_confirmed = False

@@ -1,0 +1,506 @@
+{% extends "base.html" %}
+{% load humanize %}
+{% block title %}Review — {{ job.client_name }} — StatementHub{% endblock %}
+
+{% block extra_head %}
+<style>
+    .review-header {
+        background: white;
+        border-radius: 12px;
+        padding: 20px 24px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        margin-bottom: 20px;
+    }
+    .progress-counter {
+        font-size: 2rem;
+        font-weight: 700;
+        color: #1a1a2e;
+    }
+    .progress-counter .total {
+        color: #adb5bd;
+        font-weight: 400;
+    }
+    .txn-table {
+        font-size: 0.85rem;
+    }
+    .txn-table th {
+        font-weight: 600;
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: #6c757d;
+        border-bottom: 2px solid #dee2e6;
+        white-space: nowrap;
+    }
+    .txn-table td {
+        vertical-align: middle;
+        padding: 10px 8px;
+    }
+    .txn-row-pending {
+        background: #fffde7;
+    }
+    .txn-row-confirmed {
+        background: #f1f8e9;
+    }
+    .amount-debit {
+        color: #c62828;
+        font-weight: 600;
+    }
+    .amount-credit {
+        color: #2e7d32;
+        font-weight: 600;
+    }
+    .confidence-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        font-size: 0.75rem;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-weight: 600;
+    }
+    .conf-1 { background: #ffcdd2; color: #b71c1c; }
+    .conf-2 { background: #ffe0b2; color: #e65100; }
+    .conf-3 { background: #fff9c4; color: #f57f17; }
+    .conf-4 { background: #c8e6c9; color: #2e7d32; }
+    .conf-5 { background: #a5d6a7; color: #1b5e20; }
+
+    /* Searchable account picker */
+    .account-picker-container {
+        position: relative;
+    }
+    .account-picker-input {
+        width: 100%;
+        padding: 4px 8px;
+        border: 1px solid #ced4da;
+        border-radius: 6px;
+        font-size: 0.82rem;
+        background: white;
+    }
+    .account-picker-input:focus {
+        border-color: #4a90d9;
+        outline: none;
+        box-shadow: 0 0 0 2px rgba(74,144,217,0.15);
+    }
+    .account-picker-input.confirmed {
+        border-color: #4caf50;
+        background: #f1f8e9;
+    }
+    .account-dropdown {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        background: white;
+        border: 1px solid #ced4da;
+        border-radius: 6px;
+        max-height: 200px;
+        overflow-y: auto;
+        z-index: 1000;
+        display: none;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    .account-dropdown.show {
+        display: block;
+    }
+    .account-option {
+        padding: 6px 10px;
+        cursor: pointer;
+        font-size: 0.82rem;
+        border-bottom: 1px solid #f5f5f5;
+    }
+    .account-option:hover, .account-option.active {
+        background: #e3f2fd;
+    }
+    .account-option .code {
+        font-weight: 600;
+        color: #1a1a2e;
+        margin-right: 6px;
+    }
+    .account-option .name {
+        color: #6c757d;
+    }
+
+    .tax-select {
+        padding: 4px 6px;
+        border: 1px solid #ced4da;
+        border-radius: 6px;
+        font-size: 0.82rem;
+        background: white;
+        min-width: 140px;
+    }
+    .tax-select.confirmed {
+        border-color: #4caf50;
+        background: #f1f8e9;
+    }
+    .status-icon {
+        font-size: 1.1rem;
+    }
+    .btn-accept-all {
+        background: #e3f2fd;
+        border: 1px solid #90caf9;
+        color: #1565c0;
+        font-weight: 600;
+        font-size: 0.85rem;
+    }
+    .btn-accept-all:hover {
+        background: #bbdefb;
+        color: #0d47a1;
+    }
+    .btn-submit-review {
+        font-weight: 600;
+        font-size: 0.9rem;
+        padding: 10px 32px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<div class="review-header">
+    <div class="d-flex justify-content-between align-items-start">
+        <div>
+            <a href="{% url 'review:dashboard' %}" class="text-decoration-none text-muted" style="font-size: 0.85rem;">
+                <i class="bi bi-arrow-left"></i> Back to Dashboard
+            </a>
+            <h4 class="mt-2 mb-1 fw-bold">{{ job.client_name }}</h4>
+            <div class="text-muted" style="font-size: 0.85rem;">
+                <i class="bi bi-file-earmark-pdf text-danger"></i> {{ job.file_name }}
+                <span class="mx-2">&middot;</span>
+                <i class="bi bi-calendar3"></i> Received {{ job.received_at|date:"d/m/Y" }}
+                {% if job.submitted_by %}
+                <span class="mx-2">&middot;</span>
+                <i class="bi bi-person"></i> {{ job.submitted_by }}
+                {% endif %}
+            </div>
+        </div>
+        <div class="text-end">
+            <div class="progress-counter">
+                <span id="confirmed-count">{{ job.confirmed_count }}</span>
+                <span class="total">/ {{ job.flagged_count }}</span>
+            </div>
+            <small class="text-muted">confirmed</small>
+            <div class="progress mt-2" style="height: 8px; width: 180px;">
+                <div id="progress-bar" class="progress-bar bg-success" style="width: {{ job.progress_percent }}%"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Action Bar -->
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <span class="text-muted" style="font-size: 0.85rem;">
+            {{ job.total_transactions }} total transactions &middot;
+            {{ job.auto_coded_count }} auto-coded &middot;
+            <strong>{{ job.flagged_count }} flagged for review</strong>
+        </span>
+    </div>
+    <div class="d-flex gap-2">
+        <button id="btn-accept-all" class="btn btn-accept-all" onclick="acceptAllSuggestions()">
+            <i class="bi bi-magic"></i> Accept All AI Suggestions
+        </button>
+        <button id="btn-submit" class="btn btn-success btn-submit-review" onclick="submitReview()" disabled>
+            <i class="bi bi-check2-all"></i> Submit Review
+        </button>
+    </div>
+</div>
+
+<!-- Transaction Table -->
+<div class="bg-white rounded-3" style="box-shadow: 0 1px 3px rgba(0,0,0,0.08); overflow: hidden;">
+    <div class="table-responsive">
+        <table class="table txn-table mb-0">
+            <thead>
+                <tr>
+                    <th style="width: 30px;"></th>
+                    <th>Date</th>
+                    <th>Description</th>
+                    <th class="text-end">Amount</th>
+                    <th>AI Suggestion</th>
+                    <th style="min-width: 220px;">Confirmed Code</th>
+                    <th style="min-width: 160px;">Tax Type</th>
+                </tr>
+            </thead>
+            <tbody id="txn-body">
+                {% for txn in transactions %}
+                <tr id="row-{{ txn.pk }}" class="{% if txn.is_confirmed %}txn-row-confirmed{% else %}txn-row-pending{% endif %}"
+                    data-txn-id="{{ txn.pk }}"
+                    data-ai-code="{{ txn.ai_suggested_code }}"
+                    data-ai-name="{{ txn.ai_suggested_name }}"
+                    data-confirmed="{{ txn.is_confirmed|yesno:'true,false' }}">
+                    <td>
+                        <span class="status-icon">
+                            {% if txn.is_confirmed %}
+                            <i class="bi bi-check-circle-fill text-success"></i>
+                            {% else %}
+                            <i class="bi bi-circle text-warning"></i>
+                            {% endif %}
+                        </span>
+                    </td>
+                    <td style="white-space: nowrap;">{{ txn.date|date:"d/m/Y" }}</td>
+                    <td>{{ txn.description }}</td>
+                    <td class="text-end {% if txn.amount < 0 %}amount-debit{% else %}amount-credit{% endif %}" style="white-space: nowrap;">
+                        {% if txn.amount < 0 %}-{% endif %}${{ txn.amount|floatformat:2 }}
+                    </td>
+                    <td>
+                        <div>
+                            <span style="font-weight: 600;">{{ txn.ai_suggested_code }}</span>
+                            <span class="text-muted">{{ txn.ai_suggested_name }}</span>
+                        </div>
+                        <span class="confidence-badge conf-{{ txn.ai_confidence }}">
+                            {% for i in "12345" %}{% if forloop.counter <= txn.ai_confidence %}<i class="bi bi-star-fill"></i>{% else %}<i class="bi bi-star"></i>{% endif %}{% endfor %}
+                        </span>
+                    </td>
+                    <td>
+                        <div class="account-picker-container">
+                            <input type="text"
+                                   class="account-picker-input {% if txn.is_confirmed %}confirmed{% endif %}"
+                                   id="acct-{{ txn.pk }}"
+                                   value="{% if txn.confirmed_code %}{{ txn.confirmed_code }} — {{ txn.confirmed_name }}{% endif %}"
+                                   placeholder="Type code or name..."
+                                   data-code="{{ txn.confirmed_code }}"
+                                   data-name="{{ txn.confirmed_name }}"
+                                   autocomplete="off">
+                            <div class="account-dropdown" id="dropdown-{{ txn.pk }}"></div>
+                        </div>
+                    </td>
+                    <td>
+                        <select class="tax-select {% if txn.is_confirmed %}confirmed{% endif %}"
+                                id="tax-{{ txn.pk }}"
+                                onchange="onTaxChange('{{ txn.pk }}')">
+                            <option value="">— Select —</option>
+                            <option value="GST on Income" {% if txn.confirmed_tax_type == "GST on Income" %}selected{% endif %}>GST on Income</option>
+                            <option value="GST on Expenses" {% if txn.confirmed_tax_type == "GST on Expenses" %}selected{% endif %}>GST on Expenses</option>
+                            <option value="GST Free Income" {% if txn.confirmed_tax_type == "GST Free Income" %}selected{% endif %}>GST Free Income</option>
+                            <option value="GST Free Expenses" {% if txn.confirmed_tax_type == "GST Free Expenses" %}selected{% endif %}>GST Free Expenses</option>
+                            <option value="BAS Excluded" {% if txn.confirmed_tax_type == "BAS Excluded" %}selected{% endif %}>BAS Excluded</option>
+                        </select>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Submit bar (sticky bottom) -->
+<div class="d-flex justify-content-end mt-4 mb-4">
+    <button id="btn-submit-bottom" class="btn btn-success btn-submit-review btn-lg" onclick="submitReview()" disabled>
+        <i class="bi bi-check2-all"></i> Submit Review
+    </button>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const ACCOUNTS = {{ accounts_json|safe }};
+const JOB_ID = "{{ job.pk }}";
+const FLAGGED_COUNT = {{ job.flagged_count }};
+const CSRF_TOKEN = "{{ csrf_token }}";
+let activeDropdown = null;
+let activeIndex = -1;
+
+// ---- Account Picker ----
+document.querySelectorAll('.account-picker-input').forEach(input => {
+    const txnId = input.id.replace('acct-', '');
+    const dropdown = document.getElementById('dropdown-' + txnId);
+
+    input.addEventListener('focus', () => {
+        showDropdown(txnId, input.value);
+    });
+
+    input.addEventListener('input', () => {
+        showDropdown(txnId, input.value);
+    });
+
+    input.addEventListener('keydown', (e) => {
+        const options = dropdown.querySelectorAll('.account-option');
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            activeIndex = Math.min(activeIndex + 1, options.length - 1);
+            highlightOption(dropdown, activeIndex);
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            activeIndex = Math.max(activeIndex - 1, 0);
+            highlightOption(dropdown, activeIndex);
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            if (activeIndex >= 0 && options[activeIndex]) {
+                selectAccount(txnId, options[activeIndex].dataset.code, options[activeIndex].dataset.name);
+            }
+        } else if (e.key === 'Tab') {
+            if (activeIndex >= 0 && options[activeIndex]) {
+                selectAccount(txnId, options[activeIndex].dataset.code, options[activeIndex].dataset.name);
+            } else if (options.length > 0) {
+                selectAccount(txnId, options[0].dataset.code, options[0].dataset.name);
+            }
+            hideAllDropdowns();
+        } else if (e.key === 'Escape') {
+            hideAllDropdowns();
+        }
+    });
+});
+
+document.addEventListener('click', (e) => {
+    if (!e.target.closest('.account-picker-container')) {
+        hideAllDropdowns();
+    }
+});
+
+function showDropdown(txnId, query) {
+    const dropdown = document.getElementById('dropdown-' + txnId);
+    const q = (query || '').toLowerCase().replace(/\s*—\s*.*/, '').trim();
+    activeIndex = -1;
+
+    let filtered = ACCOUNTS;
+    if (q) {
+        filtered = ACCOUNTS.filter(a =>
+            a.code.toLowerCase().includes(q) ||
+            a.name.toLowerCase().includes(q)
+        );
+    }
+
+    if (filtered.length === 0) {
+        dropdown.innerHTML = '<div class="p-2 text-muted" style="font-size:0.82rem;">No matching accounts</div>';
+    } else {
+        dropdown.innerHTML = filtered.slice(0, 30).map(a =>
+            `<div class="account-option" data-code="${a.code}" data-name="${a.name}" onclick="selectAccount('${txnId}', '${a.code}', '${a.name.replace(/'/g, "\\'")}')">
+                <span class="code">${a.code}</span>
+                <span class="name">${a.name}</span>
+            </div>`
+        ).join('');
+    }
+    dropdown.classList.add('show');
+    activeDropdown = dropdown;
+}
+
+function highlightOption(dropdown, index) {
+    dropdown.querySelectorAll('.account-option').forEach((opt, i) => {
+        opt.classList.toggle('active', i === index);
+        if (i === index) opt.scrollIntoView({ block: 'nearest' });
+    });
+}
+
+function hideAllDropdowns() {
+    document.querySelectorAll('.account-dropdown').forEach(d => d.classList.remove('show'));
+    activeDropdown = null;
+    activeIndex = -1;
+}
+
+function selectAccount(txnId, code, name) {
+    const input = document.getElementById('acct-' + txnId);
+    input.value = code + ' — ' + name;
+    input.dataset.code = code;
+    input.dataset.name = name;
+    input.classList.add('confirmed');
+    hideAllDropdowns();
+
+    // Auto-confirm if tax type is also set
+    tryAutoConfirm(txnId);
+}
+
+function onTaxChange(txnId) {
+    const select = document.getElementById('tax-' + txnId);
+    if (select.value) {
+        select.classList.add('confirmed');
+    }
+    tryAutoConfirm(txnId);
+}
+
+function tryAutoConfirm(txnId) {
+    const input = document.getElementById('acct-' + txnId);
+    const select = document.getElementById('tax-' + txnId);
+    const code = input.dataset.code;
+    const name = input.dataset.name;
+    const tax = select.value;
+
+    if (code && tax) {
+        confirmTransaction(txnId, code, name, tax);
+    }
+}
+
+function confirmTransaction(txnId, code, name, taxType) {
+    fetch(`/api/review/transaction/${txnId}/confirm/`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': CSRF_TOKEN,
+        },
+        body: JSON.stringify({
+            confirmed_code: code,
+            confirmed_name: name,
+            confirmed_tax_type: taxType,
+        }),
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            const row = document.getElementById('row-' + txnId);
+            row.classList.remove('txn-row-pending');
+            row.classList.add('txn-row-confirmed');
+            row.dataset.confirmed = 'true';
+            row.querySelector('.status-icon').innerHTML = '<i class="bi bi-check-circle-fill text-success"></i>';
+
+            // Update progress
+            document.getElementById('confirmed-count').textContent = data.confirmed_count;
+            document.getElementById('progress-bar').style.width = data.progress_percent + '%';
+
+            // Enable submit if all confirmed
+            const allConfirmed = data.confirmed_count >= FLAGGED_COUNT;
+            document.getElementById('btn-submit').disabled = !allConfirmed;
+            document.getElementById('btn-submit-bottom').disabled = !allConfirmed;
+        }
+    });
+}
+
+// ---- Accept All AI Suggestions ----
+function acceptAllSuggestions() {
+    if (!confirm('Accept all AI suggestions for unconfirmed transactions? You can still change individual items afterwards.')) return;
+
+    fetch(`/api/review/${JOB_ID}/accept-all/`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': CSRF_TOKEN,
+        },
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            // Reload the page to show updated state
+            window.location.reload();
+        }
+    });
+}
+
+// ---- Submit Review ----
+function submitReview() {
+    if (!confirm('Submit this review? The corrected Excel will be generated and emailed.')) return;
+
+    fetch(`/api/review/${JOB_ID}/submit/`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': CSRF_TOKEN,
+        },
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            window.location.href = data.redirect || '/';
+        } else {
+            alert(data.message || 'Error submitting review.');
+        }
+    });
+}
+
+// ---- Initial state: enable submit if all already confirmed ----
+(function() {
+    const confirmed = {{ job.confirmed_count }};
+    if (confirmed >= FLAGGED_COUNT && FLAGGED_COUNT > 0) {
+        document.getElementById('btn-submit').disabled = false;
+        document.getElementById('btn-submit-bottom').disabled = false;
+    }
+})();
+</script>
+{% endblock %}

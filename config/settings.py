@@ -33,6 +33,7 @@ INSTALLED_APPS = [
     # Local apps
     "accounts.apps.AccountsConfig",
     "core.apps.CoreConfig",
+    "review.apps.ReviewConfig",
 ]
 
 MIDDLEWARE = [
@@ -155,3 +156,6 @@ if not DEBUG:
     SECURE_SSL_REDIRECT = True
     CSRF_COOKIE_SECURE = True
     X_FRAME_OPTIONS = "DENY"
+
+# Airtable integration (for Bank Statement Review module)
+AIRTABLE_API_KEY = os.environ.get("AIRTABLE_API_KEY", "")
