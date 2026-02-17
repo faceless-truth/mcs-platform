@@ -223,7 +223,22 @@ def review_dashboard(request):
     # Learning stats
     total_patterns = TransactionPattern.objects.count()
 
+    # Time-based greeting (Melbourne time)
+    from datetime import datetime
+    import zoneinfo
+    now = datetime.now(zoneinfo.ZoneInfo("Australia/Melbourne"))
+    hour = now.hour
+    if hour < 12:
+        greeting = "Good morning"
+    elif hour < 17:
+        greeting = "Good afternoon"
+    else:
+        greeting = "Good evening"
+    first_name = request.user.first_name or request.user.username.capitalize()
+
     context = {
+        "greeting": greeting,
+        "first_name": first_name,
         "pending_jobs": pending_jobs,
         "completed_jobs": completed_jobs,
         "activities": activities,
