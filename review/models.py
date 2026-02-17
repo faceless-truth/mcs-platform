@@ -24,8 +24,8 @@ class ReviewJob(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     airtable_record_id = models.CharField(
-        max_length=50, blank=True, null=True, unique=True,
-        help_text="Airtable record ID for syncing",
+        max_length=50, blank=True, null=True,
+        help_text="Airtable record ID for syncing (optional)",
     )
     client_name = models.CharField(max_length=255)
     file_name = models.CharField(max_length=500, blank=True, default="")
@@ -77,11 +77,12 @@ class PendingTransaction(models.Model):
     job = models.ForeignKey(
         ReviewJob, on_delete=models.CASCADE, related_name="transactions"
     )
-    date = models.DateField()
+    date = models.CharField(max_length=20, blank=True, default="")
     description = models.CharField(max_length=500)
     amount = models.DecimalField(max_digits=12, decimal_places=2)
     ai_suggested_code = models.CharField(max_length=20, blank=True, default="")
     ai_suggested_name = models.CharField(max_length=255, blank=True, default="")
+    ai_suggested_tax_type = models.CharField(max_length=30, blank=True, default="")
     ai_confidence = models.IntegerField(default=0, help_text="1-5 scale")
     confirmed_code = models.CharField(max_length=20, blank=True, default="")
     confirmed_name = models.CharField(max_length=255, blank=True, default="")
