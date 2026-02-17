@@ -257,17 +257,66 @@ def financial_year_detail(request, pk):
     # Calculate totals
     total_debit = tb_lines.aggregate(total=Sum("debit"))["total"] or Decimal("0")
     total_credit = tb_lines.aggregate(total=Sum("credit"))["total"] or Decimal("0")
+    total_prior_debit = tb_lines.aggregate(total=Sum("prior_debit"))["total"] or Decimal("0")
+    total_prior_credit = tb_lines.aggregate(total=Sum("prior_credit"))["total"] or Decimal("0")
+
+    # Group lines by section for comparative display
+    from collections import OrderedDict
+    SECTION_ORDER = [
+        'Revenue', 'Income', 'Cost of Sales', 'Expenses',
+        'Current Assets', 'Non-Current Assets',
+        'Current Liabilities', 'Non-Current Liabilities',
+        'Equity', 'Income Tax',
+    ]
+    SECTION_DISPLAY = {
+        'Revenue': 'Income', 'Income': 'Income',
+        'Cost of Sales': 'Cost of Sales', 'Expenses': 'Expenses',
+        'Current Assets': 'Current Assets', 'Non-Current Assets': 'Non Current Assets',
+        'Current Liabilities': 'Current Liabilities', 'Non-Current Liabilities': 'Non Current Liabilities',
+        'Equity': 'Equity', 'Income Tax': 'Equity',
+    }
+    sections = OrderedDict()
+    for line in tb_lines:
+        if line.mapped_line_item:
+            raw_section = line.mapped_line_item.statement_section
+            display_section = SECTION_DISPLAY.get(raw_section, raw_section)
+        else:
+            display_section = 'Unmapped'
+        if display_section not in sections:
+            sections[display_section] = []
+        sections[display_section].append(line)
+    ordered_sections = OrderedDict()
+    section_keys_ordered = []
+    for s in SECTION_ORDER:
+        ds = SECTION_DISPLAY.get(s, s)
+        if ds not in section_keys_ordered:
+            section_keys_ordered.append(ds)
+    for key in section_keys_ordered:
+        if key in sections:
+            ordered_sections[key] = sections[key]
+    for key in sections:
+        if key not in ordered_sections:
+            ordered_sections[key] = sections[key]
+
+    # Year labels
+    current_year = str(fy.year_label)
+    prior_year = str(int(fy.year_label) - 1) if fy.year_label.isdigit() else 'Prior'
 
     context = {
         "fy": fy,
         "entity": fy.entity,
         "client": fy.entity.client,
         "tb_lines": tb_lines,
+        "tb_sections": ordered_sections,
         "adjustments": adjustments,
         "unmapped_count": unmapped_count,
         "documents": documents,
         "total_debit": total_debit,
         "total_credit": total_credit,
+        "total_prior_debit": total_prior_debit,
+        "total_prior_credit": total_prior_credit,
+        "current_year": current_year,
+        "prior_year": prior_year,
     }
     return render(request, "core/financial_year_detail.html", context)
 

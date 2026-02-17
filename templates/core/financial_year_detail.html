@@ -109,54 +109,89 @@
     <!-- Trial Balance Tab -->
     <div class="tab-pane fade show active p-3" id="tab-tb">
         {% if tb_lines %}
-        <div class="d-flex justify-content-between align-items-center mb-2">
-            <small class="text-muted">
-                Total Debits: <strong>${{ total_debit|floatformat:2 }}</strong> &middot;
-                Total Credits: <strong>${{ total_credit|floatformat:2 }}</strong>
-                {% if total_debit == total_credit %}
-                <span class="text-success"><i class="bi bi-check-circle"></i> Balanced</span>
-                {% else %}
-                <span class="text-danger"><i class="bi bi-x-circle"></i> Out of balance</span>
-                {% endif %}
-            </small>
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <div>
+                <h6 class="mb-1">Comparative Trial Balance as at {{ fy.end_date|date:"d M Y" }}</h6>
+                <small class="text-muted">
+                    Total Debits: <strong>${{ total_debit|floatformat:2 }}</strong> &middot;
+                    Total Credits: <strong>${{ total_credit|floatformat:2 }}</strong>
+                    {% if total_debit == total_credit %}
+                    <span class="text-success"><i class="bi bi-check-circle"></i> Balanced</span>
+                    {% else %}
+                    <span class="text-danger"><i class="bi bi-x-circle"></i> Out of balance</span>
+                    {% endif %}
+                </small>
+            </div>
             <a href="{% url 'core:trial_balance_pdf' pk=fy.pk %}" class="btn btn-outline-secondary btn-sm" title="Download Trial Balance as PDF">
                 <i class="bi bi-file-earmark-pdf"></i> Download PDF
             </a>
         </div>
         <div class="table-responsive">
-            <table class="table table-sm table-hover mb-0">
-                <thead class="table-light">
-                    <tr>
-                        <th>Code</th>
-                        <th>Account Name</th>
-                        <th class="text-end">Opening</th>
-                        <th class="text-end">Debit</th>
-                        <th class="text-end">Credit</th>
-                        <th class="text-end">Closing</th>
-                        <th>Mapped To</th>
+            <table class="table table-sm mb-0" style="font-size: 0.88rem;">
+                <thead>
+                    <tr class="border-bottom border-2 border-dark">
+                        <th style="width: 80px;"></th>
                         <th></th>
+                        <th class="text-end" style="width: 130px;">{{ current_year }}<br><small class="fw-normal text-muted">$ Dr</small></th>
+                        <th class="text-end" style="width: 130px;">{{ current_year }}<br><small class="fw-normal text-muted">$ Cr</small></th>
+                        <th class="text-end" style="width: 130px;">{{ prior_year }}<br><small class="fw-normal text-muted">$ Dr</small></th>
+                        <th class="text-end" style="width: 130px;">{{ prior_year }}<br><small class="fw-normal text-muted">$ Cr</small></th>
+                        <th style="width: 30px;"></th>
                     </tr>
                 </thead>
                 <tbody>
-                    {% for line in tb_lines %}
-                    <tr class="{% if not line.mapped_line_item %}table-warning{% endif %}{% if line.is_adjustment %} fst-italic{% endif %}">
-                        <td><code>{{ line.account_code }}</code></td>
-                        <td>{{ line.account_name }}{% if line.is_adjustment %} <span class="badge bg-info text-dark">Adj</span>{% endif %}</td>
-                        <td class="text-end">{{ line.opening_balance|floatformat:2 }}</td>
-                        <td class="text-end">{{ line.debit|floatformat:2 }}</td>
-                        <td class="text-end">{{ line.credit|floatformat:2 }}</td>
-                        <td class="text-end fw-semibold">{{ line.closing_balance|floatformat:2 }}</td>
+                    {% for section_name, lines in tb_sections.items %}
+                    <tr>
+                        <td colspan="7" class="pt-3 pb-1 border-0">
+                            <strong class="text-dark" style="font-size: 0.95rem;">{{ section_name }}</strong>
+                        </td>
+                    </tr>
+                    {% for line in lines %}
+                    <tr class="{% if not line.mapped_line_item %}table-warning{% endif %}{% if line.is_adjustment %} fst-italic{% endif %}" style="border-color: #e9ecef;">
+                        <td><code class="text-muted">{{ line.account_code }}</code></td>
+                        <td>
+                            {{ line.account_name }}
+                            {% if line.is_adjustment %}<span class="badge bg-info text-dark ms-1" style="font-size: 0.7rem;">Adj</span>{% endif %}
+                            {% if not line.mapped_line_item %}<small class="text-danger ms-1"><i class="bi bi-exclamation-triangle"></i></small>{% endif %}
+                        </td>
+                        <td class="text-end">{% if line.debit and line.debit != 0 %}{{ line.debit|floatformat:2|intcomma }}{% endif %}</td>
+                        <td class="text-end">{% if line.credit and line.credit != 0 %}{{ line.credit|floatformat:2|intcomma }}{% endif %}</td>
+                        <td class="text-end text-muted">{% if line.prior_debit and line.prior_debit != 0 %}{{ line.prior_debit|floatformat:2|intcomma }}{% endif %}</td>
+                        <td class="text-end text-muted">{% if line.prior_credit and line.prior_credit != 0 %}{{ line.prior_credit|floatformat:2|intcomma }}{% endif %}</td>
                         <td>
                             {% if line.mapped_line_item %}
-                            <small class="text-success">{{ line.mapped_line_item.line_item_label }}</small>
-                            {% else %}
-                            <small class="text-danger">Unmapped</small>
+                            <i class="bi bi-check-circle-fill text-success" style="font-size: 0.7rem;" title="{{ line.mapped_line_item.line_item_label }}"></i>
                             {% endif %}
                         </td>
-                        <td></td>
                     </tr>
                     {% endfor %}
+                    {% endfor %}
                 </tbody>
+                <tfoot>
+                    <tr class="border-top border-2 border-dark fw-bold">
+                        <td></td>
+                        <td class="text-end">Totals</td>
+                        <td class="text-end">{{ total_debit|floatformat:2|intcomma }}</td>
+                        <td class="text-end">{{ total_credit|floatformat:2|intcomma }}</td>
+                        <td class="text-end text-muted">{{ total_prior_debit|floatformat:2|intcomma }}</td>
+                        <td class="text-end text-muted">{{ total_prior_credit|floatformat:2|intcomma }}</td>
+                        <td></td>
+                    </tr>
+                    {% if total_debit != total_credit %}
+                    <tr class="fw-bold">
+                        <td></td>
+                        <td class="text-end">Net Profit</td>
+                        <td class="text-end" colspan="2">
+                            {% widthratio total_credit 1 1 as cr %}{% widthratio total_debit 1 1 as dr %}
+                            <span class="{% if total_credit > total_debit %}text-success{% else %}text-danger{% endif %}">
+                                ${{ total_credit|floatformat:2|intcomma }}
+                            </span>
+                        </td>
+                        <td colspan="2"></td>
+                        <td></td>
+                    </tr>
+                    {% endif %}
+                </tfoot>
             </table>
         </div>
         {% else %}
