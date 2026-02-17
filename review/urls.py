@@ -19,6 +19,10 @@ urlpatterns = [
     path("api/review/<uuid:pk>/accept-all/",
          views.accept_all_suggestions, name="accept_all"),
 
+    # Upload bank statement
+    path("upload-statement/",
+         views.upload_bank_statement, name="upload_statement"),
+
     # Webhook (n8n)
     path("api/notify/new-review-job/",
          views.notify_new_review_job, name="notify_new_job"),

@@ -123,6 +123,10 @@ class Entity(models.Model):
         max_length=255, blank=True,
         help_text="Trading name, e.g. 'Southy's Structures'",
     )
+    is_gst_registered = models.BooleanField(
+        default=True,
+        help_text="Whether this entity is registered for GST. Affects bank statement coding.",
+    )
     show_cents = models.BooleanField(
         default=False,
         help_text="Show amounts with cents (2 decimal places). Default for trusts and sole traders.",

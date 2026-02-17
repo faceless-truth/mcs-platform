@@ -20,12 +20,34 @@
         color: #adb5bd;
         font-weight: 400;
     }
+    .meta-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        background: #f8f9fa;
+        border: 1px solid #e9ecef;
+        border-radius: 6px;
+        padding: 3px 10px;
+        font-size: 0.78rem;
+        color: #495057;
+    }
+    .gst-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 3px 10px;
+        border-radius: 6px;
+        font-size: 0.78rem;
+        font-weight: 600;
+    }
+    .gst-registered { background: #e8f5e9; color: #2e7d32; border: 1px solid #c8e6c9; }
+    .gst-not-registered { background: #fff3e0; color: #e65100; border: 1px solid #ffe0b2; }
     .txn-table {
-        font-size: 0.85rem;
+        font-size: 0.83rem;
     }
     .txn-table th {
         font-weight: 600;
-        font-size: 0.78rem;
+        font-size: 0.76rem;
         text-transform: uppercase;
         letter-spacing: 0.5px;
         color: #6c757d;
@@ -34,13 +56,16 @@
     }
     .txn-table td {
         vertical-align: middle;
-        padding: 10px 8px;
+        padding: 8px 6px;
     }
     .txn-row-pending {
         background: #fffde7;
     }
     .txn-row-confirmed {
         background: #f1f8e9;
+    }
+    .txn-row-learning {
+        background: #e8f5e9;
     }
     .amount-debit {
         color: #c62828;
@@ -50,11 +75,19 @@
         color: #2e7d32;
         font-weight: 600;
     }
+    .gst-amount {
+        color: #6c757d;
+        font-size: 0.78rem;
+    }
+    .net-amount {
+        font-weight: 600;
+        font-size: 0.78rem;
+    }
     .confidence-badge {
         display: inline-flex;
         align-items: center;
         gap: 3px;
-        font-size: 0.75rem;
+        font-size: 0.73rem;
         padding: 2px 8px;
         border-radius: 12px;
         font-weight: 600;
@@ -64,6 +97,17 @@
     .conf-3 { background: #fff9c4; color: #f57f17; }
     .conf-4 { background: #c8e6c9; color: #2e7d32; }
     .conf-5 { background: #a5d6a7; color: #1b5e20; }
+    .learning-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 2px;
+        font-size: 0.7rem;
+        padding: 1px 6px;
+        border-radius: 10px;
+        background: #e0f2f1;
+        color: #00695c;
+        font-weight: 600;
+    }
 
     /* Searchable account picker */
     .account-picker-container {
@@ -164,13 +208,38 @@
                 <i class="bi bi-arrow-left"></i> Back to Dashboard
             </a>
             <h4 class="mt-2 mb-1 fw-bold">{{ job.client_name }}</h4>
-            <div class="text-muted" style="font-size: 0.85rem;">
+            <div class="text-muted mb-2" style="font-size: 0.85rem;">
                 <i class="bi bi-file-earmark-pdf text-danger"></i> {{ job.file_name }}
                 <span class="mx-2">&middot;</span>
                 <i class="bi bi-calendar3"></i> Received {{ job.received_at|date:"d/m/Y" }}
                 {% if job.submitted_by %}
                 <span class="mx-2">&middot;</span>
                 <i class="bi bi-person"></i> {{ job.submitted_by }}
+                {% endif %}
+            </div>
+            <!-- Bank statement metadata and GST status -->
+            <div class="d-flex flex-wrap gap-2 mt-1">
+                {% if job.is_gst_registered %}
+                <span class="gst-badge gst-registered"><i class="bi bi-check-circle-fill"></i> GST Registered</span>
+                {% else %}
+                <span class="gst-badge gst-not-registered"><i class="bi bi-x-circle-fill"></i> Not GST Registered</span>
+                {% endif %}
+                {% if job.bank_account_name %}
+                <span class="meta-badge"><i class="bi bi-bank"></i> {{ job.bank_account_name }}</span>
+                {% endif %}
+                {% if job.bsb %}
+                <span class="meta-badge">BSB: {{ job.bsb }}</span>
+                {% endif %}
+                {% if job.account_number %}
+                <span class="meta-badge">Acc: {{ job.account_number }}</span>
+                {% endif %}
+                {% if job.period_start %}
+                <span class="meta-badge"><i class="bi bi-calendar-range"></i> {{ job.period_start }} — {{ job.period_end }}</span>
+                {% endif %}
+                {% if job.source == "email" %}
+                <span class="meta-badge"><i class="bi bi-envelope"></i> Via Email</span>
+                {% elif job.source == "upload" %}
+                <span class="meta-badge"><i class="bi bi-upload"></i> Manual Upload</span>
                 {% endif %}
             </div>
         </div>
@@ -215,15 +284,20 @@
                     <th style="width: 30px;"></th>
                     <th>Date</th>
                     <th>Description</th>
-                    <th class="text-end">Amount</th>
+                    <th class="text-end">Gross</th>
+                    {% if job.is_gst_registered %}
+                    <th class="text-end">GST</th>
+                    <th class="text-end">Net</th>
+                    {% endif %}
                     <th>AI Suggestion</th>
                     <th style="min-width: 220px;">Confirmed Code</th>
-                    <th style="min-width: 160px;">Tax Type</th>
+                    <th style="min-width: 150px;">Tax Type</th>
                 </tr>
             </thead>
             <tbody id="txn-body">
                 {% for txn in transactions %}
-                <tr id="row-{{ txn.pk }}" class="{% if txn.is_confirmed %}txn-row-confirmed{% else %}txn-row-pending{% endif %}"
+                <tr id="row-{{ txn.pk }}"
+                    class="{% if txn.is_confirmed %}txn-row-confirmed{% elif txn.from_learning %}txn-row-learning{% else %}txn-row-pending{% endif %}"
                     data-txn-id="{{ txn.pk }}"
                     data-ai-code="{{ txn.ai_suggested_code }}"
                     data-ai-name="{{ txn.ai_suggested_name }}"
@@ -238,10 +312,23 @@
                         </span>
                     </td>
                     <td style="white-space: nowrap;">{{ txn.date }}</td>
-                    <td>{{ txn.description }}</td>
+                    <td>
+                        {{ txn.description }}
+                        {% if txn.from_learning %}
+                        <span class="learning-badge"><i class="bi bi-lightbulb-fill"></i> Learned</span>
+                        {% endif %}
+                    </td>
                     <td class="text-end {% if txn.amount < 0 %}amount-debit{% else %}amount-credit{% endif %}" style="white-space: nowrap;">
                         ${{ txn.amount|floatformat:2 }}
                     </td>
+                    {% if job.is_gst_registered %}
+                    <td class="text-end gst-amount" style="white-space: nowrap;">
+                        {% if txn.gst_amount %}${{ txn.gst_amount|floatformat:2 }}{% else %}—{% endif %}
+                    </td>
+                    <td class="text-end net-amount" style="white-space: nowrap;">
+                        ${{ txn.net_amount|floatformat:2 }}
+                    </td>
+                    {% endif %}
                     <td>
                         <div>
                             <span style="font-weight: 600;">{{ txn.ai_suggested_code }}</span>
@@ -250,6 +337,11 @@
                         <span class="confidence-badge conf-{{ txn.ai_confidence }}">
                             {% for i in "12345" %}{% if forloop.counter <= txn.ai_confidence %}<i class="bi bi-star-fill"></i>{% else %}<i class="bi bi-star"></i>{% endif %}{% endfor %}
                         </span>
+                        {% if txn.ai_reasoning %}
+                        <span class="text-muted d-block" style="font-size: 0.7rem; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{{ txn.ai_reasoning }}">
+                            {{ txn.ai_reasoning }}
+                        </span>
+                        {% endif %}
                     </td>
                     <td>
                         <div class="account-picker-container">
@@ -273,7 +365,9 @@
                             <option value="GST on Expenses" {% if txn.confirmed_tax_type == "GST on Expenses" %}selected{% endif %}>GST on Expenses</option>
                             <option value="GST Free Income" {% if txn.confirmed_tax_type == "GST Free Income" %}selected{% endif %}>GST Free Income</option>
                             <option value="GST Free Expenses" {% if txn.confirmed_tax_type == "GST Free Expenses" %}selected{% endif %}>GST Free Expenses</option>
+                            <option value="Input Taxed" {% if txn.confirmed_tax_type == "Input Taxed" %}selected{% endif %}>Input Taxed</option>
                             <option value="BAS Excluded" {% if txn.confirmed_tax_type == "BAS Excluded" %}selected{% endif %}>BAS Excluded</option>
+                            <option value="N-T" {% if txn.confirmed_tax_type == "N-T" %}selected{% endif %}>Not Reportable</option>
                         </select>
                     </td>
                 </tr>
@@ -282,6 +376,30 @@
         </table>
     </div>
 </div>
+
+<!-- Summary row for GST registered -->
+{% if job.is_gst_registered %}
+<div class="bg-white rounded-3 mt-3 p-3" style="box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+    <div class="row text-center">
+        <div class="col">
+            <small class="text-muted d-block">Opening Balance</small>
+            <strong>${{ job.opening_balance|floatformat:2 }}</strong>
+        </div>
+        <div class="col">
+            <small class="text-muted d-block">Closing Balance</small>
+            <strong>${{ job.closing_balance|floatformat:2 }}</strong>
+        </div>
+        <div class="col">
+            <small class="text-muted d-block">Total GST</small>
+            <strong id="total-gst">—</strong>
+        </div>
+        <div class="col">
+            <small class="text-muted d-block">Total Net</small>
+            <strong id="total-net">—</strong>
+        </div>
+    </div>
+</div>
+{% endif %}
 
 <!-- Submit bar (sticky bottom) -->
 <div class="d-flex justify-content-end mt-4 mb-4">
@@ -296,6 +414,7 @@
 const ACCOUNTS = {{ accounts_json|safe }};
 const JOB_ID = "{{ job.pk }}";
 const FLAGGED_COUNT = {{ job.flagged_count }};
+const IS_GST_REGISTERED = {{ job.is_gst_registered|yesno:"true,false" }};
 const CSRF_TOKEN = "{{ csrf_token }}";
 let activeDropdown = null;
 let activeIndex = -1;
@@ -441,6 +560,14 @@ function confirmTransaction(txnId, code, name, taxType) {
             row.dataset.confirmed = 'true';
             row.querySelector('.status-icon').innerHTML = '<i class="bi bi-check-circle-fill text-success"></i>';
 
+            // Update GST/Net if returned
+            if (IS_GST_REGISTERED && data.gst_amount !== undefined) {
+                const gstCell = row.querySelector('.gst-amount');
+                const netCell = row.querySelector('.net-amount');
+                if (gstCell) gstCell.textContent = '$' + parseFloat(data.gst_amount).toFixed(2);
+                if (netCell) netCell.textContent = '$' + parseFloat(data.net_amount).toFixed(2);
+            }
+
             // Update progress
             document.getElementById('confirmed-count').textContent = data.confirmed_count;
             document.getElementById('progress-bar').style.width = data.progress_percent + '%';
@@ -475,7 +602,7 @@ function acceptAllSuggestions() {
 
 // ---- Submit Review ----
 function submitReview() {
-    if (!confirm('Submit this review? The corrected Excel will be generated and emailed.')) return;
+    if (!confirm('Submit this review? All confirmed patterns will be saved to the learning database.')) return;
 
     fetch(`/api/review/${JOB_ID}/submit/`, {
         method: 'POST',

@@ -3,11 +3,13 @@ Bank Statement Review views.
 
 Provides the dashboard (pending reviews + activity feed), the transaction
 review page, and API endpoints for the n8n webhook and transaction submission.
+
+Enhanced with GST handling, learning feedback, and bank statement upload.
 """
 import json
 import logging
 from collections import defaultdict
-from datetime import timedelta
+from decimal import Decimal
 
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
@@ -17,7 +19,7 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
-from .models import PendingTransaction, ReviewActivity, ReviewJob
+from .models import PendingTransaction, ReviewActivity, ReviewJob, TransactionPattern
 
 logger = logging.getLogger(__name__)
 
@@ -90,8 +92,6 @@ def _sync_from_airtable():
             return True
 
         # Group records by Client Name (each client = one review job)
-        # We use Client Name as the grouping key since all records for a client
-        # belong to the same bank statement submission
         grouped = defaultdict(list)
         for rec in all_records:
             fields = rec.get("fields", {})
@@ -111,29 +111,39 @@ def _sync_from_airtable():
             else:
                 job_status = "awaiting_review"
 
-            # Get the accountant email and batch info
             first_fields = records[0].get("fields", {})
             accountant_email = first_fields.get("Accountant Email", "")
-            batch_id = first_fields.get("Batch ID", "")
-
-            # Extract a common batch prefix (e.g. "batch-1771291" from "batch-1771291569184")
-            # Use the first batch ID as the job identifier
-            batch_prefix = batch_id.rsplit("-", 0)[0] if batch_id else client_name
 
             confirmed_count = sum(1 for s in statuses if s == "Confirmed")
+
+            # Try to match entity for GST status
+            from core.models import Entity
+            entity = None
+            is_gst = True
+            try:
+                entity = Entity.objects.filter(
+                    entity_name__icontains=client_name
+                ).first()
+                if entity:
+                    is_gst = entity.is_gst_registered
+            except Exception:
+                pass
 
             # Create or update the ReviewJob
             job, created = ReviewJob.objects.update_or_create(
                 client_name=client_name,
                 status__in=["awaiting_review", "in_progress"],
                 defaults={
+                    "entity": entity,
                     "file_name": f"Bank Statement — {len(records)} transactions",
                     "submitted_by": accountant_email or "Via bankstatements@mcands.com.au",
+                    "source": "airtable",
                     "total_transactions": len(records),
-                    "auto_coded_count": len(records),  # All have AI suggestions
+                    "auto_coded_count": len(records),
                     "flagged_count": len(records),
                     "confirmed_count": confirmed_count,
                     "status": job_status,
+                    "is_gst_registered": is_gst,
                 },
             )
 
@@ -148,6 +158,17 @@ def _sync_from_airtable():
             for rec in records:
                 fields = rec.get("fields", {})
                 is_confirmed = fields.get("Status") == "Confirmed"
+                amount = Decimal(str(fields.get("Amount", 0)))
+                tax_type = fields.get("AI Suggested Tax Type", "")
+
+                # Calculate GST
+                abs_amount = abs(amount)
+                if is_gst and tax_type in ("GST on Income", "GST on Expenses"):
+                    gst_amount = (abs_amount / Decimal("11")).quantize(Decimal("0.01"))
+                    net_amount = (abs_amount - gst_amount).quantize(Decimal("0.01"))
+                else:
+                    gst_amount = Decimal("0.00")
+                    net_amount = abs_amount
 
                 PendingTransaction.objects.update_or_create(
                     airtable_record_id=rec["id"],
@@ -155,7 +176,9 @@ def _sync_from_airtable():
                         "job": job,
                         "date": fields.get("Transaction Date", ""),
                         "description": fields.get("Description", ""),
-                        "amount": fields.get("Amount", 0),
+                        "amount": amount,
+                        "gst_amount": gst_amount,
+                        "net_amount": net_amount,
                         "ai_suggested_code": fields.get("AI Suggested Code", ""),
                         "ai_suggested_name": fields.get("AI Suggested Account", ""),
                         "ai_confidence": fields.get("AI Confidence", 0),
@@ -182,7 +205,6 @@ def _sync_from_airtable():
 def review_dashboard(request):
     """
     Dashboard view showing pending reviews and recent activity.
-    This replaces the old dashboard as the homepage.
     """
     # Sync from Airtable if configured
     if _airtable_configured():
@@ -198,10 +220,14 @@ def review_dashboard(request):
 
     activities = ReviewActivity.objects.all().order_by("-created_at")[:10]
 
+    # Learning stats
+    total_patterns = TransactionPattern.objects.count()
+
     context = {
         "pending_jobs": pending_jobs,
         "completed_jobs": completed_jobs,
         "activities": activities,
+        "total_patterns": total_patterns,
     }
     return render(request, "review/dashboard.html", context)
 
@@ -210,13 +236,13 @@ def review_dashboard(request):
 def review_detail(request, pk):
     """
     Transaction review page for a specific job.
-    Shows all flagged transactions with account picker and tax type dropdowns.
+    Shows all flagged transactions with account picker, tax type dropdowns,
+    and GST breakdown columns for GST-registered entities.
     """
     job = get_object_or_404(ReviewJob, pk=pk)
     transactions = job.transactions.all().order_by("date", "description")
 
     # Get chart of accounts for the picker
-    # Use local account mappings from the core app
     from core.models import AccountMapping
     accounts = list(
         AccountMapping.objects.values_list("standard_code", "line_item_label")
@@ -237,6 +263,7 @@ def review_detail(request, pk):
 def confirm_transaction(request, pk):
     """
     AJAX endpoint to confirm a single transaction.
+    Recalculates GST based on confirmed tax type.
     Updates the local record and pushes to Airtable.
     """
     txn = get_object_or_404(PendingTransaction, pk=pk)
@@ -246,6 +273,10 @@ def confirm_transaction(request, pk):
     txn.confirmed_name = data.get("confirmed_name", "")
     txn.confirmed_tax_type = data.get("confirmed_tax_type", "")
     txn.is_confirmed = True
+
+    # Recalculate GST based on confirmed tax type
+    is_gst = txn.job.is_gst_registered
+    txn.calculate_gst(tax_type=txn.confirmed_tax_type, is_gst_registered=is_gst)
     txn.save()
 
     # Update job confirmed count
@@ -282,6 +313,8 @@ def confirm_transaction(request, pk):
         "confirmed_count": job.confirmed_count,
         "flagged_count": job.flagged_count,
         "progress_percent": job.progress_percent,
+        "gst_amount": str(txn.gst_amount),
+        "net_amount": str(txn.net_amount),
     })
 
 
@@ -290,6 +323,7 @@ def confirm_transaction(request, pk):
 def submit_review(request, pk):
     """
     Submit all confirmed transactions for a job.
+    Saves patterns to the learning database.
     Marks the job as completed and batch-updates Airtable.
     """
     job = get_object_or_404(ReviewJob, pk=pk)
@@ -302,13 +336,16 @@ def submit_review(request, pk):
             status=400,
         )
 
+    # Save patterns to learning database
+    from .learning import save_patterns_from_job, push_pattern_to_airtable
+    patterns_saved = save_patterns_from_job(job)
+
     # Batch update Airtable
     headers = _get_airtable_headers()
     if headers:
         import requests as http_requests
         base_url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}"
 
-        # Batch update transactions (max 10 per request per Airtable limit)
         confirmed_txns = list(job.transactions.filter(
             is_confirmed=True
         ).exclude(airtable_record_id="").exclude(airtable_record_id__isnull=True))
@@ -345,7 +382,10 @@ def submit_review(request, pk):
     ReviewActivity.objects.create(
         activity_type="review_completed",
         title="Review completed",
-        description=f"{job.client_name} — {job.confirmed_count} transactions confirmed",
+        description=(
+            f"{job.client_name} — {job.confirmed_count} transactions confirmed, "
+            f"{patterns_saved} patterns learned"
+        ),
     )
 
     return JsonResponse({"status": "ok", "redirect": "/"})
@@ -356,10 +396,11 @@ def submit_review(request, pk):
 def accept_all_suggestions(request, pk):
     """
     Accept all AI suggestions for unconfirmed transactions in a job.
-    Uses the AI suggested tax type if available, otherwise infers from amount.
+    Calculates GST based on the suggested tax type.
     """
     job = get_object_or_404(ReviewJob, pk=pk)
     unconfirmed = job.transactions.filter(is_confirmed=False)
+    is_gst = job.is_gst_registered
 
     for txn in unconfirmed:
         txn.confirmed_code = txn.ai_suggested_code
@@ -367,10 +408,15 @@ def accept_all_suggestions(request, pk):
         # Use AI suggested tax type if available
         if txn.ai_suggested_tax_type:
             txn.confirmed_tax_type = txn.ai_suggested_tax_type
+        elif not is_gst:
+            txn.confirmed_tax_type = "BAS Excluded"
         elif txn.amount > 0:
             txn.confirmed_tax_type = "GST on Income"
         else:
             txn.confirmed_tax_type = "GST on Expenses"
+
+        # Recalculate GST
+        txn.calculate_gst(tax_type=txn.confirmed_tax_type, is_gst_registered=is_gst)
         txn.is_confirmed = True
         txn.save()
 
@@ -387,6 +433,217 @@ def accept_all_suggestions(request, pk):
 
 
 # ---------------------------------------------------------------------------
+# Bank Statement Upload (manual PDF/Excel upload)
+# ---------------------------------------------------------------------------
+
+@login_required
+@require_POST
+def upload_bank_statement(request):
+    """
+    Handle manual bank statement upload (PDF or Excel).
+    Processes through the same pipeline as email ingestion.
+    """
+    import base64
+    from .email_ingestion import extract_transactions_from_pdf, classify_transactions
+
+    uploaded_file = request.FILES.get("file")
+    entity_id = request.POST.get("entity_id")
+    client_name = request.POST.get("client_name", "Unknown")
+
+    if not uploaded_file:
+        return JsonResponse({"status": "error", "message": "No file uploaded"}, status=400)
+
+    # Get entity for GST status
+    entity = None
+    is_gst = True
+    if entity_id:
+        from core.models import Entity
+        try:
+            entity = Entity.objects.get(pk=entity_id)
+            is_gst = entity.is_gst_registered
+            client_name = entity.entity_name
+        except Exception:
+            pass
+
+    # Read file content
+    content = uploaded_file.read()
+    filename = uploaded_file.name
+
+    if filename.lower().endswith(".pdf"):
+        pdf_b64 = base64.b64encode(content).decode("ascii")
+        extracted = extract_transactions_from_pdf(pdf_b64, filename)
+    else:
+        # For Excel/CSV, parse differently
+        extracted = _parse_excel_bank_statement(content, filename)
+
+    if not extracted or not extracted.get("transactions"):
+        return JsonResponse(
+            {"status": "error", "message": "No transactions could be extracted from the file"},
+            status=400,
+        )
+
+    transactions = extracted["transactions"]
+
+    # Classify
+    classifications = classify_transactions(
+        transactions, entity=entity, is_gst_registered=is_gst
+    )
+
+    # Create ReviewJob
+    job = ReviewJob.objects.create(
+        entity=entity,
+        client_name=client_name,
+        file_name=filename,
+        submitted_by=request.user.get_full_name() or request.user.username,
+        source="upload",
+        total_transactions=len(transactions),
+        auto_coded_count=len(transactions),
+        flagged_count=sum(
+            1 for c in classifications if c and c.get("confidence", 0) < 5
+        ),
+        confirmed_count=0,
+        is_gst_registered=is_gst,
+        bank_account_name=extracted.get("account_name", ""),
+        bsb=extracted.get("bsb", ""),
+        account_number=extracted.get("account_number", ""),
+        period_start=extracted.get("period_start", ""),
+        period_end=extracted.get("period_end", ""),
+        opening_balance=Decimal(str(extracted.get("opening_balance", 0))),
+        closing_balance=Decimal(str(extracted.get("closing_balance", 0))),
+    )
+
+    # Create PendingTransactions with GST
+    for txn, cls in zip(transactions, classifications):
+        if cls is None:
+            cls = {
+                "account_code": "6-1900",
+                "account_name": "General Expenses",
+                "tax_type": "GST on Expenses" if is_gst else "BAS Excluded",
+                "confidence": 1,
+                "reasoning": "",
+                "from_learning": False,
+            }
+
+        amount = Decimal(str(txn.get("amount", 0)))
+        tax_type = cls.get("tax_type", "")
+        abs_amount = abs(amount)
+
+        if is_gst and tax_type in ("GST on Income", "GST on Expenses"):
+            gst_amount = (abs_amount / Decimal("11")).quantize(Decimal("0.01"))
+            net_amount = (abs_amount - gst_amount).quantize(Decimal("0.01"))
+        else:
+            gst_amount = Decimal("0.00")
+            net_amount = abs_amount
+
+        is_auto_confirmed = (
+            cls.get("from_learning", False) and cls.get("confidence", 0) >= 5
+        )
+
+        PendingTransaction.objects.create(
+            job=job,
+            date=txn.get("date", ""),
+            description=txn.get("description", ""),
+            amount=amount,
+            gst_amount=gst_amount,
+            net_amount=net_amount,
+            ai_suggested_code=cls.get("account_code", ""),
+            ai_suggested_name=cls.get("account_name", ""),
+            ai_suggested_tax_type=tax_type,
+            ai_confidence=cls.get("confidence", 1),
+            ai_reasoning=cls.get("reasoning", ""),
+            from_learning=cls.get("from_learning", False),
+            is_confirmed=is_auto_confirmed,
+            confirmed_code=cls.get("account_code", "") if is_auto_confirmed else "",
+            confirmed_name=cls.get("account_name", "") if is_auto_confirmed else "",
+            confirmed_tax_type=tax_type if is_auto_confirmed else "",
+        )
+
+    # Update confirmed count
+    job.confirmed_count = job.transactions.filter(is_confirmed=True).count()
+    if job.confirmed_count > 0:
+        job.status = "in_progress"
+    job.save()
+
+    # Log activity
+    ReviewActivity.objects.create(
+        activity_type="new_statement",
+        title="Bank statement uploaded",
+        description=(
+            f"{client_name} — {len(transactions)} transactions, "
+            f"{job.confirmed_count} auto-confirmed"
+            f"{' (GST registered)' if is_gst else ' (not GST registered)'}"
+        ),
+    )
+
+    return redirect("review:review_detail", pk=job.pk)
+
+
+def _parse_excel_bank_statement(content, filename):
+    """Parse an Excel/CSV bank statement into the standard transaction format."""
+    import io
+    try:
+        import pandas as pd
+    except ImportError:
+        return None
+
+    try:
+        if filename.lower().endswith(".csv"):
+            df = pd.read_csv(io.BytesIO(content))
+        else:
+            df = pd.read_excel(io.BytesIO(content))
+
+        # Try to identify columns
+        col_map = {}
+        for col in df.columns:
+            col_lower = str(col).lower()
+            if "date" in col_lower:
+                col_map["date"] = col
+            elif "desc" in col_lower or "narr" in col_lower or "particular" in col_lower:
+                col_map["description"] = col
+            elif "amount" in col_lower or "value" in col_lower:
+                col_map["amount"] = col
+            elif "debit" in col_lower:
+                col_map["debit"] = col
+            elif "credit" in col_lower:
+                col_map["credit"] = col
+
+        transactions = []
+        for _, row in df.iterrows():
+            date = str(row.get(col_map.get("date", ""), ""))
+            desc = str(row.get(col_map.get("description", ""), ""))
+
+            if "amount" in col_map:
+                amount = float(row.get(col_map["amount"], 0) or 0)
+            elif "debit" in col_map and "credit" in col_map:
+                debit = float(row.get(col_map["debit"], 0) or 0)
+                credit = float(row.get(col_map["credit"], 0) or 0)
+                amount = credit - debit
+            else:
+                continue
+
+            if desc and desc != "nan":
+                transactions.append({
+                    "date": date,
+                    "description": desc,
+                    "amount": amount,
+                })
+
+        return {
+            "transactions": transactions,
+            "opening_balance": 0,
+            "closing_balance": 0,
+            "account_name": "",
+            "bsb": "",
+            "account_number": "",
+            "period_start": "",
+            "period_end": "",
+        }
+    except Exception as e:
+        logger.error(f"Excel parsing failed: {e}")
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Webhook endpoint (called by n8n)
 # ---------------------------------------------------------------------------
 
@@ -399,14 +656,32 @@ def notify_new_review_job(request):
     """
     try:
         data = json.loads(request.body)
+
+        # Try to match entity
+        from core.models import Entity
+        entity = None
+        is_gst = True
+        client_name = data.get("client_name", "Unknown")
+        try:
+            entity = Entity.objects.filter(
+                entity_name__icontains=client_name
+            ).first()
+            if entity:
+                is_gst = entity.is_gst_registered
+        except Exception:
+            pass
+
         job = ReviewJob.objects.create(
             airtable_record_id=data.get("airtable_record_id"),
-            client_name=data.get("client_name", "Unknown"),
+            entity=entity,
+            client_name=client_name,
             file_name=data.get("file_name", ""),
             submitted_by=data.get("submitted_by", ""),
+            source="airtable",
             total_transactions=data.get("total_transactions", 0),
             auto_coded_count=data.get("auto_coded_count", 0),
             flagged_count=data.get("flagged_count", 0),
+            is_gst_registered=is_gst,
             status="awaiting_review",
         )
 
