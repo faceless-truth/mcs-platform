@@ -1050,106 +1050,289 @@ def access_ledger_import(request):
 
 @login_required
 def trial_balance_pdf(request, pk):
-    """Generate a PDF of the trial balance for a financial year."""
+    """Generate a comparative trial balance PDF matching professional accounting format."""
     from io import BytesIO
+    from collections import OrderedDict
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import mm
-    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+    from reportlab.platypus import (
+        BaseDocTemplate, Frame, PageTemplate, Table, TableStyle,
+        Paragraph, Spacer, Image, NextPageTemplate, PageBreak,
+    )
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
     import os
+    from django.conf import settings
 
     fy = get_object_or_404(FinancialYear, pk=pk)
     entity = fy.entity
-    client = entity.client
-    tb_lines = TrialBalanceLine.objects.filter(financial_year=fy).order_by('account_code')
+    tb_lines = TrialBalanceLine.objects.filter(financial_year=fy).select_related('mapped_line_item').order_by('account_code')
+
+    # Determine section ordering and grouping
+    SECTION_ORDER = [
+        'Revenue', 'Income', 'Cost of Sales', 'Expenses',
+        'Current Assets', 'Non-Current Assets',
+        'Current Liabilities', 'Non-Current Liabilities',
+        'Equity', 'Income Tax',
+    ]
+    SECTION_DISPLAY = {
+        'Revenue': 'Income', 'Income': 'Income',
+        'Cost of Sales': 'Cost of Sales', 'Expenses': 'Expenses',
+        'Current Assets': 'Current Assets', 'Non-Current Assets': 'Non Current Assets',
+        'Current Liabilities': 'Current Liabilities', 'Non-Current Liabilities': 'Non Current Liabilities',
+        'Equity': 'Equity', 'Income Tax': 'Equity',
+    }
+
+    # Group lines by section
+    sections = OrderedDict()
+    unmapped_lines = []
+    for line in tb_lines:
+        if line.mapped_line_item:
+            raw_section = line.mapped_line_item.statement_section
+            display_section = SECTION_DISPLAY.get(raw_section, raw_section)
+        else:
+            display_section = 'Unmapped'
+        if display_section not in sections:
+            sections[display_section] = []
+        sections[display_section].append(line)
+
+    # Sort sections by defined order
+    ordered_sections = OrderedDict()
+    section_keys_ordered = []
+    for s in SECTION_ORDER:
+        ds = SECTION_DISPLAY.get(s, s)
+        if ds not in section_keys_ordered:
+            section_keys_ordered.append(ds)
+    for key in section_keys_ordered:
+        if key in sections:
+            ordered_sections[key] = sections[key]
+    # Add any remaining sections
+    for key in sections:
+        if key not in ordered_sections:
+            ordered_sections[key] = sections[key]
+
+    # Year labels
+    current_year = str(fy.year_label)
+    prior_year = str(int(fy.year_label) - 1) if fy.year_label.isdigit() else 'Prior'
+
+    # ABN
+    abn = entity.abn if hasattr(entity, 'abn') and entity.abn else ''
+    abn_display = ''
+    if abn:
+        abn_clean = abn.replace(' ', '')
+        if len(abn_clean) == 11:
+            abn_display = f'ABN {abn_clean[:2]} {abn_clean[2:5]} {abn_clean[5:8]} {abn_clean[8:11]}'
+        else:
+            abn_display = f'ABN {abn}'
 
     buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=20*mm, bottomMargin=20*mm,
-                            leftMargin=15*mm, rightMargin=15*mm)
+
+    # Custom page template with header and footer on every page
+    logo_path = os.path.join(settings.BASE_DIR, 'static', 'img', 'mcs_logo.png')
+
+    class TBDocTemplate(BaseDocTemplate):
+        def __init__(self, *args, **kwargs):
+            self.entity_name = kwargs.pop('entity_name', '')
+            self.abn_display = kwargs.pop('abn_display', '')
+            self.end_date_str = kwargs.pop('end_date_str', '')
+            self.current_year = kwargs.pop('current_year', '')
+            self.prior_year = kwargs.pop('prior_year', '')
+            super().__init__(*args, **kwargs)
+
+        def afterPage(self):
+            """Draw footer on every page."""
+            canvas = self.canv
+            canvas.saveState()
+            # Footer line
+            canvas.setStrokeColor(colors.HexColor('#333333'))
+            canvas.setLineWidth(0.5)
+            canvas.line(15*mm, 18*mm, A4[0] - 15*mm, 18*mm)
+            # Footer text
+            canvas.setFont('Helvetica-Bold', 7)
+            canvas.setFillColor(colors.HexColor('#333333'))
+            footer_text = (
+                "These financial statements are unaudited. They must be read in conjunction with the attached "
+                "Accountant's Compilation Report and Notes which form part of these financial statements."
+            )
+            # Center the text
+            text_width = canvas.stringWidth(footer_text, 'Helvetica-Bold', 7)
+            page_width = A4[0]
+            if text_width > page_width - 30*mm:
+                # Two-line footer
+                line1 = "These financial statements are unaudited. They must be read in conjunction with the attached Accountant's"
+                line2 = "Compilation Report and Notes which form part of these financial statements."
+                w1 = canvas.stringWidth(line1, 'Helvetica-Bold', 7)
+                w2 = canvas.stringWidth(line2, 'Helvetica-Bold', 7)
+                canvas.drawString((page_width - w1) / 2, 13*mm, line1)
+                canvas.drawString((page_width - w2) / 2, 10*mm, line2)
+            else:
+                canvas.drawString((page_width - text_width) / 2, 12*mm, footer_text)
+            canvas.restoreState()
+
+    doc = TBDocTemplate(
+        buffer, pagesize=A4, topMargin=15*mm, bottomMargin=25*mm,
+        leftMargin=15*mm, rightMargin=15*mm,
+        entity_name=entity.entity_name.upper(),
+        abn_display=abn_display,
+        end_date_str=fy.end_date.strftime('%d %B %Y'),
+        current_year=current_year,
+        prior_year=prior_year,
+    )
+
+    frame = Frame(
+        doc.leftMargin, doc.bottomMargin,
+        doc.width, doc.height,
+        id='main'
+    )
+    doc.addPageTemplates([PageTemplate(id='main', frames=[frame])])
+
     styles = getSampleStyleSheet()
     elements = []
 
+    # Styles
+    s_entity = ParagraphStyle('Entity', fontName='Helvetica-Bold', fontSize=14,
+                               alignment=TA_CENTER, spaceAfter=2*mm)
+    s_abn = ParagraphStyle('ABN', fontName='Helvetica', fontSize=10,
+                            alignment=TA_CENTER, spaceAfter=2*mm)
+    s_title = ParagraphStyle('TBTitle', fontName='Helvetica-Bold', fontSize=11,
+                              alignment=TA_CENTER, spaceAfter=6*mm)
+    s_section = ParagraphStyle('Section', fontName='Helvetica-Bold', fontSize=11,
+                                spaceBefore=5*mm, spaceAfter=2*mm)
+    s_cell = ParagraphStyle('Cell', fontName='Helvetica', fontSize=9)
+    s_cell_bold = ParagraphStyle('CellBold', fontName='Helvetica-Bold', fontSize=9)
+    s_num = ParagraphStyle('Num', fontName='Helvetica', fontSize=9, alignment=TA_RIGHT)
+    s_num_bold = ParagraphStyle('NumBold', fontName='Helvetica-Bold', fontSize=9, alignment=TA_RIGHT)
+
     # Logo
-    from django.conf import settings
-    logo_path = os.path.join(settings.BASE_DIR, 'static', 'img', 'mcs_logo.png')
     if os.path.exists(logo_path):
-        logo = Image(logo_path, width=40*mm, height=40*mm)
-        logo.hAlign = 'LEFT'
+        logo = Image(logo_path, width=25*mm, height=25*mm)
+        logo.hAlign = 'CENTER'
         elements.append(logo)
-        elements.append(Spacer(1, 3*mm))
+        elements.append(Spacer(1, 2*mm))
 
-    # Title
-    title_style = ParagraphStyle('Title', parent=styles['Title'], fontSize=16, spaceAfter=4*mm)
-    elements.append(Paragraph(f"{entity.entity_name}", title_style))
-
-    subtitle_style = ParagraphStyle('Subtitle', parent=styles['Normal'], fontSize=11, textColor=colors.grey, spaceAfter=2*mm)
-    elements.append(Paragraph(f"Trial Balance — {fy.year_label}", subtitle_style))
+    # Header
+    elements.append(Paragraph(entity.entity_name.upper(), s_entity))
+    if abn_display:
+        elements.append(Paragraph(abn_display, s_abn))
     elements.append(Paragraph(
-        f"{fy.start_date.strftime('%d %b %Y')} to {fy.end_date.strftime('%d %b %Y')} · Status: {fy.get_status_display()}",
-        ParagraphStyle('DateLine', parent=styles['Normal'], fontSize=9, textColor=colors.grey, spaceAfter=6*mm)
+        f"Comparative Trial Balance as at {fy.end_date.strftime('%d %B %Y')}", s_title
     ))
 
-    # Table data
-    header = ['Code', 'Account Name', 'Opening', 'Debit', 'Credit', 'Closing', 'Mapped To']
-    data = [header]
-    total_debit = Decimal('0')
-    total_credit = Decimal('0')
-
-    for line in tb_lines:
-        mapped = ''
-        if line.mapped_line_item:
-            mapped = line.mapped_line_item.line_item_label
-        row = [
-            line.account_code,
-            Paragraph(line.account_name, ParagraphStyle('Cell', fontSize=8)),
-            f"{line.opening_balance:,.2f}",
-            f"{line.debit:,.2f}",
-            f"{line.credit:,.2f}",
-            f"{line.closing_balance:,.2f}",
-            Paragraph(mapped, ParagraphStyle('MappedCell', fontSize=7, textColor=colors.HexColor('#198754'))),
-        ]
-        data.append(row)
-        total_debit += line.debit
-        total_credit += line.credit
-
-    # Totals row
-    data.append(['', Paragraph('<b>TOTALS</b>', ParagraphStyle('Bold', fontSize=8)),
-                 '', f"{total_debit:,.2f}", f"{total_credit:,.2f}", '', ''])
-
-    col_widths = [45, 130, 60, 60, 60, 60, 120]
-    table = Table(data, colWidths=col_widths, repeatRows=1)
-    table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#212529')),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+    # Column header table
+    col_widths = [50, 165, 75, 75, 75, 75]
+    header_data = [
+        ['', '', current_year, current_year, prior_year, prior_year],
+        ['', '', '$ Dr', '$ Cr', '$ Dr', '$ Cr'],
+    ]
+    header_table = Table(header_data, colWidths=col_widths)
+    header_table.setStyle(TableStyle([
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, 0), 8),
-        ('FONTSIZE', (0, 1), (-1, -1), 8),
-        ('ALIGN', (2, 0), (5, -1), 'RIGHT'),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#dee2e6')),
-        ('ROWBACKGROUNDS', (0, 1), (-1, -2), [colors.white, colors.HexColor('#f8f9fa')]),
-        ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#e9ecef')),
-        ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
-        ('TOPPADDING', (0, 0), (-1, -1), 3),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ('FONTNAME', (0, 1), (-1, 1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('ALIGN', (2, 0), (-1, -1), 'RIGHT'),
+        ('LINEBELOW', (2, 1), (-1, 1), 0.8, colors.HexColor('#333333')),
+        ('TOPPADDING', (0, 0), (-1, -1), 2),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
     ]))
-    elements.append(table)
+    elements.append(header_table)
 
-    # Footer
-    elements.append(Spacer(1, 6*mm))
-    footer_style = ParagraphStyle('Footer', fontSize=7, textColor=colors.grey)
-    elements.append(Paragraph(
-        f"Generated by StatementHub on {timezone.now().strftime('%d %b %Y at %H:%M')} · "
-        f"MC & S Pty Ltd · {tb_lines.count()} accounts · "
-        f"{'Balanced' if total_debit == total_credit else 'OUT OF BALANCE'}",
-        footer_style
-    ))
+    def fmt(val):
+        """Format a decimal value with commas, or return empty string if zero."""
+        if val and val != Decimal('0'):
+            return f"{val:,.2f}"
+        return ''
+
+    # Totals accumulators
+    grand_total_dr = Decimal('0')
+    grand_total_cr = Decimal('0')
+    grand_total_prior_dr = Decimal('0')
+    grand_total_prior_cr = Decimal('0')
+
+    # Build section tables
+    for section_name, lines in ordered_sections.items():
+        elements.append(Paragraph(f"<b>{section_name}</b>", s_section))
+
+        data = []
+        for line in lines:
+            dr = line.debit if line.debit else Decimal('0')
+            cr = line.credit if line.credit else Decimal('0')
+            prior_dr = line.prior_debit if line.prior_debit else Decimal('0')
+            prior_cr = line.prior_credit if line.prior_credit else Decimal('0')
+
+            grand_total_dr += dr
+            grand_total_cr += cr
+            grand_total_prior_dr += prior_dr
+            grand_total_prior_cr += prior_cr
+
+            row = [
+                Paragraph(f"<b>{line.account_code}</b>", ParagraphStyle('Code', fontName='Helvetica-Bold', fontSize=9)),
+                Paragraph(line.account_name, s_cell),
+                fmt(dr),
+                fmt(cr),
+                fmt(prior_dr),
+                fmt(prior_cr),
+            ]
+            data.append(row)
+
+        if data:
+            section_table = Table(data, colWidths=col_widths)
+            style_cmds = [
+                ('FONTSIZE', (0, 0), (-1, -1), 9),
+                ('ALIGN', (2, 0), (-1, -1), 'RIGHT'),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('TOPPADDING', (0, 0), (-1, -1), 2),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+                ('LINEBELOW', (0, 0), (-1, -1), 0.3, colors.HexColor('#cccccc')),
+            ]
+            section_table.setStyle(TableStyle(style_cmds))
+            elements.append(section_table)
+
+    # Grand totals
+    elements.append(Spacer(1, 3*mm))
+    totals_data = [[
+        '', '',
+        f"{grand_total_dr:,.2f}",
+        f"{grand_total_cr:,.2f}",
+        f"{grand_total_prior_dr:,.2f}",
+        f"{grand_total_prior_cr:,.2f}",
+    ]]
+    totals_table = Table(totals_data, colWidths=col_widths)
+    totals_table.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('ALIGN', (2, 0), (-1, -1), 'RIGHT'),
+        ('LINEABOVE', (2, 0), (-1, 0), 1.0, colors.HexColor('#333333')),
+        ('LINEBELOW', (2, 0), (-1, 0), 0.5, colors.HexColor('#333333')),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+    ]))
+    elements.append(totals_table)
+
+    # Net Profit
+    net_profit_current = grand_total_cr - grand_total_dr
+    net_profit_prior = grand_total_prior_cr - grand_total_prior_dr
+    elements.append(Spacer(1, 3*mm))
+    profit_data = [[
+        '', Paragraph('<b>Net Profit</b>', s_cell_bold),
+        '', f"{abs(net_profit_current):,.2f}",
+        '', f"{abs(net_profit_prior):,.2f}",
+    ]]
+    profit_table = Table(profit_data, colWidths=col_widths)
+    profit_table.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('ALIGN', (2, 0), (-1, -1), 'RIGHT'),
+        ('LINEBELOW', (2, 0), (-1, 0), 0.8, colors.HexColor('#333333')),
+        ('TOPPADDING', (0, 0), (-1, -1), 2),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+    ]))
+    elements.append(profit_table)
 
     doc.build(elements)
     buffer.seek(0)
 
-    filename = f"TB_{entity.entity_name.replace(' ', '_')}_{fy.year_label}.pdf"
+    filename = f"Comparative_TB_{entity.entity_name.replace(' ', '_')}_{fy.year_label}.pdf"
     response = HttpResponse(buffer, content_type='application/pdf')
     response['Content-Disposition'] = f'attachment; filename="{filename}"'
     return response
