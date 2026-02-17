@@ -867,6 +867,11 @@ def generate_document(request, pk):
         messages.error(request, "Cannot generate statements: no trial balance data loaded.")
         return redirect("core:financial_year_detail", pk=pk)
 
+    # Determine requested format (default: docx)
+    fmt = request.GET.get("format", "docx").lower()
+    if fmt not in ("docx", "pdf"):
+        fmt = "docx"
+
     from .docgen import generate_financial_statements
 
     try:
@@ -877,25 +882,68 @@ def generate_document(request, pk):
 
     # Build filename
     entity_name = fy.entity.entity_name.replace(" ", "_")
-    filename = f"{entity_name}_Financial_Statements_{fy.year_label}.docx"
+    base_filename = f"{entity_name}_Financial_Statements_{fy.year_label}"
 
-    response = HttpResponse(
-        buffer.getvalue(),
-        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    )
-    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    if fmt == "pdf":
+        # Convert DOCX buffer to PDF via LibreOffice
+        import subprocess, tempfile, os
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                docx_path = os.path.join(tmpdir, f"{base_filename}.docx")
+                with open(docx_path, "wb") as f:
+                    f.write(buffer.getvalue())
+                result = subprocess.run(
+                    ["libreoffice", "--headless", "--convert-to", "pdf",
+                     "--outdir", tmpdir, docx_path],
+                    capture_output=True, timeout=60,
+                )
+                pdf_path = os.path.join(tmpdir, f"{base_filename}.pdf")
+                if not os.path.exists(pdf_path):
+                    raise RuntimeError(
+                        f"PDF conversion failed: {result.stderr.decode('utf-8', errors='replace')}"
+                    )
+                with open(pdf_path, "rb") as f:
+                    pdf_bytes = f.read()
+
+            filename = f"{base_filename}.pdf"
+            response = HttpResponse(
+                pdf_bytes,
+                content_type="application/pdf",
+            )
+            response["Content-Disposition"] = f'attachment; filename="{filename}"'
+            file_content = pdf_bytes
+            file_format = "pdf"
+        except Exception as e:
+            messages.error(request, f"PDF conversion failed: {e}. Falling back to DOCX.")
+            filename = f"{base_filename}.docx"
+            response = HttpResponse(
+                buffer.getvalue(),
+                content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+            response["Content-Disposition"] = f'attachment; filename="{filename}"'
+            file_content = buffer.getvalue()
+            file_format = "docx"
+    else:
+        filename = f"{base_filename}.docx"
+        response = HttpResponse(
+            buffer.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        file_content = buffer.getvalue()
+        file_format = "docx"
 
     # Log the generation
-    _log_action(request, "generate", f"Generated financial statements for {fy}", fy)
+    _log_action(request, "generate", f"Generated financial statements ({file_format.upper()}) for {fy}", fy)
 
     # Save record
     from django.core.files.base import ContentFile
     doc = GeneratedDocument(
         financial_year=fy,
-        file_format="docx",
+        file_format=file_format,
         generated_by=request.user,
     )
-    doc.file.save(filename, ContentFile(buffer.getvalue()), save=True)
+    doc.file.save(filename, ContentFile(file_content), save=True)
 
     return response
 

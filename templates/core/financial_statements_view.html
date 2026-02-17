@@ -95,8 +95,13 @@
     <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-primary">
         <i class="bi bi-arrow-left"></i> Back to Workspace
     </a>
-    <a href="{% url 'core:generate_document' pk=fy.pk %}" class="btn btn-dark">
-        <i class="bi bi-file-earmark-word"></i> Generate Document
-    </a>
+    <div class="btn-group">
+        <a href="{% url 'core:generate_document' pk=fy.pk %}?format=docx" class="btn btn-dark">
+            <i class="bi bi-file-earmark-word"></i> Word
+        </a>
+        <a href="{% url 'core:generate_document' pk=fy.pk %}?format=pdf" class="btn btn-outline-dark">
+            <i class="bi bi-file-earmark-pdf"></i> PDF
+        </a>
+    </div>
 </div>
 {% endblock %}
