@@ -17,6 +17,7 @@ Key features:
 import io
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import date
+from pathlib import Path
 from collections import OrderedDict
 
 from docx import Document
@@ -159,7 +160,7 @@ def _add_thin_line(doc):
 def _add_header_block(doc, entity, title, date_text=None):
     """Add the standard header block: entity name, ABN, title, optional date.
     Used for pages that DON'T use section-based repeating headers (cover, contents, declaration, compilation)."""
-    _add_centered_heading(doc, entity.entity_name.upper(), size=FONT_SIZE_HEADING, bold=True, space_after=0)
+    _add_centered_heading(doc, entity.entity_name, size=FONT_SIZE_HEADING, bold=True, space_after=0)
     if entity.trading_as:
         _add_centered_heading(doc, f"Trading As", size=Pt(11), bold=False, space_after=0)
     if entity.abn:
@@ -226,8 +227,8 @@ def _start_report_section(doc, entity, report_title, footer_type="statement",
     for p in header.paragraphs:
         p.clear()
     
-    # Entity name - ALL CAPS, BOLD
-    _add_header_para(header, entity.entity_name.upper(),
+    # Entity name - bold, normal case (matching reference PDF)
+    _add_header_para(header, entity.entity_name,
                      size=FONT_SIZE_HEADING, bold=True)
     
     # Trading As (only if set)
@@ -727,31 +728,73 @@ def _add_column_headers(doc, year, has_prior=False, prior_year=None, include_not
 # Cover Page
 # =============================================================================
 
-def _add_cover_page(doc, entity, fy):
-    """Add the cover page."""
-    for _ in range(8):
-        doc.add_paragraph()
+def _get_logo_path():
+    """Get the path to the MC&S logo file."""
+    from django.conf import settings
+    logo_path = getattr(settings, 'MCS_LOGO_PATH', None)
+    if logo_path and Path(str(logo_path)).exists():
+        return str(logo_path)
+    # Fallback: check common locations
+    fallbacks = [
+        Path(__file__).resolve().parent.parent / 'static' / 'MCSlogo.png',
+        Path('/home/ubuntu/upload/MCSlogo.png'),
+    ]
+    for fb in fallbacks:
+        if fb.exists():
+            return str(fb)
+    return None
 
-    _add_centered_heading(doc, entity.entity_name, size=Pt(20), bold=True, space_after=0)
+
+def _add_cover_page(doc, entity, fy):
+    """Add the cover page with MC&S logo matching the reference PDF format."""
+    # Small spacing before logo
+    p = doc.add_paragraph()
+    p.paragraph_format.space_after = Pt(12)
+
+    # Add MC&S logo — centered, approximately 7cm wide
+    logo_path = _get_logo_path()
+    if logo_path:
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p.paragraph_format.space_before = Pt(0)
+        p.paragraph_format.space_after = Pt(0)
+        run = p.add_run()
+        run.add_picture(logo_path, width=Cm(7))
+
+    # Spacing after logo
+    p = doc.add_paragraph()
+    p.paragraph_format.space_after = Pt(36)
+
+    # Entity name — bold, centered, normal case (matching reference PDF)
+    _add_centered_heading(doc, entity.entity_name, size=Pt(16), bold=True, space_after=4)
 
     # Trading As line
     if entity.trading_as:
         _add_centered_heading(doc, f"Trading As {entity.trading_as}", size=Pt(14),
                               bold=False, space_after=4)
 
+    # ABN
     if entity.abn:
-        _add_centered_heading(doc, f"ABN {entity.abn}", size=Pt(12), bold=False, space_after=12)
+        _add_centered_heading(doc, f"ABN {entity.abn}", size=Pt(11), bold=False, space_after=12)
 
-    _add_centered_heading(doc, "Financial Statements", size=Pt(16), bold=False, space_after=4)
-    _add_centered_heading(doc, _get_period_text(fy), size=Pt(12), bold=False, space_after=40)
+    # Spacing before Financial Statements title
+    p = doc.add_paragraph()
+    p.paragraph_format.space_after = Pt(24)
 
-    # Firm details at bottom
+    # "Financial Statements" title
+    _add_centered_heading(doc, "Financial Statements", size=Pt(12), bold=False, space_after=2)
+
+    # Period text
+    _add_centered_heading(doc, _get_period_text(fy), size=Pt(11), bold=False, space_after=0)
+
+    # Spacing before firm details — push to bottom of page
     for _ in range(6):
-        doc.add_paragraph()
+        p = doc.add_paragraph()
+        p.paragraph_format.space_after = Pt(12)
 
     _add_centered_heading(doc, FIRM_NAME, size=Pt(10), bold=False, space_after=0)
     _add_centered_heading(doc, FIRM_ADDRESS_1, size=Pt(10), bold=False, space_after=0)
-    _add_centered_heading(doc, FIRM_ADDRESS_2, size=Pt(10), bold=False, space_after=0)
+    _add_centered_heading(doc, FIRM_ADDRESS_2, size=Pt(10), bold=False, space_after=4)
     _add_centered_heading(doc, FIRM_PHONE, size=Pt(10), bold=False, space_after=0)
     _add_centered_heading(doc, FIRM_EMAIL, size=Pt(10), bold=False, space_after=0)
     _add_centered_heading(doc, FIRM_WEBSITE, size=Pt(10), bold=False, space_after=0)

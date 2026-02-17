@@ -157,5 +157,8 @@ if not DEBUG:
     CSRF_COOKIE_SECURE = True
     X_FRAME_OPTIONS = "DENY"
 
+# MC&S Logo for financial statement documents
+MCS_LOGO_PATH = BASE_DIR / "static" / "MCSlogo.png"
+
 # Airtable integration (for Bank Statement Review module)
 AIRTABLE_API_KEY = os.environ.get("AIRTABLE_API_KEY", "")
