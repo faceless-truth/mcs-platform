@@ -280,6 +280,22 @@ class FinancialYear(models.Model):
     def get_absolute_url(self):
         return reverse("core:financial_year_detail", kwargs={"pk": self.pk})
 
+    def save(self, *args, **kwargs):
+        """Auto-detect period_type based on date range if not explicitly set."""
+        if self.start_date and self.end_date:
+            delta_days = (self.end_date - self.start_date).days + 1
+            if delta_days <= 45:  # ~1 month
+                self.period_type = self.PeriodType.MONTHLY
+            elif delta_days <= 105:  # ~3 months
+                self.period_type = self.PeriodType.QUARTERLY
+            elif delta_days <= 200:  # ~6 months
+                self.period_type = self.PeriodType.HALF_YEAR
+            elif delta_days <= 380:  # ~12 months (allow a few days tolerance)
+                self.period_type = self.PeriodType.ANNUAL
+            else:
+                self.period_type = self.PeriodType.INTERIM
+        super().save(*args, **kwargs)
+
     @property
     def is_locked(self):
         return self.status == self.Status.FINALISED
