@@ -3,7 +3,7 @@ from django import forms
 from .models import (
     Client, Entity, FinancialYear, AccountMapping,
     AdjustingJournal, JournalLine, ClientAccountMapping,
-    EntityOfficer,
+    EntityOfficer, ClientAssociate, AccountingSoftware, MeetingNote,
 )
 
 
@@ -200,3 +200,103 @@ class EntityOfficerForm(forms.ModelForm):
             self.fields["profit_share_percentage"].widget = forms.HiddenInput()
         if entity_type != "trust":
             self.fields["distribution_percentage"].widget = forms.HiddenInput()
+
+
+# ---------------------------------------------------------------------------
+# Client Associate Forms
+# ---------------------------------------------------------------------------
+class ClientAssociateForm(forms.ModelForm):
+    class Meta:
+        model = ClientAssociate
+        fields = (
+            "name", "relationship_type", "date_of_birth", "email", "phone",
+            "occupation", "employer", "abn", "tfn_last_three",
+            "related_client", "related_entity", "notes", "is_active",
+        )
+        widgets = {
+            "date_of_birth": forms.DateInput(attrs={"type": "date"}),
+            "notes": forms.Textarea(attrs={"rows": 2}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for name, field in self.fields.items():
+            if isinstance(field.widget, forms.CheckboxInput):
+                field.widget.attrs["class"] = "form-check-input"
+            else:
+                field.widget.attrs["class"] = "form-control"
+        # Make select fields use form-select
+        self.fields["relationship_type"].widget.attrs["class"] = "form-select"
+        self.fields["related_client"].widget.attrs["class"] = "form-select"
+        self.fields["related_entity"].widget.attrs["class"] = "form-select"
+        self.fields["related_client"].required = False
+        self.fields["related_entity"].required = False
+
+
+# ---------------------------------------------------------------------------
+# Accounting Software Forms
+# ---------------------------------------------------------------------------
+class AccountingSoftwareForm(forms.ModelForm):
+    class Meta:
+        model = AccountingSoftware
+        fields = (
+            "software_type", "software_version", "is_cloud", "entity",
+            "login_email", "organisation_name", "has_advisor_access",
+            "advisor_login_email", "subscription_level", "notes", "is_primary",
+        )
+        widgets = {
+            "notes": forms.Textarea(attrs={"rows": 2}),
+        }
+
+    def __init__(self, *args, client=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        for name, field in self.fields.items():
+            if isinstance(field.widget, forms.CheckboxInput):
+                field.widget.attrs["class"] = "form-check-input"
+            else:
+                field.widget.attrs["class"] = "form-control"
+        self.fields["software_type"].widget.attrs["class"] = "form-select"
+        self.fields["entity"].widget.attrs["class"] = "form-select"
+        self.fields["entity"].required = False
+        # Filter entity choices to only this client's entities
+        if client:
+            self.fields["entity"].queryset = Entity.objects.filter(client=client)
+        else:
+            self.fields["entity"].queryset = Entity.objects.none()
+
+
+# ---------------------------------------------------------------------------
+# Meeting Note Forms
+# ---------------------------------------------------------------------------
+class MeetingNoteForm(forms.ModelForm):
+    class Meta:
+        model = MeetingNote
+        fields = (
+            "title", "meeting_date", "meeting_type", "attendees", "entity",
+            "discussion_points", "action_items", "notes",
+            "follow_up_date", "follow_up_completed", "is_pinned", "tags",
+        )
+        widgets = {
+            "meeting_date": forms.DateInput(attrs={"type": "date"}),
+            "follow_up_date": forms.DateInput(attrs={"type": "date"}),
+            "discussion_points": forms.Textarea(attrs={"rows": 5, "placeholder": "Key topics discussed..."}),
+            "action_items": forms.Textarea(attrs={"rows": 4, "placeholder": "Action items and follow-ups..."}),
+            "notes": forms.Textarea(attrs={"rows": 4, "placeholder": "General notes and observations..."}),
+            "attendees": forms.TextInput(attrs={"placeholder": "e.g. Elio Scarton, John Smith"}),
+            "tags": forms.TextInput(attrs={"placeholder": "e.g. tax-planning, smsf, urgent"}),
+        }
+
+    def __init__(self, *args, client=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        for name, field in self.fields.items():
+            if isinstance(field.widget, forms.CheckboxInput):
+                field.widget.attrs["class"] = "form-check-input"
+            else:
+                field.widget.attrs["class"] = "form-control"
+        self.fields["meeting_type"].widget.attrs["class"] = "form-select"
+        self.fields["entity"].widget.attrs["class"] = "form-select"
+        self.fields["entity"].required = False
+        if client:
+            self.fields["entity"].queryset = Entity.objects.filter(client=client)
+        else:
+            self.fields["entity"].queryset = Entity.objects.none()

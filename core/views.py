@@ -12,12 +12,14 @@ from .models import (
     Client, Entity, FinancialYear, TrialBalanceLine,
     AccountMapping, ChartOfAccount, ClientAccountMapping, AdjustingJournal,
     JournalLine, GeneratedDocument, AuditLog, EntityOfficer,
+    ClientAssociate, AccountingSoftware, MeetingNote,
 )
 from .forms import (
     ClientForm, EntityForm, FinancialYearForm,
     TrialBalanceUploadForm, AccountMappingForm,
     AdjustingJournalForm, JournalLineFormSet,
-    EntityOfficerForm,
+    EntityOfficerForm, ClientAssociateForm, AccountingSoftwareForm,
+    MeetingNoteForm,
 )
 
 
@@ -136,7 +138,23 @@ def client_create(request):
 def client_detail(request, pk):
     client = get_object_or_404(Client, pk=pk)
     entities = client.entities.all()
-    context = {"client": client, "entities": entities}
+    associates = client.associates.filter(is_active=True)
+    family_associates = [a for a in associates if a.is_family]
+    business_associates = [a for a in associates if not a.is_family]
+    software_configs = client.software_configs.all()
+    meeting_notes = client.meeting_notes.all()[:20]
+    pending_followups = client.meeting_notes.filter(
+        follow_up_completed=False, follow_up_date__isnull=False
+    ).order_by("follow_up_date")
+    context = {
+        "client": client,
+        "entities": entities,
+        "family_associates": family_associates,
+        "business_associates": business_associates,
+        "software_configs": software_configs,
+        "meeting_notes": meeting_notes,
+        "pending_followups": pending_followups,
+    }
     return render(request, "core/client_detail.html", context)
 
 
@@ -1594,3 +1612,199 @@ def journals_pdf(request, pk):
     response = HttpResponse(buffer, content_type='application/pdf')
     response['Content-Disposition'] = f'attachment; filename="{filename}"'
     return response
+
+
+# ---------------------------------------------------------------------------
+# Client Associates (Family & Business)
+# ---------------------------------------------------------------------------
+@login_required
+def associate_create(request, client_pk):
+    client = get_object_or_404(Client, pk=client_pk)
+    if not request.user.can_edit:
+        messages.error(request, "You do not have permission to add associates.")
+        return redirect("core:client_detail", pk=client_pk)
+
+    if request.method == "POST":
+        form = ClientAssociateForm(request.POST)
+        if form.is_valid():
+            assoc = form.save(commit=False)
+            assoc.client = client
+            assoc.save()
+            _log_action(request, "import", f"Added associate: {assoc.name} ({assoc.get_relationship_type_display()})", assoc)
+            messages.success(request, f"Associate '{assoc.name}' added.")
+            return redirect("core:client_detail", pk=client_pk)
+    else:
+        form = ClientAssociateForm()
+    return render(request, "core/associate_form.html", {
+        "form": form, "client": client, "title": "Add Associate"
+    })
+
+
+@login_required
+def associate_edit(request, pk):
+    assoc = get_object_or_404(ClientAssociate, pk=pk)
+    client = assoc.client
+    if not request.user.can_edit:
+        messages.error(request, "You do not have permission to edit associates.")
+        return redirect("core:client_detail", pk=client.pk)
+
+    if request.method == "POST":
+        form = ClientAssociateForm(request.POST, instance=assoc)
+        if form.is_valid():
+            form.save()
+            messages.success(request, f"Associate '{assoc.name}' updated.")
+            return redirect("core:client_detail", pk=client.pk)
+    else:
+        form = ClientAssociateForm(instance=assoc)
+    return render(request, "core/associate_form.html", {
+        "form": form, "client": client, "title": f"Edit: {assoc.name}"
+    })
+
+
+@login_required
+def associate_delete(request, pk):
+    assoc = get_object_or_404(ClientAssociate, pk=pk)
+    client = assoc.client
+    if not request.user.can_edit:
+        messages.error(request, "You do not have permission to delete associates.")
+        return redirect("core:client_detail", pk=client.pk)
+
+    if request.method == "POST":
+        name = assoc.name
+        assoc.delete()
+        messages.success(request, f"Associate '{name}' removed.")
+    return redirect("core:client_detail", pk=client.pk)
+
+
+# ---------------------------------------------------------------------------
+# Accounting Software
+# ---------------------------------------------------------------------------
+@login_required
+def software_create(request, client_pk):
+    client = get_object_or_404(Client, pk=client_pk)
+    if not request.user.can_edit:
+        messages.error(request, "You do not have permission to add software configs.")
+        return redirect("core:client_detail", pk=client_pk)
+
+    if request.method == "POST":
+        form = AccountingSoftwareForm(request.POST, client=client)
+        if form.is_valid():
+            sw = form.save(commit=False)
+            sw.client = client
+            sw.save()
+            _log_action(request, "import", f"Added software: {sw.get_software_type_display()}", sw)
+            messages.success(request, f"Software '{sw.get_software_type_display()}' added.")
+            return redirect("core:client_detail", pk=client_pk)
+    else:
+        form = AccountingSoftwareForm(client=client)
+    return render(request, "core/software_form.html", {
+        "form": form, "client": client, "title": "Add Accounting Software"
+    })
+
+
+@login_required
+def software_edit(request, pk):
+    sw = get_object_or_404(AccountingSoftware, pk=pk)
+    client = sw.client
+    if not request.user.can_edit:
+        messages.error(request, "You do not have permission to edit software configs.")
+        return redirect("core:client_detail", pk=client.pk)
+
+    if request.method == "POST":
+        form = AccountingSoftwareForm(request.POST, instance=sw, client=client)
+        if form.is_valid():
+            form.save()
+            messages.success(request, f"Software '{sw.get_software_type_display()}' updated.")
+            return redirect("core:client_detail", pk=client.pk)
+    else:
+        form = AccountingSoftwareForm(instance=sw, client=client)
+    return render(request, "core/software_form.html", {
+        "form": form, "client": client, "title": f"Edit: {sw.get_software_type_display()}"
+    })
+
+
+@login_required
+def software_delete(request, pk):
+    sw = get_object_or_404(AccountingSoftware, pk=pk)
+    client = sw.client
+    if not request.user.can_edit:
+        messages.error(request, "You do not have permission to delete software configs.")
+        return redirect("core:client_detail", pk=client.pk)
+
+    if request.method == "POST":
+        label = sw.get_software_type_display()
+        sw.delete()
+        messages.success(request, f"Software '{label}' removed.")
+    return redirect("core:client_detail", pk=client.pk)
+
+
+# ---------------------------------------------------------------------------
+# Meeting Notes
+# ---------------------------------------------------------------------------
+@login_required
+def meeting_note_create(request, client_pk):
+    client = get_object_or_404(Client, pk=client_pk)
+
+    if request.method == "POST":
+        form = MeetingNoteForm(request.POST, client=client)
+        if form.is_valid():
+            note = form.save(commit=False)
+            note.client = client
+            note.created_by = request.user
+            note.save()
+            _log_action(request, "import", f"Added meeting note: {note.title}", note)
+            messages.success(request, f"Meeting note '{note.title}' created.")
+            return redirect("core:client_detail", pk=client_pk)
+    else:
+        form = MeetingNoteForm(client=client, initial={"meeting_date": timezone.now().date()})
+    return render(request, "core/meeting_note_form.html", {
+        "form": form, "client": client, "title": "New Meeting Note"
+    })
+
+
+@login_required
+def meeting_note_edit(request, pk):
+    note = get_object_or_404(MeetingNote, pk=pk)
+    client = note.client
+
+    if request.method == "POST":
+        form = MeetingNoteForm(request.POST, instance=note, client=client)
+        if form.is_valid():
+            form.save()
+            messages.success(request, f"Meeting note '{note.title}' updated.")
+            return redirect("core:client_detail", pk=client.pk)
+    else:
+        form = MeetingNoteForm(instance=note, client=client)
+    return render(request, "core/meeting_note_form.html", {
+        "form": form, "client": client, "title": f"Edit: {note.title}"
+    })
+
+
+@login_required
+def meeting_note_detail(request, pk):
+    note = get_object_or_404(MeetingNote, pk=pk)
+    client = note.client
+    return render(request, "core/meeting_note_detail.html", {
+        "note": note, "client": client,
+    })
+
+
+@login_required
+def meeting_note_delete(request, pk):
+    note = get_object_or_404(MeetingNote, pk=pk)
+    client = note.client
+
+    if request.method == "POST":
+        title = note.title
+        note.delete()
+        messages.success(request, f"Meeting note '{title}' deleted.")
+    return redirect("core:client_detail", pk=client.pk)
+
+
+@login_required
+def meeting_note_toggle_followup(request, pk):
+    """HTMX endpoint to toggle follow-up completion."""
+    note = get_object_or_404(MeetingNote, pk=pk)
+    note.follow_up_completed = not note.follow_up_completed
+    note.save(update_fields=["follow_up_completed"])
+    return JsonResponse({"completed": note.follow_up_completed})

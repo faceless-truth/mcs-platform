@@ -1038,13 +1038,31 @@ class RiskFlag(models.Model):
 
 
 # ---------------------------------------------------------------------------
-# Client Associate (Related Parties)
+# Client Associate (Related Parties & Family Members)
 # ---------------------------------------------------------------------------
 class ClientAssociate(models.Model):
     """
-    Tracks related parties and associates of a client.
-    Used for related party transaction detection in the audit risk engine.
+    Tracks related parties, family members, and associates of a client.
+    Used for related party transaction detection in the audit risk engine,
+    and for maintaining a complete picture of the client's family group.
     """
+
+    class RelationshipType(models.TextChoices):
+        # Family
+        SPOUSE = "spouse", "Spouse"
+        CHILD = "child", "Child"
+        PARENT = "parent", "Parent"
+        SIBLING = "sibling", "Sibling"
+        FAMILY_OTHER = "family_other", "Other Family Member"
+        # Business
+        DIRECTOR = "director", "Director"
+        SHAREHOLDER = "shareholder", "Shareholder"
+        PARTNER_BIZ = "partner_biz", "Business Partner"
+        TRUSTEE = "trustee", "Trustee"
+        BENEFICIARY = "beneficiary", "Beneficiary"
+        RELATED_ENTITY = "related_entity", "Related Entity"
+        ACCOUNTANT = "accountant", "Accountant / Advisor"
+        OTHER = "other", "Other"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     client = models.ForeignKey(
@@ -1053,11 +1071,19 @@ class ClientAssociate(models.Model):
     name = models.CharField(max_length=255)
     relationship_type = models.CharField(
         max_length=50,
-        help_text='e.g. "Director", "Related Entity", "Shareholder"',
+        choices=RelationshipType.choices,
+        default=RelationshipType.OTHER,
     )
+    date_of_birth = models.DateField(null=True, blank=True)
     abn = models.CharField(max_length=11, blank=True, verbose_name="ABN")
+    tfn_last_three = models.CharField(
+        max_length=3, blank=True,
+        help_text="Last 3 digits of TFN for identification (never store full TFN)",
+    )
     email = models.EmailField(blank=True)
     phone = models.CharField(max_length=50, blank=True)
+    occupation = models.CharField(max_length=255, blank=True)
+    employer = models.CharField(max_length=255, blank=True)
     notes = models.TextField(blank=True)
     related_entity = models.ForeignKey(
         Entity, on_delete=models.SET_NULL,
@@ -1065,12 +1091,214 @@ class ClientAssociate(models.Model):
         related_name="associated_as",
         help_text="Link to an entity in the system if applicable",
     )
+    related_client = models.ForeignKey(
+        Client, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="associated_from",
+        help_text="Link to another client in the system if applicable",
+    )
+    xpm_contact_uuid = models.CharField(
+        max_length=100, blank=True,
+        help_text="Xero Practice Manager contact UUID for sync",
+    )
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ["client", "name"]
+        ordering = ["client", "relationship_type", "name"]
 
     def __str__(self):
-        return f"{self.name} ({self.relationship_type}) - {self.client.name}"
+        return f"{self.name} ({self.get_relationship_type_display()}) - {self.client.name}"
+
+    @property
+    def is_family(self):
+        return self.relationship_type in (
+            self.RelationshipType.SPOUSE,
+            self.RelationshipType.CHILD,
+            self.RelationshipType.PARENT,
+            self.RelationshipType.SIBLING,
+            self.RelationshipType.FAMILY_OTHER,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Accounting Software Configuration
+# ---------------------------------------------------------------------------
+class AccountingSoftware(models.Model):
+    """
+    Tracks which accounting software a client or entity uses.
+    Allows MC&S to know whether to expect Xero, MYOB, QuickBooks, or manual data.
+    """
+
+    class SoftwareType(models.TextChoices):
+        XERO = "xero", "Xero"
+        MYOB = "myob", "MYOB"
+        QUICKBOOKS = "quickbooks", "QuickBooks"
+        SAGE = "sage", "Sage"
+        RECKON = "reckon", "Reckon"
+        ACCESS_LEDGER = "access_ledger", "Access Ledger"
+        EXCEL = "excel", "Excel / Spreadsheet"
+        MANUAL = "manual", "Manual / Paper-based"
+        OTHER = "other", "Other"
+        NONE = "none", "None / Not Applicable"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    client = models.ForeignKey(
+        Client, on_delete=models.CASCADE, related_name="software_configs"
+    )
+    entity = models.ForeignKey(
+        Entity, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="software_configs",
+        help_text="Optionally link to a specific entity (if different from client default)",
+    )
+    software_type = models.CharField(
+        max_length=20, choices=SoftwareType.choices,
+    )
+    software_version = models.CharField(
+        max_length=100, blank=True,
+        help_text='e.g. "Xero Standard", "MYOB AccountRight Plus", "QuickBooks Online"',
+    )
+    is_cloud = models.BooleanField(
+        default=True,
+        help_text="Whether this is a cloud-based or desktop installation",
+    )
+    login_email = models.EmailField(
+        blank=True,
+        help_text="Client's login email for this software (for support reference)",
+    )
+    organisation_name = models.CharField(
+        max_length=255, blank=True,
+        help_text="Organisation name within the software",
+    )
+    has_advisor_access = models.BooleanField(
+        default=False,
+        help_text="Whether MC&S has advisor/accountant access to this software",
+    )
+    advisor_login_email = models.EmailField(
+        blank=True,
+        help_text="MC&S advisor login email for this software",
+    )
+    subscription_level = models.CharField(
+        max_length=100, blank=True,
+        help_text='e.g. "Starter", "Standard", "Premium"',
+    )
+    notes = models.TextField(blank=True)
+    is_primary = models.BooleanField(
+        default=True,
+        help_text="Whether this is the primary accounting software for this client/entity",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["client", "-is_primary", "software_type"]
+        verbose_name = "Accounting Software"
+        verbose_name_plural = "Accounting Software"
+
+    def __str__(self):
+        entity_label = f" ({self.entity.entity_name})" if self.entity else ""
+        return f"{self.client.name}{entity_label} — {self.get_software_type_display()}"
+
+
+# ---------------------------------------------------------------------------
+# Meeting Notes
+# ---------------------------------------------------------------------------
+class MeetingNote(models.Model):
+    """
+    Meeting notes, discussion points, and action items for a client.
+    Designed to sit alongside financial data so that outreach emails
+    can reference both the numbers and the conversation history.
+    """
+
+    class MeetingType(models.TextChoices):
+        IN_PERSON = "in_person", "In-Person Meeting"
+        PHONE = "phone", "Phone Call"
+        VIDEO = "video", "Video Call"
+        EMAIL_THREAD = "email_thread", "Email Thread"
+        INTERNAL = "internal", "Internal Discussion"
+        SITE_VISIT = "site_visit", "Site Visit"
+        OTHER = "other", "Other"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    client = models.ForeignKey(
+        Client, on_delete=models.CASCADE, related_name="meeting_notes"
+    )
+    entity = models.ForeignKey(
+        Entity, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="meeting_notes",
+        help_text="Optionally link to a specific entity discussed",
+    )
+    title = models.CharField(
+        max_length=255,
+        help_text='e.g. "Annual Review Meeting", "Tax Planning Discussion"',
+    )
+    meeting_date = models.DateField()
+    meeting_type = models.CharField(
+        max_length=20, choices=MeetingType.choices,
+        default=MeetingType.IN_PERSON,
+    )
+    attendees = models.CharField(
+        max_length=500, blank=True,
+        help_text='Comma-separated names, e.g. "Elio Scarton, John Smith, Jane Doe"',
+    )
+    # Rich content fields
+    discussion_points = models.TextField(
+        blank=True,
+        help_text="Key topics discussed during the meeting",
+    )
+    action_items = models.TextField(
+        blank=True,
+        help_text="Action items and follow-ups arising from the meeting",
+    )
+    notes = models.TextField(
+        blank=True,
+        help_text="General notes, observations, and context",
+    )
+    # Follow-up tracking
+    follow_up_date = models.DateField(
+        null=True, blank=True,
+        help_text="Date for next follow-up or action",
+    )
+    follow_up_completed = models.BooleanField(default=False)
+    # Metadata
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="created_meeting_notes",
+    )
+    is_pinned = models.BooleanField(
+        default=False,
+        help_text="Pin important notes to the top of the list",
+    )
+    tags = models.CharField(
+        max_length=500, blank=True,
+        help_text='Comma-separated tags, e.g. "tax-planning, smsf, urgent"',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-is_pinned", "-meeting_date", "-created_at"]
+        verbose_name = "Meeting Note"
+        verbose_name_plural = "Meeting Notes"
+
+    def __str__(self):
+        return f"{self.meeting_date:%d/%m/%Y} — {self.title} ({self.client.name})"
+
+    @property
+    def tag_list(self):
+        """Return tags as a list."""
+        if not self.tags:
+            return []
+        return [t.strip() for t in self.tags.split(",") if t.strip()]
+
+    @property
+    def attendee_list(self):
+        """Return attendees as a list."""
+        if not self.attendees:
+            return []
+        return [a.strip() for a in self.attendees.split(",") if a.strip()]

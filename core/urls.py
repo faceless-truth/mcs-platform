@@ -69,6 +69,23 @@ urlpatterns = [
     path("years/<uuid:pk>/risk-flags/", views_audit.risk_flags_view, name="risk_flags"),
     path("risk-flags/<uuid:pk>/resolve/", views_audit.resolve_risk_flag, name="resolve_risk_flag"),
 
+    # Client Associates
+    path("clients/<uuid:client_pk>/associates/create/", views.associate_create, name="associate_create"),
+    path("associates/<uuid:pk>/edit/", views.associate_edit, name="associate_edit"),
+    path("associates/<uuid:pk>/delete/", views.associate_delete, name="associate_delete"),
+
+    # Accounting Software
+    path("clients/<uuid:client_pk>/software/create/", views.software_create, name="software_create"),
+    path("software/<uuid:pk>/edit/", views.software_edit, name="software_edit"),
+    path("software/<uuid:pk>/delete/", views.software_delete, name="software_delete"),
+
+    # Meeting Notes
+    path("clients/<uuid:client_pk>/notes/create/", views.meeting_note_create, name="meeting_note_create"),
+    path("notes/<uuid:pk>/", views.meeting_note_detail, name="meeting_note_detail"),
+    path("notes/<uuid:pk>/edit/", views.meeting_note_edit, name="meeting_note_edit"),
+    path("notes/<uuid:pk>/delete/", views.meeting_note_delete, name="meeting_note_delete"),
+    path("notes/<uuid:pk>/toggle-followup/", views.meeting_note_toggle_followup, name="meeting_note_toggle_followup"),
+
     # HTMX partials
     path("htmx/client-search/", views.htmx_client_search, name="htmx_client_search"),
     path("htmx/tb-line/<uuid:pk>/map/", views.htmx_map_tb_line, name="htmx_map_tb_line"),

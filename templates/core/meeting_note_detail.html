@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}{{ note.title }} - StatementHub{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'core:client_list' %}">Clients</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'core:client_detail' pk=client.pk %}">{{ client.name }}</a></li>
+        <li class="breadcrumb-item active">{{ note.title }}</li>
+    </ol>
+</nav>
+
+<div class="row justify-content-center">
+    <div class="col-lg-10">
+        <div class="d-flex justify-content-between align-items-start mb-3">
+            <div>
+                <h4 class="mb-1">
+                    {% if note.is_pinned %}<i class="bi bi-pin-fill text-warning me-2"></i>{% endif %}
+                    {{ note.title }}
+                </h4>
+                <p class="text-muted mb-0">
+                    <span class="badge bg-secondary">{{ note.get_meeting_type_display }}</span>
+                    &middot; <i class="bi bi-calendar3"></i> {{ note.meeting_date|date:"l, d F Y" }}
+                    {% if note.entity %}&middot; <span class="badge bg-info text-dark">{{ note.entity.entity_name }}</span>{% endif %}
+                    {% if note.created_by %}&middot; <i class="bi bi-person"></i> {{ note.created_by.get_full_name }}{% endif %}
+                </p>
+            </div>
+            <div class="d-flex gap-2">
+                {% if user.can_edit %}
+                <a href="{% url 'core:meeting_note_edit' pk=note.pk %}" class="btn btn-outline-primary btn-sm">
+                    <i class="bi bi-pencil"></i> Edit
+                </a>
+                {% endif %}
+                <a href="{% url 'core:client_detail' pk=client.pk %}#notes" class="btn btn-outline-secondary btn-sm">
+                    <i class="bi bi-arrow-left"></i> Back
+                </a>
+            </div>
+        </div>
+
+        {% if note.attendees %}
+        <div class="mb-3">
+            <strong><i class="bi bi-people"></i> Attendees:</strong>
+            {% for attendee in note.attendee_list %}
+            <span class="badge bg-light text-dark border">{{ attendee }}</span>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {% if note.tag_list %}
+        <div class="mb-3">
+            {% for tag in note.tag_list %}
+            <span class="badge bg-primary bg-opacity-10 text-primary border border-primary">{{ tag }}</span>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <!-- Follow-up Alert -->
+        {% if note.follow_up_date %}
+        <div class="alert {% if note.follow_up_completed %}alert-success{% else %}alert-warning{% endif %} d-flex justify-content-between align-items-center mb-3">
+            <div>
+                <i class="bi bi-{% if note.follow_up_completed %}check-circle-fill{% else %}bell-fill{% endif %}"></i>
+                <strong>Follow-up:</strong> {{ note.follow_up_date|date:"d F Y" }}
+                {% if note.follow_up_completed %}<span class="badge bg-success ms-2">Completed</span>{% endif %}
+            </div>
+            {% if not note.follow_up_completed %}
+            <form method="post" action="{% url 'core:meeting_note_toggle_followup' pk=note.pk %}">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-sm btn-success"><i class="bi bi-check-lg"></i> Mark Complete</button>
+            </form>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        <!-- Discussion Points -->
+        {% if note.discussion_points %}
+        <div class="card mb-3">
+            <div class="card-header bg-light">
+                <h6 class="mb-0"><i class="bi bi-chat-left-text text-primary"></i> Discussion Points</h6>
+            </div>
+            <div class="card-body">
+                <div style="white-space: pre-wrap;">{{ note.discussion_points }}</div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Action Items -->
+        {% if note.action_items %}
+        <div class="card mb-3">
+            <div class="card-header bg-light">
+                <h6 class="mb-0"><i class="bi bi-check2-square text-success"></i> Action Items</h6>
+            </div>
+            <div class="card-body">
+                <div style="white-space: pre-wrap;">{{ note.action_items }}</div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- General Notes -->
+        {% if note.notes %}
+        <div class="card mb-3">
+            <div class="card-header bg-light">
+                <h6 class="mb-0"><i class="bi bi-pencil-square text-secondary"></i> General Notes</h6>
+            </div>
+            <div class="card-body">
+                <div style="white-space: pre-wrap;">{{ note.notes }}</div>
+            </div>
+        </div>
+        {% endif %}
+
+        <div class="text-muted small mt-3">
+            Created {{ note.created_at|date:"d M Y H:i" }}
+            {% if note.updated_at != note.created_at %}&middot; Last updated {{ note.updated_at|date:"d M Y H:i" }}{% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

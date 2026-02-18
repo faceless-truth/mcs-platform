@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} - StatementHub{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'core:client_list' %}">Clients</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'core:client_detail' pk=client.pk %}">{{ client.name }}</a></li>
+        <li class="breadcrumb-item active">{{ title }}</li>
+    </ol>
+</nav>
+
+<div class="row justify-content-center">
+    <div class="col-lg-10">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-journal-text"></i> {{ title }}</h5>
+            </div>
+            <div class="card-body">
+                <form method="post">
+                    {% csrf_token %}
+
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Title *</label>
+                            {{ form.title }}
+                            {% if form.title.errors %}<div class="text-danger small">{{ form.title.errors.0 }}</div>{% endif %}
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label fw-semibold">Meeting Date *</label>
+                            {{ form.meeting_date }}
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label fw-semibold">Type *</label>
+                            {{ form.meeting_type }}
+                        </div>
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Attendees</label>
+                            {{ form.attendees }}
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Related Entity</label>
+                            {{ form.entity }}
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Tags</label>
+                            {{ form.tags }}
+                        </div>
+                    </div>
+
+                    <hr>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold"><i class="bi bi-chat-left-text"></i> Discussion Points</label>
+                        {{ form.discussion_points }}
+                        <small class="text-muted">Key topics discussed during the meeting</small>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold"><i class="bi bi-check2-square"></i> Action Items</label>
+                        {{ form.action_items }}
+                        <small class="text-muted">Action items and follow-ups arising from the meeting</small>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold"><i class="bi bi-pencil-square"></i> General Notes</label>
+                        {{ form.notes }}
+                        <small class="text-muted">Additional observations, context, and reference information</small>
+                    </div>
+
+                    <hr>
+
+                    <div class="row mb-3">
+                        <div class="col-md-4">
+                            <label class="form-label">Follow-up Date</label>
+                            {{ form.follow_up_date }}
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-check mt-4">
+                                {{ form.follow_up_completed }}
+                                <label class="form-check-label" for="{{ form.follow_up_completed.id_for_label }}">Follow-up completed</label>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-check mt-4">
+                                {{ form.is_pinned }}
+                                <label class="form-check-label" for="{{ form.is_pinned.id_for_label }}">
+                                    <i class="bi bi-pin"></i> Pin this note
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="d-flex justify-content-between">
+                        <a href="{% url 'core:client_detail' pk=client.pk %}#notes" class="btn btn-outline-secondary">Cancel</a>
+                        <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Save Note</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

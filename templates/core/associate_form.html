@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} - StatementHub{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'core:client_list' %}">Clients</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'core:client_detail' pk=client.pk %}">{{ client.name }}</a></li>
+        <li class="breadcrumb-item active">{{ title }}</li>
+    </ol>
+</nav>
+
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-people"></i> {{ title }}</h5>
+            </div>
+            <div class="card-body">
+                <form method="post">
+                    {% csrf_token %}
+
+                    <div class="row mb-3">
+                        <div class="col-md-8">
+                            <label class="form-label fw-semibold">Full Name *</label>
+                            {{ form.name }}
+                            {% if form.name.errors %}<div class="text-danger small">{{ form.name.errors.0 }}</div>{% endif %}
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-semibold">Relationship *</label>
+                            {{ form.relationship_type }}
+                        </div>
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-md-4">
+                            <label class="form-label">Date of Birth</label>
+                            {{ form.date_of_birth }}
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Email</label>
+                            {{ form.email }}
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Phone</label>
+                            {{ form.phone }}
+                        </div>
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-md-4">
+                            <label class="form-label">Occupation</label>
+                            {{ form.occupation }}
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Employer</label>
+                            {{ form.employer }}
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">ABN</label>
+                            {{ form.abn }}
+                        </div>
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-md-4">
+                            <label class="form-label">TFN (last 3 digits)</label>
+                            {{ form.tfn_last_three }}
+                            <small class="text-muted">For identification only</small>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Linked Client</label>
+                            {{ form.related_client }}
+                            <small class="text-muted">If this person is also an MC&S client</small>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Linked Entity</label>
+                            {{ form.related_entity }}
+                            <small class="text-muted">If linked to an entity in the system</small>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Notes</label>
+                        {{ form.notes }}
+                    </div>
+
+                    <div class="mb-3 form-check">
+                        {{ form.is_active }}
+                        <label class="form-check-label" for="{{ form.is_active.id_for_label }}">Active</label>
+                    </div>
+
+                    <div class="d-flex justify-content-between">
+                        <a href="{% url 'core:client_detail' pk=client.pk %}#associates" class="btn btn-outline-secondary">Cancel</a>
+                        <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Save Associate</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

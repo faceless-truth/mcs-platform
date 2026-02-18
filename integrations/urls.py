@@ -44,4 +44,12 @@ urlpatterns = [
         views.commit_import,
         name="commit_import",
     ),
+
+    # Xero Practice Manager (XPM) Integration
+    path("xpm/", views.xpm_dashboard, name="xpm_dashboard"),
+    path("xpm/connect/", views.xpm_connect, name="xpm_connect"),
+    path("xpm/callback/", views.xpm_callback, name="xpm_callback"),
+    path("xpm/select-tenant/", views.xpm_select_tenant, name="xpm_select_tenant"),
+    path("xpm/disconnect/", views.xpm_disconnect, name="xpm_disconnect"),
+    path("xpm/sync/", views.xpm_sync_now, name="xpm_sync_now"),
 ]

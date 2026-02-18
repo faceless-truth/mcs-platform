@@ -134,3 +134,123 @@ class ImportLog(models.Model):
             f"{self.connection.get_provider_display()} import \u2192 "
             f"{self.financial_year} ({self.lines_imported} lines)"
         )
+
+
+class XPMConnection(models.Model):
+    """
+    A practice-level OAuth2 connection to Xero Practice Manager.
+    Unlike AccountingConnection (per-entity), this is a single connection
+    for the entire practice that syncs client data, contacts, relationships,
+    and notes between XPM and StatementHub.
+    """
+
+    class Status(models.TextChoices):
+        ACTIVE = "active", "Active"
+        EXPIRED = "expired", "Token Expired"
+        DISCONNECTED = "disconnected", "Disconnected"
+        ERROR = "error", "Error"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.ACTIVE
+    )
+
+    # OAuth2 tokens
+    access_token = models.TextField(blank=True, default="")
+    refresh_token = models.TextField(blank=True, default="")
+    token_expires_at = models.DateTimeField(null=True, blank=True)
+
+    # Xero tenant
+    tenant_id = models.CharField(max_length=255, blank=True, default="")
+    tenant_name = models.CharField(max_length=255, blank=True, default="")
+
+    # Audit
+    connected_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="xpm_connections",
+    )
+    connected_at = models.DateTimeField(auto_now_add=True)
+    last_sync_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True, default="")
+
+    # Sync stats
+    clients_synced = models.IntegerField(default=0)
+    contacts_synced = models.IntegerField(default=0)
+    relationships_synced = models.IntegerField(default=0)
+    notes_synced = models.IntegerField(default=0)
+
+    class Meta:
+        ordering = ["-connected_at"]
+
+    def __str__(self):
+        return f"XPM Connection ({self.get_status_display()}) - {self.tenant_name}"
+
+    @property
+    def is_token_expired(self):
+        if not self.token_expires_at:
+            return True
+        return timezone.now() >= self.token_expires_at
+
+    @property
+    def needs_refresh(self):
+        if not self.token_expires_at:
+            return True
+        return timezone.now() >= (self.token_expires_at - timezone.timedelta(minutes=5))
+
+
+class XPMSyncLog(models.Model):
+    """Log of each XPM sync operation."""
+
+    class SyncType(models.TextChoices):
+        FULL = "full", "Full Sync"
+        CLIENTS = "clients", "Clients Only"
+        CONTACTS = "contacts", "Contacts Only"
+        NOTES = "notes", "Notes Only"
+
+    class SyncStatus(models.TextChoices):
+        RUNNING = "running", "Running"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+        PARTIAL = "partial", "Partial (with errors)"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    connection = models.ForeignKey(
+        XPMConnection,
+        on_delete=models.CASCADE,
+        related_name="sync_logs",
+    )
+    sync_type = models.CharField(max_length=20, choices=SyncType.choices)
+    status = models.CharField(
+        max_length=20, choices=SyncStatus.choices, default=SyncStatus.RUNNING
+    )
+    started_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+    )
+
+    # Stats
+    clients_created = models.IntegerField(default=0)
+    clients_updated = models.IntegerField(default=0)
+    entities_created = models.IntegerField(default=0)
+    contacts_synced = models.IntegerField(default=0)
+    relationships_synced = models.IntegerField(default=0)
+    notes_synced = models.IntegerField(default=0)
+    errors = models.JSONField(default=list, blank=True)
+
+    started_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-started_at"]
+
+    def __str__(self):
+        return f"XPM Sync ({self.get_sync_type_display()}) - {self.get_status_display()}"
+
+    @property
+    def duration(self):
+        if self.completed_at and self.started_at:
+            return self.completed_at - self.started_at
+        return None

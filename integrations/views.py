@@ -508,3 +508,251 @@ def _apply_learned_mappings(entity, raw_lines):
         staged.append(staged_line)
 
     return staged
+
+
+# ---------------------------------------------------------------------------
+# Xero Practice Manager (XPM) Integration
+# ---------------------------------------------------------------------------
+
+@login_required
+def xpm_dashboard(request):
+    """XPM integration dashboard: connection status, sync history, manual trigger."""
+    from .models import XPMConnection, XPMSyncLog
+
+    connection = XPMConnection.objects.filter(status="active").first()
+    if not connection:
+        connection = XPMConnection.objects.first()
+
+    sync_logs = XPMSyncLog.objects.all()[:20] if connection else []
+
+    # Check if Xero credentials are configured
+    xero_configured = bool(
+        getattr(settings, "XERO_CLIENT_ID", "") and
+        getattr(settings, "XERO_CLIENT_SECRET", "")
+    )
+
+    context = {
+        "connection": connection,
+        "sync_logs": sync_logs,
+        "xero_configured": xero_configured,
+    }
+    return render(request, "integrations/xpm_dashboard.html", context)
+
+
+@login_required
+def xpm_connect(request):
+    """Initiate OAuth2 connection to Xero for Practice Manager access."""
+    import uuid as uuid_mod
+
+    state = str(uuid_mod.uuid4())
+    request.session["xpm_oauth_state"] = state
+
+    client_id = getattr(settings, "XERO_CLIENT_ID", "")
+    redirect_uri = request.build_absolute_uri(
+        reverse("integrations:xpm_callback")
+    )
+
+    # XPM requires practicemanager scope in addition to standard Xero scopes
+    scopes = "openid profile email practicemanager offline_access"
+
+    params = {
+        "response_type": "code",
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "scope": scopes,
+        "state": state,
+        "access_type": "offline",
+    }
+    query_string = "&".join(f"{k}={v}" for k, v in params.items())
+    auth_url = f"https://login.xero.com/identity/connect/authorize?{query_string}"
+
+    return redirect(auth_url)
+
+
+@login_required
+def xpm_callback(request):
+    """Handle OAuth2 callback for XPM connection."""
+    from .models import XPMConnection
+
+    code = request.GET.get("code")
+    state = request.GET.get("state")
+    error = request.GET.get("error")
+
+    expected_state = request.session.get("xpm_oauth_state")
+
+    if error:
+        messages.error(request, f"XPM connection failed: {error}")
+        return redirect("integrations:xpm_dashboard")
+
+    if not code or state != expected_state:
+        messages.error(request, "XPM connection failed: invalid state.")
+        return redirect("integrations:xpm_dashboard")
+
+    client_id = getattr(settings, "XERO_CLIENT_ID", "")
+    client_secret = getattr(settings, "XERO_CLIENT_SECRET", "")
+    redirect_uri = request.build_absolute_uri(
+        reverse("integrations:xpm_callback")
+    )
+
+    try:
+        import requests as req
+        # Exchange code for tokens
+        resp = req.post(
+            "https://login.xero.com/identity/connect/token",
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": redirect_uri,
+                "client_id": client_id,
+                "client_secret": client_secret,
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        tokens = resp.json()
+
+        # Get tenants
+        tenant_resp = req.get(
+            "https://api.xero.com/connections",
+            headers={"Authorization": f"Bearer {tokens['access_token']}"},
+            timeout=15,
+        )
+        tenant_resp.raise_for_status()
+        tenants = tenant_resp.json()
+
+        if not tenants:
+            messages.error(request, "No Xero organisations found.")
+            return redirect("integrations:xpm_dashboard")
+
+        # Use the first tenant (or the practice manager tenant)
+        tenant = tenants[0]
+        tenant_id = tenant.get("tenantId", "")
+        tenant_name = tenant.get("tenantName", "Unknown")
+
+        # If multiple tenants, store in session for selection
+        if len(tenants) > 1:
+            request.session["xpm_tokens"] = tokens
+            request.session["xpm_tenants"] = [
+                {"id": t["tenantId"], "name": t.get("tenantName", "Unknown")}
+                for t in tenants
+            ]
+            return redirect("integrations:xpm_select_tenant")
+
+        # Deactivate existing connections
+        XPMConnection.objects.filter(status="active").update(status="disconnected")
+
+        # Create new connection
+        conn = XPMConnection.objects.create(
+            status="active",
+            access_token=tokens["access_token"],
+            refresh_token=tokens.get("refresh_token", ""),
+            token_expires_at=timezone.now() + timedelta(
+                seconds=tokens.get("expires_in", 1800)
+            ),
+            tenant_id=tenant_id,
+            tenant_name=tenant_name,
+            connected_by=request.user,
+        )
+
+        messages.success(request, f"Connected to Xero Practice Manager ({tenant_name})")
+
+    except Exception as e:
+        logger.error(f"XPM OAuth callback error: {e}")
+        messages.error(request, f"XPM connection failed: {str(e)}")
+
+    request.session.pop("xpm_oauth_state", None)
+    return redirect("integrations:xpm_dashboard")
+
+
+@login_required
+def xpm_select_tenant(request):
+    """Select which Xero tenant to use for XPM."""
+    from .models import XPMConnection
+
+    tenants = request.session.get("xpm_tenants", [])
+    tokens = request.session.get("xpm_tokens", {})
+
+    if request.method == "POST":
+        tenant_id = request.POST.get("tenant_id", "")
+        tenant_name = ""
+        for t in tenants:
+            if t["id"] == tenant_id:
+                tenant_name = t["name"]
+                break
+
+        XPMConnection.objects.filter(status="active").update(status="disconnected")
+
+        XPMConnection.objects.create(
+            status="active",
+            access_token=tokens.get("access_token", ""),
+            refresh_token=tokens.get("refresh_token", ""),
+            token_expires_at=timezone.now() + timedelta(
+                seconds=tokens.get("expires_in", 1800)
+            ),
+            tenant_id=tenant_id,
+            tenant_name=tenant_name,
+            connected_by=request.user,
+        )
+
+        for key in ["xpm_tokens", "xpm_tenants", "xpm_oauth_state"]:
+            request.session.pop(key, None)
+
+        messages.success(request, f"Connected to Xero Practice Manager ({tenant_name})")
+        return redirect("integrations:xpm_dashboard")
+
+    return render(request, "integrations/xpm_select_tenant.html", {
+        "tenants": tenants,
+    })
+
+
+@login_required
+@require_POST
+def xpm_disconnect(request):
+    """Disconnect from XPM."""
+    from .models import XPMConnection
+
+    XPMConnection.objects.filter(status="active").update(
+        status="disconnected",
+        access_token="",
+        refresh_token="",
+    )
+    messages.success(request, "Disconnected from Xero Practice Manager.")
+    return redirect("integrations:xpm_dashboard")
+
+
+@login_required
+@require_POST
+def xpm_sync_now(request):
+    """Trigger a manual full sync from XPM."""
+    from .models import XPMConnection
+    from .xpm_sync import run_full_sync
+
+    connection = XPMConnection.objects.filter(status="active").first()
+    if not connection:
+        messages.error(request, "No active XPM connection. Connect first.")
+        return redirect("integrations:xpm_dashboard")
+
+    try:
+        sync_log = run_full_sync(connection, user=request.user)
+
+        if sync_log.status == "completed":
+            messages.success(
+                request,
+                f"XPM sync completed: {sync_log.clients_created} clients created, "
+                f"{sync_log.clients_updated} updated, "
+                f"{sync_log.entities_created} entities created."
+            )
+        elif sync_log.status == "partial":
+            messages.warning(
+                request,
+                f"XPM sync completed with errors: {sync_log.clients_created} created, "
+                f"{sync_log.clients_updated} updated. "
+                f"{len(sync_log.errors)} errors."
+            )
+        else:
+            messages.error(request, f"XPM sync failed: {sync_log.errors}")
+
+    except Exception as e:
+        messages.error(request, f"XPM sync failed: {str(e)}")
+
+    return redirect("integrations:xpm_dashboard")

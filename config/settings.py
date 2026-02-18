@@ -165,9 +165,11 @@ MCS_LOGO_PATH = BASE_DIR / "static" / "MCSlogo.png"
 AIRTABLE_API_KEY = os.environ.get("AIRTABLE_API_KEY", "")
 
 # Accounting platform integrations (OAuth2 credentials)
-# Xero
+# Xero (Accounting + Practice Manager)
 XERO_CLIENT_ID = os.environ.get("XERO_CLIENT_ID", "")
 XERO_CLIENT_SECRET = os.environ.get("XERO_CLIENT_SECRET", "")
+# XPM sync: set to True to enable Practice Manager sync features
+XPM_SYNC_ENABLED = os.environ.get("XPM_SYNC_ENABLED", "false").lower() == "true"
 
 # MYOB
 MYOB_CLIENT_ID = os.environ.get("MYOB_CLIENT_ID", "")
