@@ -585,12 +585,20 @@ def upload_bank_statement(request):
     for uploaded_file in uploaded_files:
         content = uploaded_file.read()
         filename = uploaded_file.name
+        logger.info(f"Processing file: {filename} ({len(content)} bytes)")
 
-        if filename.lower().endswith(".pdf"):
-            pdf_b64 = base64.b64encode(content).decode("ascii")
-            extracted = extract_transactions_from_pdf(pdf_b64, filename)
-        else:
-            extracted = _parse_excel_bank_statement(content, filename)
+        try:
+            if filename.lower().endswith(".pdf"):
+                pdf_b64 = base64.b64encode(content).decode("ascii")
+                extracted = extract_transactions_from_pdf(pdf_b64, filename)
+            else:
+                extracted = _parse_excel_bank_statement(content, filename)
+        except Exception as exc:
+            logger.error(f"Extraction exception for {filename}: {exc}", exc_info=True)
+            errors.append(f"{filename}: Extraction error — {exc}")
+            continue
+
+        logger.info(f"Extraction result for {filename}: {type(extracted)} — keys={list(extracted.keys()) if isinstance(extracted, dict) else 'N/A'} — txn_count={len(extracted.get('transactions', [])) if isinstance(extracted, dict) else 0}")
 
         if not extracted or not extracted.get("transactions"):
             errors.append(f"{filename}: No transactions could be extracted")
