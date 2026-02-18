@@ -665,12 +665,12 @@ def upload_bank_statement(request):
             closing_balance=Decimal(str(extracted.get("closing_balance", 0))),
         )
 
-        # Create PendingTransactions - unclassified
+        # Create PendingTransactions - unclassified (bulk for speed)
+        pending_objs = []
         for txn in transactions:
             amount = Decimal(str(txn.get("amount", 0)))
             abs_amount = abs(amount)
-
-            PendingTransaction.objects.create(
+            pending_objs.append(PendingTransaction(
                 job=job,
                 date=txn.get("date", ""),
                 description=txn.get("description", ""),
@@ -687,7 +687,9 @@ def upload_bank_statement(request):
                 confirmed_code="",
                 confirmed_name="",
                 confirmed_tax_type="",
-            )
+            ))
+        PendingTransaction.objects.bulk_create(pending_objs)
+        logger.info(f"Created {len(pending_objs)} PendingTransactions for job {job.pk}")
 
         # Log activity
         ReviewActivity.objects.create(
@@ -702,6 +704,7 @@ def upload_bank_statement(request):
         created_jobs.append(job)
 
     # Handle response
+    logger.info(f"Upload complete: {len(created_jobs)} jobs created, {len(errors)} errors. Sending response.")
     is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
 
     if not created_jobs:
