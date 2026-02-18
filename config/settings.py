@@ -189,3 +189,6 @@ IMAP_HOST = os.environ.get("IMAP_HOST", "")
 IMAP_PORT = int(os.environ.get("IMAP_PORT", "993"))
 IMAP_USERNAME = os.environ.get("IMAP_USERNAME", "")
 IMAP_PASSWORD = os.environ.get("IMAP_PASSWORD", "")
+
+# AI Provider — Anthropic Claude (for bank statement extraction + transaction classification)
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")

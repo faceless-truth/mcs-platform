@@ -13,6 +13,7 @@ import email
 import imaplib
 import json
 import logging
+import os
 import re
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -264,18 +265,27 @@ def fetch_emails_imap():
 
 
 # ---------------------------------------------------------------------------
-# PDF Transaction Extraction (OpenAI)
+# PDF Transaction Extraction (Anthropic Claude)
 # ---------------------------------------------------------------------------
+
+def _get_anthropic_client():
+    """Get an Anthropic client using the API key from settings."""
+    import anthropic
+    from django.conf import settings as django_settings
+
+    api_key = getattr(django_settings, "ANTHROPIC_API_KEY", "") or os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        raise ValueError("ANTHROPIC_API_KEY is not configured")
+    return anthropic.Anthropic(api_key=api_key)
+
 
 def extract_transactions_from_pdf(pdf_b64, filename="statement.pdf"):
     """
-    Use OpenAI to extract transactions from a bank statement PDF.
+    Use Anthropic Claude to extract transactions from a bank statement PDF.
     Returns dict with: opening_balance, closing_balance, account_name,
     bsb, account_number, period_start, period_end, transactions[]
     """
-    from openai import OpenAI
-
-    client = OpenAI()
+    client = _get_anthropic_client()
 
     system_prompt = (
         "You are a bank statement parser for an Australian accounting firm. "
@@ -288,22 +298,24 @@ def extract_transactions_from_pdf(pdf_b64, filename="statement.pdf"):
         "account_number (string), period_start (string DD/MM/YYYY), "
         "period_end (string DD/MM/YYYY), "
         "transactions (array of {date, description, amount}). "
-        "Return ONLY valid JSON."
+        "Return ONLY valid JSON — no markdown, no code fences, just the JSON object."
     )
 
     try:
-        response = client.chat.completions.create(
-            model="gpt-4.1-mini",
+        response = client.messages.create(
+            model="claude-opus-4-6",
+            max_tokens=16384,
+            system=system_prompt,
             messages=[
-                {"role": "system", "content": system_prompt},
                 {
                     "role": "user",
                     "content": [
                         {
-                            "type": "file",
-                            "file": {
-                                "filename": filename,
-                                "file_data": f"data:application/pdf;base64,{pdf_b64}",
+                            "type": "document",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "application/pdf",
+                                "data": pdf_b64,
                             },
                         },
                         {
@@ -313,11 +325,17 @@ def extract_transactions_from_pdf(pdf_b64, filename="statement.pdf"):
                     ],
                 },
             ],
-            temperature=0.1,
-            response_format={"type": "json_object"},
         )
 
-        content = response.choices[0].message.content
+        content = response.content[0].text
+        # Strip any markdown code fences if present
+        content = content.strip()
+        if content.startswith("```"):
+            content = content.split("\n", 1)[1] if "\n" in content else content[3:]
+        if content.endswith("```"):
+            content = content[:-3]
+        content = content.strip()
+
         data = json.loads(content)
         return data
 
@@ -548,12 +566,10 @@ def _map_tax_type(ai_tax_type, amount, is_gst_registered):
 
 def _ai_classify_batch(transactions, is_gst_registered=True, batch_size=15, entity_type=None):
     """
-    Classify transactions using OpenAI API with entity-type-specific chart of accounts.
+    Classify transactions using Anthropic Claude API with entity-type-specific chart of accounts.
     Processes in batches of batch_size.
     """
-    from openai import OpenAI
-
-    client = OpenAI()
+    client = _get_anthropic_client()
     all_results = []
 
     # Build the chart of accounts prompt from the database
@@ -588,32 +604,36 @@ def _ai_classify_batch(transactions, is_gst_registered=True, batch_size=15, enti
             f"Classify these Australian bank transactions for a {entity_label} entity:\n\n"
             f"{chart_prompt}{gst_context}\n\n"
             f"TRANSACTIONS:\n{txn_list}\n\n"
-            f"Return JSON: {{\"classifications\": ["
+            f"Return ONLY valid JSON (no markdown, no code fences): "
+            f"{{\"classifications\": ["
             f"{{\"accountCode\": str, \"accountName\": str, "
             f"\"taxType\": str, \"confidence\": int 1-5, "
             f"\"reasoning\": str}}]}}"
         )
 
         try:
-            response = client.chat.completions.create(
-                model="gpt-4.1-mini",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are an Australian accounting AI assistant for MC&S Pty Ltd. "
-                            "You classify bank transactions using the provided chart of accounts. "
-                            "You MUST only use account codes from the chart provided. "
-                            "If unsure, use account code 0000 (Suspense) with low confidence."
-                        ),
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.1,
-                response_format={"type": "json_object"},
+            response = client.messages.create(
+                model="claude-opus-4-6",
+                max_tokens=8192,
+                system=(
+                    "You are an Australian accounting AI assistant for MC&S Pty Ltd. "
+                    "You classify bank transactions using the provided chart of accounts. "
+                    "You MUST only use account codes from the chart provided. "
+                    "If unsure, use account code 0000 (Suspense) with low confidence. "
+                    "Return ONLY valid JSON — no markdown, no code fences, just the JSON object."
+                ),
+                messages=[{"role": "user", "content": prompt}],
             )
 
-            content = response.choices[0].message.content
+            content = response.content[0].text
+            # Strip any markdown code fences if present
+            content = content.strip()
+            if content.startswith("```"):
+                content = content.split("\n", 1)[1] if "\n" in content else content[3:]
+            if content.endswith("```"):
+                content = content[:-3]
+            content = content.strip()
+
             parsed = json.loads(content)
             classifications = (
                 parsed.get("classifications")
