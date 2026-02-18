@@ -548,25 +548,31 @@ document.getElementById('uploadEntitySelect').addEventListener('change', functio
             headers: {
                 'X-Requested-With': 'XMLHttpRequest',
             },
+            redirect: 'manual',
         })
         .then(resp => {
-            if (resp.redirected) {
-                window.location.href = resp.url;
-                return;
+            // If server returned a redirect (non-AJAX fallback), follow it
+            if (resp.type === 'opaqueredirect' || resp.redirected) {
+                window.location.href = resp.url || form.action;
+                return null;
             }
             return resp.json();
         })
         .then(data => {
-            if (data && data.redirect) {
+            if (!data) return;
+            if (data.status === 'success' && data.redirect) {
                 window.location.href = data.redirect;
-            } else if (data && data.message) {
-                alert(data.message);
+            } else if (data.status === 'error') {
+                alert(data.message || 'An error occurred processing the statements.');
                 submitBtn.disabled = false;
                 submitBtn.innerHTML = `<i class="bi bi-cloud-upload"></i> Process ${selectedFiles.length} Statement${selectedFiles.length > 1 ? 's' : ''}`;
+            } else if (data.redirect) {
+                window.location.href = data.redirect;
             }
         })
         .catch(err => {
-            console.error(err);
+            console.error('Upload error:', err);
+            alert('An error occurred. Please try again.');
             submitBtn.disabled = false;
             submitBtn.innerHTML = `<i class="bi bi-cloud-upload"></i> Process ${selectedFiles.length} Statement${selectedFiles.length > 1 ? 's' : ''}`;
         });

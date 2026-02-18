@@ -725,23 +725,40 @@ def upload_bank_statement(request):
         created_jobs.append(job)
 
     # Handle response
+    is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+
     if not created_jobs:
         error_msg = "; ".join(errors) if errors else "No transactions could be extracted from any file"
-        return JsonResponse({"status": "error", "message": error_msg}, status=400)
+        if is_ajax:
+            return JsonResponse({"status": "error", "message": error_msg}, status=400)
+        from django.contrib import messages as django_messages
+        django_messages.error(request, error_msg)
+        return redirect("review:dashboard")
 
-    # If single file, redirect to the review detail page
+    # Build redirect URL
     if len(created_jobs) == 1:
-        return redirect("review:review_detail", pk=created_jobs[0].pk)
+        from django.urls import reverse
+        redirect_url = reverse("review:review_detail", kwargs={"pk": created_jobs[0].pk})
+    else:
+        from django.urls import reverse
+        from django.contrib import messages as django_messages
+        django_messages.success(
+            request,
+            f"Successfully processed {len(created_jobs)} bank statements "
+            f"({sum(j.total_transactions for j in created_jobs)} total transactions)."
+            + (f" Errors: {'; '.join(errors)}" if errors else "")
+        )
+        redirect_url = reverse("review:dashboard")
 
-    # If multiple files, redirect to dashboard with success message
-    from django.contrib import messages as django_messages
-    django_messages.success(
-        request,
-        f"Successfully processed {len(created_jobs)} bank statements "
-        f"({sum(j.total_transactions for j in created_jobs)} total transactions)."
-        + (f" Errors: {'; '.join(errors)}" if errors else "")
-    )
-    return redirect("review:dashboard")
+    if is_ajax:
+        return JsonResponse({
+            "status": "success",
+            "redirect": redirect_url,
+            "jobs_created": len(created_jobs),
+            "total_transactions": sum(j.total_transactions for j in created_jobs),
+            "errors": errors,
+        })
+    return redirect(redirect_url)
 
 
 def _parse_excel_bank_statement(content, filename):
