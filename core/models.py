@@ -1318,3 +1318,58 @@ class MeetingNote(models.Model):
         if not self.attendees:
             return []
         return [a.strip() for a in self.attendees.split(",") if a.strip()]
+
+
+# ---------------------------------------------------------------------------
+# Stock Item (Opening / Closing Stock)
+# ---------------------------------------------------------------------------
+class StockItem(models.Model):
+    """
+    Tracks opening and closing stock for a financial year.
+    When values are entered, they push to the trial balance as
+    Opening Stock (debit) and Closing Stock (credit) entries.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    financial_year = models.ForeignKey(
+        FinancialYear, on_delete=models.CASCADE, related_name="stock_items"
+    )
+    item_name = models.CharField(
+        max_length=255,
+        help_text='Description of stock item, e.g. "Raw Materials", "Finished Goods"',
+    )
+    opening_quantity = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0,
+    )
+    opening_value = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Opening stock value ($)",
+    )
+    closing_quantity = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0,
+    )
+    closing_value = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Closing stock value ($)",
+    )
+    notes = models.TextField(blank=True, default="")
+    pushed_to_tb = models.BooleanField(
+        default=False,
+        help_text="Whether this stock item has been pushed to the trial balance",
+    )
+    display_order = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["display_order", "item_name"]
+        verbose_name = "Stock Item"
+        verbose_name_plural = "Stock Items"
+
+    def __str__(self):
+        return f"{self.item_name}: Opening ${self.opening_value}, Closing ${self.closing_value}"
+
+    @property
+    def stock_movement(self):
+        """Closing stock minus opening stock."""
+        return self.closing_value - self.opening_value

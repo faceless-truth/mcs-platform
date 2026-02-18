@@ -90,6 +90,23 @@ urlpatterns = [
     path("years/<uuid:pk>/gst/", views.gst_activity_statement, name="gst_activity_statement"),
     path("years/<uuid:pk>/gst/download/", views.gst_activity_statement_download, name="gst_activity_statement_download"),
 
+    # Depreciation
+    path("years/<uuid:pk>/depreciation/add/", views.depreciation_add, name="depreciation_add"),
+    path("depreciation/<uuid:pk>/edit/", views.depreciation_edit, name="depreciation_edit"),
+    path("depreciation/<uuid:pk>/delete/", views.depreciation_delete, name="depreciation_delete"),
+    path("years/<uuid:pk>/depreciation/roll-forward/", views.depreciation_roll_forward, name="depreciation_roll_forward"),
+
+    # Stock
+    path("years/<uuid:pk>/stock/add/", views.stock_add, name="stock_add"),
+    path("stock/<uuid:pk>/edit/", views.stock_edit, name="stock_edit"),
+    path("stock/<uuid:pk>/delete/", views.stock_delete, name="stock_delete"),
+    path("years/<uuid:pk>/stock/push-to-tb/", views.stock_push_to_tb, name="stock_push_to_tb"),
+
+    # Review → Trial Balance
+    path("years/<uuid:pk>/review/push-to-tb/", views.review_push_to_tb, name="review_push_to_tb"),
+    path("review-txn/<uuid:pk>/approve/", views.review_approve_transaction, name="review_approve_transaction"),
+    path("years/<uuid:pk>/review/approve-all/", views.review_approve_all, name="review_approve_all"),
+
     # HTMX partials
     path("htmx/client-search/", views.htmx_client_search, name="htmx_client_search"),
     path("htmx/tb-line/<uuid:pk>/map/", views.htmx_map_tb_line, name="htmx_map_tb_line"),

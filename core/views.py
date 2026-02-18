@@ -13,6 +13,7 @@ from .models import (
     AccountMapping, ChartOfAccount, ClientAccountMapping, AdjustingJournal,
     JournalLine, GeneratedDocument, AuditLog, EntityOfficer,
     ClientAssociate, AccountingSoftware, MeetingNote,
+    DepreciationAsset, RiskFlag, StockItem,
 )
 from .forms import (
     ClientForm, EntityForm, FinancialYearForm,
@@ -320,6 +321,41 @@ def financial_year_detail(request, pk):
     current_year = str(fy.year_label)
     prior_year = str(int(fy.year_label) - 1) if fy.year_label.isdigit() else 'Prior'
 
+    # Audit Risk flags
+    risk_flags = RiskFlag.objects.filter(financial_year=fy).order_by('-severity', '-created_at')
+    open_risk_count = risk_flags.filter(status='open').count()
+
+    # Depreciation assets
+    depreciation_assets = DepreciationAsset.objects.filter(financial_year=fy)
+    dep_categories = OrderedDict()
+    dep_total_opening = Decimal('0')
+    dep_total_depreciation = Decimal('0')
+    dep_total_closing = Decimal('0')
+    for asset in depreciation_assets:
+        if asset.category not in dep_categories:
+            dep_categories[asset.category] = []
+        dep_categories[asset.category].append(asset)
+        dep_total_opening += asset.opening_wdv
+        dep_total_depreciation += asset.depreciation_amount
+        dep_total_closing += asset.closing_wdv
+
+    # Stock items
+    stock_items = StockItem.objects.filter(financial_year=fy)
+    stock_total_opening = stock_items.aggregate(total=Sum('opening_value'))['total'] or Decimal('0')
+    stock_total_closing = stock_items.aggregate(total=Sum('closing_value'))['total'] or Decimal('0')
+
+    # Review items (pending transactions from bank statement uploads for this entity)
+    from review.models import PendingTransaction, ReviewJob
+    review_jobs = ReviewJob.objects.filter(entity=fy.entity)
+    pending_review = PendingTransaction.objects.filter(
+        job__entity=fy.entity,
+        is_confirmed=False,
+    ).select_related('job').order_by('date')
+    confirmed_review = PendingTransaction.objects.filter(
+        job__entity=fy.entity,
+        is_confirmed=True,
+    ).select_related('job').order_by('date')
+
     context = {
         "fy": fy,
         "entity": fy.entity,
@@ -335,6 +371,22 @@ def financial_year_detail(request, pk):
         "total_prior_credit": total_prior_credit,
         "current_year": current_year,
         "prior_year": prior_year,
+        # Audit Risk
+        "risk_flags": risk_flags,
+        "open_risk_count": open_risk_count,
+        # Depreciation
+        "depreciation_assets": depreciation_assets,
+        "dep_categories": dep_categories,
+        "dep_total_opening": dep_total_opening,
+        "dep_total_depreciation": dep_total_depreciation,
+        "dep_total_closing": dep_total_closing,
+        # Stock
+        "stock_items": stock_items,
+        "stock_total_opening": stock_total_opening,
+        "stock_total_closing": stock_total_closing,
+        # Review
+        "pending_review": pending_review,
+        "confirmed_review": confirmed_review,
     }
     return render(request, "core/financial_year_detail.html", context)
 
@@ -2191,3 +2243,367 @@ def gst_activity_statement_download(request, pk):
     )
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
     return response
+
+
+
+# ---------------------------------------------------------------------------
+# Depreciation Asset AJAX endpoints
+# ---------------------------------------------------------------------------
+@login_required
+def depreciation_add(request, pk):
+    """Add a new depreciation asset to a financial year."""
+    fy = get_object_or_404(FinancialYear, pk=pk)
+    if request.method != "POST":
+        return JsonResponse({"error": "POST required"}, status=405)
+
+    asset = DepreciationAsset.objects.create(
+        financial_year=fy,
+        category=request.POST.get("category", "Other"),
+        asset_name=request.POST.get("asset_name", ""),
+        purchase_date=request.POST.get("purchase_date") or None,
+        total_cost=Decimal(request.POST.get("total_cost", "0") or "0"),
+        private_use_pct=Decimal(request.POST.get("private_use_pct", "0") or "0"),
+        opening_wdv=Decimal(request.POST.get("opening_wdv", "0") or "0"),
+        method=request.POST.get("method", "D"),
+        rate=Decimal(request.POST.get("rate", "0") or "0"),
+        addition_cost=Decimal(request.POST.get("addition_cost", "0") or "0"),
+        addition_date=request.POST.get("addition_date") or None,
+        disposal_date=request.POST.get("disposal_date") or None,
+        disposal_consideration=Decimal(request.POST.get("disposal_consideration", "0") or "0"),
+    )
+    # Calculate depreciation
+    _calc_depreciation(asset)
+    asset.save()
+
+    _log_action(request, "create", f"Added depreciation asset: {asset.asset_name}", asset)
+    messages.success(request, f"Asset '{asset.asset_name}' added.")
+    return redirect("core:financial_year_detail", pk=pk)
+
+
+@login_required
+def depreciation_edit(request, pk):
+    """Edit a depreciation asset."""
+    asset = get_object_or_404(DepreciationAsset, pk=pk)
+    fy_pk = asset.financial_year.pk
+    if request.method != "POST":
+        return JsonResponse({"error": "POST required"}, status=405)
+
+    asset.category = request.POST.get("category", asset.category)
+    asset.asset_name = request.POST.get("asset_name", asset.asset_name)
+    asset.purchase_date = request.POST.get("purchase_date") or asset.purchase_date
+    asset.total_cost = Decimal(request.POST.get("total_cost", "0") or "0")
+    asset.private_use_pct = Decimal(request.POST.get("private_use_pct", "0") or "0")
+    asset.opening_wdv = Decimal(request.POST.get("opening_wdv", "0") or "0")
+    asset.method = request.POST.get("method", asset.method)
+    asset.rate = Decimal(request.POST.get("rate", "0") or "0")
+    asset.addition_cost = Decimal(request.POST.get("addition_cost", "0") or "0")
+    asset.addition_date = request.POST.get("addition_date") or None
+    asset.disposal_date = request.POST.get("disposal_date") or None
+    asset.disposal_consideration = Decimal(request.POST.get("disposal_consideration", "0") or "0")
+    _calc_depreciation(asset)
+    asset.save()
+
+    _log_action(request, "update", f"Updated depreciation asset: {asset.asset_name}", asset)
+    messages.success(request, f"Asset '{asset.asset_name}' updated.")
+    return redirect("core:financial_year_detail", pk=fy_pk)
+
+
+@login_required
+def depreciation_delete(request, pk):
+    """Delete a depreciation asset."""
+    asset = get_object_or_404(DepreciationAsset, pk=pk)
+    fy_pk = asset.financial_year.pk
+    name = asset.asset_name
+    asset.delete()
+    _log_action(request, "delete", f"Deleted depreciation asset: {name}")
+    messages.success(request, f"Asset '{name}' deleted.")
+    return redirect("core:financial_year_detail", pk=fy_pk)
+
+
+@login_required
+def depreciation_roll_forward(request, pk):
+    """Roll forward depreciation schedule from prior year."""
+    fy = get_object_or_404(FinancialYear, pk=pk)
+    if not fy.prior_year:
+        messages.error(request, "No prior year linked. Cannot roll forward depreciation.")
+        return redirect("core:financial_year_detail", pk=pk)
+
+    prior_assets = DepreciationAsset.objects.filter(financial_year=fy.prior_year)
+    if not prior_assets.exists():
+        messages.warning(request, "No depreciation assets in the prior year to roll forward.")
+        return redirect("core:financial_year_detail", pk=pk)
+
+    # Clear existing assets if any
+    DepreciationAsset.objects.filter(financial_year=fy).delete()
+
+    count = 0
+    for pa in prior_assets:
+        if pa.closing_wdv <= 0 and not pa.disposal_date:
+            continue  # Skip fully depreciated with no disposal
+        DepreciationAsset.objects.create(
+            financial_year=fy,
+            category=pa.category,
+            asset_name=pa.asset_name,
+            purchase_date=pa.purchase_date,
+            total_cost=pa.total_cost,
+            private_use_pct=pa.private_use_pct,
+            opening_wdv=pa.closing_wdv,  # Prior closing = new opening
+            method=pa.method,
+            rate=pa.rate,
+            display_order=pa.display_order,
+        )
+        count += 1
+
+    _log_action(request, "roll_forward", f"Rolled forward {count} depreciation assets to {fy}", fy)
+    messages.success(request, f"Rolled forward {count} depreciation assets from prior year.")
+    return redirect("core:financial_year_detail", pk=pk)
+
+
+def _calc_depreciation(asset):
+    """Calculate depreciation amount and closing WDV for an asset."""
+    depreciable = asset.opening_wdv + asset.addition_cost
+    if asset.disposal_date:
+        # On disposal, depreciation is up to disposal date
+        # Profit/loss = disposal consideration - WDV at disposal
+        asset.depreciation_amount = Decimal("0")
+        asset.closing_wdv = Decimal("0")
+        wdv_at_disposal = depreciable
+        asset.profit_on_disposal = max(Decimal("0"), asset.disposal_consideration - wdv_at_disposal)
+        asset.loss_on_disposal = max(Decimal("0"), wdv_at_disposal - asset.disposal_consideration)
+    elif asset.method == "W":
+        # Written off entirely
+        asset.depreciation_amount = depreciable
+        asset.closing_wdv = Decimal("0")
+    elif asset.method == "D":
+        # Diminishing value
+        dep = (depreciable * asset.rate / Decimal("100")).quantize(Decimal("0.01"))
+        asset.depreciation_amount = dep
+        asset.closing_wdv = (depreciable - dep).quantize(Decimal("0.01"))
+    elif asset.method == "P":
+        # Prime cost (straight line)
+        dep = (asset.total_cost * asset.rate / Decimal("100")).quantize(Decimal("0.01"))
+        asset.depreciation_amount = min(dep, depreciable)
+        asset.closing_wdv = (depreciable - asset.depreciation_amount).quantize(Decimal("0.01"))
+    else:
+        asset.depreciation_amount = Decimal("0")
+        asset.closing_wdv = depreciable
+
+    # Private use adjustment
+    if asset.private_use_pct > 0:
+        asset.private_depreciation = (
+            asset.depreciation_amount * asset.private_use_pct / Decimal("100")
+        ).quantize(Decimal("0.01"))
+    else:
+        asset.private_depreciation = Decimal("0")
+
+    asset.depreciable_value = depreciable
+
+
+# ---------------------------------------------------------------------------
+# Stock Item AJAX endpoints
+# ---------------------------------------------------------------------------
+@login_required
+def stock_add(request, pk):
+    """Add a stock item to a financial year."""
+    fy = get_object_or_404(FinancialYear, pk=pk)
+    if request.method != "POST":
+        return JsonResponse({"error": "POST required"}, status=405)
+
+    StockItem.objects.create(
+        financial_year=fy,
+        item_name=request.POST.get("item_name", ""),
+        opening_quantity=Decimal(request.POST.get("opening_quantity", "0") or "0"),
+        opening_value=Decimal(request.POST.get("opening_value", "0") or "0"),
+        closing_quantity=Decimal(request.POST.get("closing_quantity", "0") or "0"),
+        closing_value=Decimal(request.POST.get("closing_value", "0") or "0"),
+        notes=request.POST.get("notes", ""),
+    )
+    messages.success(request, "Stock item added.")
+    return redirect("core:financial_year_detail", pk=pk)
+
+
+@login_required
+def stock_edit(request, pk):
+    """Edit a stock item."""
+    item = get_object_or_404(StockItem, pk=pk)
+    fy_pk = item.financial_year.pk
+    if request.method != "POST":
+        return JsonResponse({"error": "POST required"}, status=405)
+
+    item.item_name = request.POST.get("item_name", item.item_name)
+    item.opening_quantity = Decimal(request.POST.get("opening_quantity", "0") or "0")
+    item.opening_value = Decimal(request.POST.get("opening_value", "0") or "0")
+    item.closing_quantity = Decimal(request.POST.get("closing_quantity", "0") or "0")
+    item.closing_value = Decimal(request.POST.get("closing_value", "0") or "0")
+    item.notes = request.POST.get("notes", "")
+    item.save()
+    messages.success(request, f"Stock item '{item.item_name}' updated.")
+    return redirect("core:financial_year_detail", pk=fy_pk)
+
+
+@login_required
+def stock_delete(request, pk):
+    """Delete a stock item."""
+    item = get_object_or_404(StockItem, pk=pk)
+    fy_pk = item.financial_year.pk
+    name = item.item_name
+    item.delete()
+    messages.success(request, f"Stock item '{name}' deleted.")
+    return redirect("core:financial_year_detail", pk=fy_pk)
+
+
+@login_required
+def stock_push_to_tb(request, pk):
+    """Push stock values to the trial balance."""
+    fy = get_object_or_404(FinancialYear, pk=pk)
+    stock_items = StockItem.objects.filter(financial_year=fy)
+
+    if not stock_items.exists():
+        messages.warning(request, "No stock items to push.")
+        return redirect("core:financial_year_detail", pk=pk)
+
+    total_opening = sum(s.opening_value for s in stock_items)
+    total_closing = sum(s.closing_value for s in stock_items)
+
+    # Remove any existing stock TB lines
+    TrialBalanceLine.objects.filter(
+        financial_year=fy,
+        account_name__in=["Opening Stock", "Closing Stock"],
+    ).delete()
+
+    # Create Opening Stock (debit = cost of goods)
+    if total_opening > 0:
+        TrialBalanceLine.objects.create(
+            financial_year=fy,
+            account_code="5100",
+            account_name="Opening Stock",
+            debit=total_opening,
+            credit=Decimal("0"),
+        )
+
+    # Create Closing Stock (credit to P&L, debit to Balance Sheet)
+    if total_closing > 0:
+        TrialBalanceLine.objects.create(
+            financial_year=fy,
+            account_code="5200",
+            account_name="Closing Stock",
+            debit=Decimal("0"),
+            credit=total_closing,
+        )
+        # Balance sheet current asset
+        TrialBalanceLine.objects.create(
+            financial_year=fy,
+            account_code="1300",
+            account_name="Stock on Hand",
+            debit=total_closing,
+            credit=Decimal("0"),
+        )
+
+    # Mark as pushed
+    stock_items.update(pushed_to_tb=True)
+
+    messages.success(request, f"Stock pushed to trial balance: Opening ${total_opening}, Closing ${total_closing}.")
+    return redirect("core:financial_year_detail", pk=pk)
+
+
+# ---------------------------------------------------------------------------
+# Review → Trial Balance Push
+# ---------------------------------------------------------------------------
+@login_required
+def review_push_to_tb(request, pk):
+    """Push confirmed review transactions to the trial balance as journal entries."""
+    fy = get_object_or_404(FinancialYear, pk=pk)
+    from review.models import PendingTransaction
+
+    confirmed = PendingTransaction.objects.filter(
+        job__entity=fy.entity,
+        is_confirmed=True,
+    )
+
+    if not confirmed.exists():
+        messages.warning(request, "No confirmed transactions to push.")
+        return redirect("core:financial_year_detail", pk=pk)
+
+    # Group by confirmed account code and aggregate
+    from django.db.models import Sum as DSum
+    aggregated = confirmed.values(
+        "confirmed_code", "confirmed_name"
+    ).annotate(
+        total_amount=DSum("amount"),
+    )
+
+    count = 0
+    for entry in aggregated:
+        code = entry["confirmed_code"]
+        name = entry["confirmed_name"]
+        total = entry["total_amount"]
+        if total is None or total == 0:
+            continue
+
+        # Check if TB line already exists for this code
+        tb_line, created = TrialBalanceLine.objects.get_or_create(
+            financial_year=fy,
+            account_code=code,
+            defaults={
+                "account_name": name,
+                "debit": max(Decimal("0"), total),
+                "credit": abs(min(Decimal("0"), total)),
+            },
+        )
+        if not created:
+            # Add to existing line
+            if total > 0:
+                tb_line.debit += total
+            else:
+                tb_line.credit += abs(total)
+            tb_line.save()
+        count += 1
+
+    messages.success(request, f"Pushed {count} account lines to trial balance from {confirmed.count()} transactions.")
+    return redirect("core:financial_year_detail", pk=pk)
+
+
+@login_required
+def review_approve_transaction(request, pk):
+    """Approve a single pending transaction (AJAX)."""
+    from review.models import PendingTransaction
+    txn = get_object_or_404(PendingTransaction, pk=pk)
+
+    if request.method != "POST":
+        return JsonResponse({"error": "POST required"}, status=405)
+
+    txn.confirmed_code = request.POST.get("confirmed_code", txn.ai_suggested_code)
+    txn.confirmed_name = request.POST.get("confirmed_name", txn.ai_suggested_name)
+    txn.confirmed_tax_type = request.POST.get("confirmed_tax_type", txn.ai_suggested_tax_type)
+    txn.is_confirmed = True
+    txn.save()
+
+    if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        return JsonResponse({"status": "success", "id": str(txn.pk)})
+
+    messages.success(request, f"Transaction approved: {txn.description[:50]}")
+    return redirect(request.META.get("HTTP_REFERER", "/"))
+
+
+@login_required
+def review_approve_all(request, pk):
+    """Approve all pending transactions for a financial year's entity."""
+    fy = get_object_or_404(FinancialYear, pk=pk)
+    from review.models import PendingTransaction
+
+    pending = PendingTransaction.objects.filter(
+        job__entity=fy.entity,
+        is_confirmed=False,
+    )
+    count = 0
+    for txn in pending:
+        if txn.ai_suggested_code:
+            txn.confirmed_code = txn.ai_suggested_code
+            txn.confirmed_name = txn.ai_suggested_name
+            txn.confirmed_tax_type = txn.ai_suggested_tax_type
+            txn.is_confirmed = True
+            txn.save()
+            count += 1
+
+    messages.success(request, f"Approved {count} transactions with AI suggestions.")
+    return redirect("core:financial_year_detail", pk=pk)

@@ -19,8 +19,6 @@
         <p class="text-muted mb-0">
             {{ fy.start_date|date:"d M Y" }} to {{ fy.end_date|date:"d M Y" }}
             &middot;
-            <span class="badge bg-secondary fs-6">{{ fy.get_period_type_display }}</span>
-            &middot;
             <span class="badge bg-{% if fy.status == 'draft' %}warning text-dark{% elif fy.status == 'in_review' %}info{% elif fy.status == 'reviewed' %}primary{% else %}success{% endif %} fs-6">
                 {{ fy.get_status_display }}
             </span>
@@ -102,7 +100,7 @@
     </div>
 </div>
 
-<!-- Tabs -->
+<!-- ===== TABS ===== -->
 <ul class="nav nav-tabs" id="workspaceTabs" role="tablist">
     <li class="nav-item">
         <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-tb" type="button">
@@ -115,6 +113,34 @@
         </button>
     </li>
     <li class="nav-item">
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-audit" type="button">
+            <i class="bi bi-shield-exclamation"></i> Audit Risk
+            {% if open_risk_count > 0 %}
+            <span class="badge bg-danger">{{ open_risk_count }}</span>
+            {% else %}
+            <span class="badge bg-secondary">0</span>
+            {% endif %}
+        </button>
+    </li>
+    <li class="nav-item">
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-depreciation" type="button">
+            <i class="bi bi-graph-down-arrow"></i> Depreciation ({{ depreciation_assets.count }})
+        </button>
+    </li>
+    <li class="nav-item">
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-stock" type="button">
+            <i class="bi bi-box-seam"></i> Stock ({{ stock_items.count }})
+        </button>
+    </li>
+    <li class="nav-item">
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-review" type="button">
+            <i class="bi bi-clipboard-check"></i> Review
+            {% if pending_review.count > 0 %}
+            <span class="badge bg-warning text-dark">{{ pending_review.count }}</span>
+            {% endif %}
+        </button>
+    </li>
+    <li class="nav-item">
         <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-docs" type="button">
             <i class="bi bi-file-earmark"></i> Documents ({{ documents.count }})
         </button>
@@ -122,7 +148,8 @@
 </ul>
 
 <div class="tab-content border border-top-0 rounded-bottom bg-white">
-    <!-- Trial Balance Tab -->
+
+    <!-- ===== TRIAL BALANCE TAB ===== -->
     <div class="tab-pane fade show active p-3" id="tab-tb">
         {% if tb_lines %}
         <div class="d-flex justify-content-between align-items-center mb-3">
@@ -198,7 +225,6 @@
                         <td></td>
                         <td class="text-end">Net Profit</td>
                         <td class="text-end" colspan="2">
-                            {% widthratio total_credit 1 1 as cr %}{% widthratio total_debit 1 1 as dr %}
                             <span class="{% if total_credit > total_debit %}text-success{% else %}text-danger{% endif %}">
                                 ${{ total_credit|floatformat:2|intcomma }}
                             </span>
@@ -228,7 +254,7 @@
         {% endif %}
     </div>
 
-    <!-- Journals Tab -->
+    <!-- ===== JOURNALS TAB ===== -->
     <div class="tab-pane fade p-3" id="tab-journals">
         <div class="d-flex justify-content-between align-items-center mb-3">
             <h6 class="mb-0">Journal Entries</h6>
@@ -341,7 +367,386 @@
         {% endfor %}
     </div>
 
-    <!-- Documents Tab -->
+    <!-- ===== AUDIT RISK TAB ===== -->
+    <div class="tab-pane fade p-3" id="tab-audit">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h6 class="mb-0">
+                <i class="bi bi-shield-exclamation"></i> Audit Risk Flags
+                {% if open_risk_count > 0 %}
+                <span class="badge bg-danger ms-1">{{ open_risk_count }} Open</span>
+                {% else %}
+                <span class="badge bg-success ms-1">No Issues</span>
+                {% endif %}
+            </h6>
+            <a href="{% url 'core:risk_flags' pk=fy.pk %}" class="btn btn-outline-primary btn-sm">
+                <i class="bi bi-arrow-clockwise"></i> Run Audit Check
+            </a>
+        </div>
+
+        {% if risk_flags %}
+        <div class="table-responsive">
+            <table class="table table-sm" style="font-size: 0.88rem;">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width: 90px;">Severity</th>
+                        <th style="width: 90px;">Status</th>
+                        <th>Issue</th>
+                        <th>Description</th>
+                        <th>Affected Accounts</th>
+                        <th style="width: 100px;">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for flag in risk_flags %}
+                    <tr class="{% if flag.status == 'open' %}{% if flag.severity == 'CRITICAL' %}table-danger{% elif flag.severity == 'HIGH' %}table-danger{% elif flag.severity == 'MEDIUM' %}table-warning{% endif %}{% endif %}">
+                        <td>
+                            <span class="badge bg-{% if flag.severity == 'CRITICAL' %}danger{% elif flag.severity == 'HIGH' %}danger{% elif flag.severity == 'MEDIUM' %}warning text-dark{% else %}info{% endif %}">
+                                {{ flag.severity }}
+                            </span>
+                        </td>
+                        <td>
+                            <span class="badge bg-{% if flag.status == 'open' %}danger{% elif flag.status == 'reviewed' %}info{% else %}success{% endif %}">
+                                {{ flag.get_status_display }}
+                            </span>
+                        </td>
+                        <td class="{% if flag.status == 'open' %}fw-bold text-danger{% endif %}">{{ flag.title }}</td>
+                        <td class="{% if flag.status == 'open' %}text-danger{% endif %}" style="font-size: 0.82rem;">{{ flag.description|truncatewords:30 }}</td>
+                        <td>
+                            {% for acc in flag.affected_accounts %}
+                            <code class="me-1">{{ acc }}</code>
+                            {% endfor %}
+                        </td>
+                        <td>
+                            {% if flag.status == 'open' %}
+                            <form method="post" action="{% url 'core:resolve_risk_flag' pk=flag.pk %}" class="d-inline">
+                                {% csrf_token %}
+                                <input type="hidden" name="status" value="resolved">
+                                <button type="submit" class="btn btn-sm btn-outline-success" title="Mark as resolved">
+                                    <i class="bi bi-check-lg"></i>
+                                </button>
+                            </form>
+                            {% else %}
+                            <small class="text-muted">{{ flag.resolved_at|date:"d/m/Y"|default:"-" }}</small>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-shield-check" style="font-size: 3rem; color: #198754;"></i>
+            <p class="mt-2 mb-1">No audit risk flags.</p>
+            <p class="small">Run an audit check to scan the trial balance for potential issues.</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- ===== DEPRECIATION TAB ===== -->
+    <div class="tab-pane fade p-3" id="tab-depreciation">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h6 class="mb-0"><i class="bi bi-graph-down-arrow"></i> Depreciation Schedule</h6>
+            <div class="d-flex gap-2">
+                {% if fy.prior_year %}
+                <form method="post" action="{% url 'core:depreciation_roll_forward' pk=fy.pk %}" class="d-inline"
+                      onsubmit="return confirm('This will replace any existing depreciation assets with rolled-forward data from the prior year. Continue?');">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-outline-info btn-sm">
+                        <i class="bi bi-arrow-right-circle"></i> Roll Forward from Prior Year
+                    </button>
+                </form>
+                {% endif %}
+                <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addAssetModal">
+                    <i class="bi bi-plus-lg"></i> Add Asset
+                </button>
+            </div>
+        </div>
+
+        {% if depreciation_assets %}
+        <div class="table-responsive">
+            <table class="table table-sm" style="font-size: 0.85rem;">
+                <thead class="table-light">
+                    <tr>
+                        <th>Asset</th>
+                        <th style="width: 80px;">Method</th>
+                        <th class="text-end" style="width: 80px;">Rate %</th>
+                        <th class="text-end" style="width: 110px;">Opening WDV</th>
+                        <th class="text-end" style="width: 100px;">Additions</th>
+                        <th class="text-end" style="width: 110px;">Depreciation</th>
+                        <th class="text-end" style="width: 110px;">Closing WDV</th>
+                        <th style="width: 80px;"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for cat_name, assets in dep_categories.items %}
+                    <tr>
+                        <td colspan="8" class="pt-3 pb-1 border-0">
+                            <strong class="text-dark">{{ cat_name }}</strong>
+                        </td>
+                    </tr>
+                    {% for asset in assets %}
+                    <tr{% if asset.disposal_date %} class="text-muted text-decoration-line-through"{% endif %}>
+                        <td>
+                            {{ asset.asset_name }}
+                            {% if asset.disposal_date %}<span class="badge bg-secondary ms-1" style="font-size: 0.7rem;">Disposed</span>{% endif %}
+                            {% if asset.addition_cost > 0 %}<span class="badge bg-info text-dark ms-1" style="font-size: 0.7rem;">Addition</span>{% endif %}
+                        </td>
+                        <td>{{ asset.get_method_display }}</td>
+                        <td class="text-end">{{ asset.rate|floatformat:2 }}%</td>
+                        <td class="text-end">${{ asset.opening_wdv|floatformat:2|intcomma }}</td>
+                        <td class="text-end">{% if asset.addition_cost > 0 %}${{ asset.addition_cost|floatformat:2|intcomma }}{% endif %}</td>
+                        <td class="text-end">${{ asset.depreciation_amount|floatformat:2|intcomma }}</td>
+                        <td class="text-end">${{ asset.closing_wdv|floatformat:2|intcomma }}</td>
+                        <td>
+                            <form method="post" action="{% url 'core:depreciation_delete' pk=asset.pk %}" class="d-inline"
+                                  onsubmit="return confirm('Delete asset {{ asset.asset_name }}?');">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-sm btn-outline-danger py-0 px-1" title="Delete">
+                                    <i class="bi bi-trash" style="font-size: 0.75rem;"></i>
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    {% endfor %}
+                </tbody>
+                <tfoot class="border-top border-2 border-dark fw-bold">
+                    <tr>
+                        <td colspan="3" class="text-end">Totals</td>
+                        <td class="text-end">${{ dep_total_opening|floatformat:2|intcomma }}</td>
+                        <td></td>
+                        <td class="text-end">${{ dep_total_depreciation|floatformat:2|intcomma }}</td>
+                        <td class="text-end">${{ dep_total_closing|floatformat:2|intcomma }}</td>
+                        <td></td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-graph-down-arrow" style="font-size: 3rem;"></i>
+            <p class="mt-2 mb-1">No depreciation assets yet.</p>
+            <p class="small">Add assets manually or roll forward from the prior year.</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- ===== STOCK TAB ===== -->
+    <div class="tab-pane fade p-3" id="tab-stock">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h6 class="mb-0"><i class="bi bi-box-seam"></i> Opening &amp; Closing Stock</h6>
+            <div class="d-flex gap-2">
+                {% if stock_items.count > 0 %}
+                <form method="post" action="{% url 'core:stock_push_to_tb' pk=fy.pk %}" class="d-inline"
+                      onsubmit="return confirm('Push stock values to the trial balance? This will create/update Opening Stock and Closing Stock entries.');">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-outline-success btn-sm">
+                        <i class="bi bi-arrow-right-circle"></i> Push to Trial Balance
+                    </button>
+                </form>
+                {% endif %}
+                <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addStockModal">
+                    <i class="bi bi-plus-lg"></i> Add Stock Item
+                </button>
+            </div>
+        </div>
+
+        {% if stock_items %}
+        <div class="table-responsive">
+            <table class="table table-sm" style="font-size: 0.88rem;">
+                <thead class="table-light">
+                    <tr>
+                        <th>Item</th>
+                        <th class="text-end" style="width: 100px;">Opening Qty</th>
+                        <th class="text-end" style="width: 120px;">Opening Value</th>
+                        <th class="text-end" style="width: 100px;">Closing Qty</th>
+                        <th class="text-end" style="width: 120px;">Closing Value</th>
+                        <th class="text-end" style="width: 120px;">Movement</th>
+                        <th style="width: 60px;">TB</th>
+                        <th style="width: 80px;"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in stock_items %}
+                    <tr>
+                        <td>{{ item.item_name }}</td>
+                        <td class="text-end">{{ item.opening_quantity|floatformat:2 }}</td>
+                        <td class="text-end">${{ item.opening_value|floatformat:2|intcomma }}</td>
+                        <td class="text-end">{{ item.closing_quantity|floatformat:2 }}</td>
+                        <td class="text-end">${{ item.closing_value|floatformat:2|intcomma }}</td>
+                        <td class="text-end {% if item.stock_movement > 0 %}text-success{% elif item.stock_movement < 0 %}text-danger{% endif %}">
+                            ${{ item.stock_movement|floatformat:2|intcomma }}
+                        </td>
+                        <td>
+                            {% if item.pushed_to_tb %}
+                            <i class="bi bi-check-circle-fill text-success" title="Pushed to trial balance"></i>
+                            {% else %}
+                            <i class="bi bi-dash-circle text-muted" title="Not yet pushed"></i>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <form method="post" action="{% url 'core:stock_delete' pk=item.pk %}" class="d-inline"
+                                  onsubmit="return confirm('Delete stock item {{ item.item_name }}?');">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-sm btn-outline-danger py-0 px-1" title="Delete">
+                                    <i class="bi bi-trash" style="font-size: 0.75rem;"></i>
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot class="border-top border-2 border-dark fw-bold">
+                    <tr>
+                        <td colspan="2" class="text-end">Totals</td>
+                        <td class="text-end">${{ stock_total_opening|floatformat:2|intcomma }}</td>
+                        <td></td>
+                        <td class="text-end">${{ stock_total_closing|floatformat:2|intcomma }}</td>
+                        <td colspan="3"></td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-box-seam" style="font-size: 3rem;"></i>
+            <p class="mt-2 mb-1">No stock items recorded.</p>
+            <p class="small">Add opening and closing stock values if applicable for this entity.</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- ===== REVIEW TAB ===== -->
+    <div class="tab-pane fade p-3" id="tab-review">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h6 class="mb-0">
+                <i class="bi bi-clipboard-check"></i> Pending Review
+                {% if pending_review.count > 0 %}
+                <span class="badge bg-warning text-dark">{{ pending_review.count }} pending</span>
+                {% endif %}
+                {% if confirmed_review.count > 0 %}
+                <span class="badge bg-success">{{ confirmed_review.count }} confirmed</span>
+                {% endif %}
+            </h6>
+            <div class="d-flex gap-2">
+                {% if pending_review.count > 0 %}
+                <form method="post" action="{% url 'core:review_approve_all' pk=fy.pk %}" class="d-inline"
+                      onsubmit="return confirm('Approve all {{ pending_review.count }} pending transactions with their AI-suggested codes?');">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-outline-success btn-sm">
+                        <i class="bi bi-check-all"></i> Approve All with AI Suggestions
+                    </button>
+                </form>
+                {% endif %}
+                {% if confirmed_review.count > 0 %}
+                <form method="post" action="{% url 'core:review_push_to_tb' pk=fy.pk %}" class="d-inline"
+                      onsubmit="return confirm('Push {{ confirmed_review.count }} confirmed transactions to the trial balance?');">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-primary btn-sm">
+                        <i class="bi bi-arrow-right-circle"></i> Push to Trial Balance
+                    </button>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+
+        {% if pending_review %}
+        <h6 class="text-muted mt-3 mb-2" style="font-size: 0.85rem;">PENDING REVIEW</h6>
+        <div class="table-responsive">
+            <table class="table table-sm table-hover" style="font-size: 0.85rem;">
+                <thead class="table-warning">
+                    <tr>
+                        <th style="width: 90px;">Date</th>
+                        <th>Description</th>
+                        <th class="text-end" style="width: 110px;">Amount</th>
+                        <th style="width: 80px;">AI Code</th>
+                        <th>AI Suggestion</th>
+                        <th style="width: 60px;">Conf.</th>
+                        <th style="width: 100px;">Source</th>
+                        <th style="width: 80px;">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for txn in pending_review %}
+                    <tr>
+                        <td>{{ txn.date }}</td>
+                        <td>{{ txn.description|truncatewords:8 }}</td>
+                        <td class="text-end {% if txn.amount < 0 %}text-danger{% else %}text-success{% endif %}">
+                            ${{ txn.amount|floatformat:2|intcomma }}
+                        </td>
+                        <td><code>{{ txn.ai_suggested_code|default:"-" }}</code></td>
+                        <td>{{ txn.ai_suggested_name|default:"Unclassified" }}</td>
+                        <td>
+                            {% if txn.ai_confidence > 0 %}
+                            <span class="badge bg-{% if txn.ai_confidence >= 4 %}success{% elif txn.ai_confidence >= 3 %}info{% else %}warning text-dark{% endif %}">
+                                {{ txn.ai_confidence }}/5
+                            </span>
+                            {% else %}
+                            <span class="badge bg-secondary">-</span>
+                            {% endif %}
+                        </td>
+                        <td><small class="text-muted">{{ txn.job.file_name|truncatewords:2 }}</small></td>
+                        <td>
+                            <form method="post" action="{% url 'core:review_approve_transaction' pk=txn.pk %}" class="d-inline">
+                                {% csrf_token %}
+                                <input type="hidden" name="confirmed_code" value="{{ txn.ai_suggested_code }}">
+                                <input type="hidden" name="confirmed_name" value="{{ txn.ai_suggested_name }}">
+                                <input type="hidden" name="confirmed_tax_type" value="{{ txn.ai_suggested_tax_type }}">
+                                <button type="submit" class="btn btn-sm btn-outline-success py-0 px-1" title="Approve">
+                                    <i class="bi bi-check-lg"></i>
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+
+        {% if confirmed_review %}
+        <h6 class="text-muted mt-4 mb-2" style="font-size: 0.85rem;">CONFIRMED (Ready to Push to Trial Balance)</h6>
+        <div class="table-responsive">
+            <table class="table table-sm" style="font-size: 0.85rem;">
+                <thead class="table-success">
+                    <tr>
+                        <th style="width: 90px;">Date</th>
+                        <th>Description</th>
+                        <th class="text-end" style="width: 110px;">Amount</th>
+                        <th style="width: 80px;">Code</th>
+                        <th>Account</th>
+                        <th>Tax Type</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for txn in confirmed_review %}
+                    <tr>
+                        <td>{{ txn.date }}</td>
+                        <td>{{ txn.description|truncatewords:8 }}</td>
+                        <td class="text-end {% if txn.amount < 0 %}text-danger{% else %}text-success{% endif %}">
+                            ${{ txn.amount|floatformat:2|intcomma }}
+                        </td>
+                        <td><code>{{ txn.confirmed_code }}</code></td>
+                        <td>{{ txn.confirmed_name }}</td>
+                        <td><small>{{ txn.confirmed_tax_type|default:"-" }}</small></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+
+        {% if not pending_review and not confirmed_review %}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-clipboard-check" style="font-size: 3rem;"></i>
+            <p class="mt-2 mb-1">No items pending review.</p>
+            <p class="small">Upload bank statements or import trial balances to populate this tab.</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- ===== DOCUMENTS TAB ===== -->
     <div class="tab-pane fade p-3" id="tab-docs">
         {% for doc in documents %}
         <div class="d-flex justify-content-between align-items-center border-bottom py-2">
@@ -360,9 +765,146 @@
         </div>
         {% endfor %}
     </div>
+
 </div>
 
-<!-- Bank Statement Upload Modal -->
+<!-- ===== ADD ASSET MODAL ===== -->
+<div class="modal fade" id="addAssetModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-graph-down-arrow"></i> Add Depreciation Asset</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="post" action="{% url 'core:depreciation_add' pk=fy.pk %}">
+                {% csrf_token %}
+                <div class="modal-body">
+                    <div class="row g-3">
+                        <div class="col-12">
+                            <label class="form-label fw-semibold">Asset Name</label>
+                            <input type="text" name="asset_name" class="form-control" required>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Category</label>
+                            <select name="category" class="form-select">
+                                <option value="Furniture and Fixtures">Furniture and Fixtures</option>
+                                <option value="Plant and Equipment">Plant and Equipment</option>
+                                <option value="Motor Vehicles">Motor Vehicles</option>
+                                <option value="Computer Equipment">Computer Equipment</option>
+                                <option value="Office Equipment">Office Equipment</option>
+                                <option value="Leasehold Improvements">Leasehold Improvements</option>
+                                <option value="Low Value Pool">Low Value Pool</option>
+                                <option value="Other">Other</option>
+                            </select>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Purchase Date</label>
+                            <input type="date" name="purchase_date" class="form-control">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Total Cost ($)</label>
+                            <input type="number" name="total_cost" class="form-control" step="0.01" value="0">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Opening WDV ($)</label>
+                            <input type="number" name="opening_wdv" class="form-control" step="0.01" value="0">
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label fw-semibold">Method</label>
+                            <select name="method" class="form-select">
+                                <option value="D">Diminishing Value</option>
+                                <option value="P">Prime Cost</option>
+                                <option value="W">Written Off</option>
+                            </select>
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label fw-semibold">Rate (%)</label>
+                            <input type="number" name="rate" class="form-control" step="0.01" value="0">
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label fw-semibold">Private Use (%)</label>
+                            <input type="number" name="private_use_pct" class="form-control" step="0.01" value="0">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Addition Cost ($)</label>
+                            <input type="number" name="addition_cost" class="form-control" step="0.01" value="0">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Addition Date</label>
+                            <input type="date" name="addition_date" class="form-control">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Disposal Date</label>
+                            <input type="date" name="disposal_date" class="form-control">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Disposal Consideration ($)</label>
+                            <input type="number" name="disposal_consideration" class="form-control" step="0.01" value="0">
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-plus-lg"></i> Add Asset
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- ===== ADD STOCK MODAL ===== -->
+<div class="modal fade" id="addStockModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-box-seam"></i> Add Stock Item</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="post" action="{% url 'core:stock_add' pk=fy.pk %}">
+                {% csrf_token %}
+                <div class="modal-body">
+                    <div class="row g-3">
+                        <div class="col-12">
+                            <label class="form-label fw-semibold">Item Name</label>
+                            <input type="text" name="item_name" class="form-control" required
+                                   placeholder="e.g. Raw Materials, Finished Goods, Work in Progress">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Opening Quantity</label>
+                            <input type="number" name="opening_quantity" class="form-control" step="0.01" value="0">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Opening Value ($)</label>
+                            <input type="number" name="opening_value" class="form-control" step="0.01" value="0">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Closing Quantity</label>
+                            <input type="number" name="closing_quantity" class="form-control" step="0.01" value="0">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Closing Value ($)</label>
+                            <input type="number" name="closing_value" class="form-control" step="0.01" value="0">
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label fw-semibold">Notes</label>
+                            <textarea name="notes" class="form-control" rows="2" placeholder="Optional notes about this stock item"></textarea>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-plus-lg"></i> Add Stock Item
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- ===== BANK STATEMENT UPLOAD MODAL ===== -->
 <div class="modal fade" id="uploadBankStatementModal" tabindex="-1">
     <div class="modal-dialog">
         <div class="modal-content">
@@ -399,7 +941,6 @@
                         <div id="fyDropZone" style="border: 2px dashed #ccc; border-radius: 8px; padding: 30px; text-align: center; cursor: pointer; transition: all 0.2s;">
                             <i class="bi bi-cloud-arrow-up" style="font-size: 2rem; color: #6c757d;"></i>
                             <p class="mb-1 mt-2">Drag & drop files here</p>
-                            <p class="text-muted small mb-2">or</p>
                             <label class="btn btn-outline-primary btn-sm mb-0">
                                 <i class="bi bi-folder2-open"></i> Choose Files
                                 <input type="file" name="files" id="fyFileInput" class="d-none" accept=".pdf,.csv,.xlsx,.xls" multiple>
@@ -419,6 +960,7 @@
         </div>
     </div>
 </div>
+
 <script>
 (function() {
     const dropZone = document.getElementById('fyDropZone');
