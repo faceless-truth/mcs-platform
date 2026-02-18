@@ -104,7 +104,7 @@ class Entity(models.Model):
     reporting_framework = models.CharField(
         max_length=20,
         choices=ReportingFramework.choices,
-        default=ReportingFramework.SPFR,
+        default=ReportingFramework.GPFR_TIER1,
     )
     company_size = models.CharField(
         max_length=20,

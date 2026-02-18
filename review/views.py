@@ -297,6 +297,11 @@ def review_dashboard(request):
         greeting = "Good evening"
     first_name = request.user.first_name or request.user.username.capitalize()
 
+    # --- Entity list for upload modal ---
+    entities = Entity.objects.filter(
+        client__in=client_qs
+    ).select_related("client").order_by("entity_name")
+
     context = {
         "greeting": greeting,
         "first_name": first_name,
@@ -307,6 +312,7 @@ def review_dashboard(request):
         "risk_alerts": risk_alerts,
         "unfinalised_years": unfinalised_years,
         "recent_audit_logs": recent_audit_logs,
+        "entities": entities,
     }
     return render(request, "review/dashboard.html", context)
 
@@ -529,16 +535,31 @@ def upload_bank_statement(request):
     """
     Handle manual bank statement upload (PDF or Excel).
     Processes through the same pipeline as email ingestion.
+    Accepts period_start and period_end to filter out-of-period transactions.
     """
     import base64
+    from datetime import datetime as dt
     from .email_ingestion import extract_transactions_from_pdf, classify_transactions
 
     uploaded_file = request.FILES.get("file")
     entity_id = request.POST.get("entity_id")
     client_name = request.POST.get("client_name", "Unknown")
+    period_start_str = request.POST.get("period_start", "")
+    period_end_str = request.POST.get("period_end", "")
 
     if not uploaded_file:
         return JsonResponse({"status": "error", "message": "No file uploaded"}, status=400)
+
+    # Parse period dates
+    period_start_date = None
+    period_end_date = None
+    try:
+        if period_start_str:
+            period_start_date = dt.strptime(period_start_str, "%Y-%m-%d").date()
+        if period_end_str:
+            period_end_date = dt.strptime(period_end_str, "%Y-%m-%d").date()
+    except ValueError:
+        pass
 
     # Get entity for GST status
     entity = None
@@ -571,6 +592,43 @@ def upload_bank_statement(request):
 
     transactions = extracted["transactions"]
 
+    # Filter transactions by period if dates were provided
+    if period_start_date or period_end_date:
+        filtered = []
+        excluded_count = 0
+        for txn in transactions:
+            txn_date_str = txn.get("date", "")
+            txn_date = None
+            # Try common date formats
+            for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d %b %Y", "%d %B %Y", "%m/%d/%Y"):
+                try:
+                    txn_date = dt.strptime(txn_date_str.strip(), fmt).date()
+                    break
+                except (ValueError, AttributeError):
+                    continue
+
+            if txn_date:
+                if period_start_date and txn_date < period_start_date:
+                    excluded_count += 1
+                    continue
+                if period_end_date and txn_date > period_end_date:
+                    excluded_count += 1
+                    continue
+
+            filtered.append(txn)
+
+        logger.info(
+            f"Period filter: {len(transactions)} total, {len(filtered)} in period, "
+            f"{excluded_count} excluded ({period_start_str} to {period_end_str})"
+        )
+        transactions = filtered
+
+    if not transactions:
+        return JsonResponse(
+            {"status": "error", "message": "No transactions found within the selected period"},
+            status=400,
+        )
+
     # Classify
     classifications = classify_transactions(
         transactions, entity=entity, is_gst_registered=is_gst
@@ -593,8 +651,8 @@ def upload_bank_statement(request):
         bank_account_name=extracted.get("account_name", ""),
         bsb=extracted.get("bsb", ""),
         account_number=extracted.get("account_number", ""),
-        period_start=extracted.get("period_start", ""),
-        period_end=extracted.get("period_end", ""),
+        period_start=period_start_str or extracted.get("period_start", ""),
+        period_end=period_end_str or extracted.get("period_end", ""),
         opening_balance=Decimal(str(extracted.get("opening_balance", 0))),
         closing_balance=Decimal(str(extracted.get("closing_balance", 0))),
     )
