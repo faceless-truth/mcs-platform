@@ -530,26 +530,31 @@ def accept_all_suggestions(request, pk):
 # ---------------------------------------------------------------------------
 
 @login_required
-@require_POST
 def upload_bank_statement(request):
     """
     Handle manual bank statement upload (PDF or Excel).
     Processes through the same pipeline as email ingestion.
     Accepts period_start and period_end to filter out-of-period transactions.
+    Supports multiple files via 'files' field.
     """
     import base64
     from datetime import datetime as dt
     from .email_ingestion import extract_transactions_from_pdf, classify_transactions
 
-    uploaded_file = request.FILES.get("file")
+    # Support both single 'file' and multiple 'files' field names
+    uploaded_files = request.FILES.getlist("files")
+    if not uploaded_files:
+        single = request.FILES.get("file")
+        if single:
+            uploaded_files = [single]
+
     entity_id = request.POST.get("entity_id")
     client_name = request.POST.get("client_name", "Unknown")
     period_start_str = request.POST.get("period_start", "")
     period_end_str = request.POST.get("period_end", "")
 
-    if not uploaded_file:
-        return JsonResponse({"status": "error", "message": "No file uploaded"}, status=400)
-
+    if not uploaded_files:
+        return JsonResponse({"status": "error", "message": "No files uploaded"}, status=400)
     # Parse period dates
     period_start_date = None
     period_end_date = None
@@ -573,154 +578,170 @@ def upload_bank_statement(request):
         except Exception:
             pass
 
-    # Read file content
-    content = uploaded_file.read()
-    filename = uploaded_file.name
+    # Process each uploaded file
+    created_jobs = []
+    errors = []
 
-    if filename.lower().endswith(".pdf"):
-        pdf_b64 = base64.b64encode(content).decode("ascii")
-        extracted = extract_transactions_from_pdf(pdf_b64, filename)
-    else:
-        # For Excel/CSV, parse differently
-        extracted = _parse_excel_bank_statement(content, filename)
+    for uploaded_file in uploaded_files:
+        content = uploaded_file.read()
+        filename = uploaded_file.name
 
-    if not extracted or not extracted.get("transactions"):
-        return JsonResponse(
-            {"status": "error", "message": "No transactions could be extracted from the file"},
-            status=400,
-        )
-
-    transactions = extracted["transactions"]
-
-    # Filter transactions by period if dates were provided
-    if period_start_date or period_end_date:
-        filtered = []
-        excluded_count = 0
-        for txn in transactions:
-            txn_date_str = txn.get("date", "")
-            txn_date = None
-            # Try common date formats
-            for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d %b %Y", "%d %B %Y", "%m/%d/%Y"):
-                try:
-                    txn_date = dt.strptime(txn_date_str.strip(), fmt).date()
-                    break
-                except (ValueError, AttributeError):
-                    continue
-
-            if txn_date:
-                if period_start_date and txn_date < period_start_date:
-                    excluded_count += 1
-                    continue
-                if period_end_date and txn_date > period_end_date:
-                    excluded_count += 1
-                    continue
-
-            filtered.append(txn)
-
-        logger.info(
-            f"Period filter: {len(transactions)} total, {len(filtered)} in period, "
-            f"{excluded_count} excluded ({period_start_str} to {period_end_str})"
-        )
-        transactions = filtered
-
-    if not transactions:
-        return JsonResponse(
-            {"status": "error", "message": "No transactions found within the selected period"},
-            status=400,
-        )
-
-    # Classify
-    classifications = classify_transactions(
-        transactions, entity=entity, is_gst_registered=is_gst
-    )
-
-    # Create ReviewJob
-    job = ReviewJob.objects.create(
-        entity=entity,
-        client_name=client_name,
-        file_name=filename,
-        submitted_by=request.user.get_full_name() or request.user.username,
-        source="upload",
-        total_transactions=len(transactions),
-        auto_coded_count=len(transactions),
-        flagged_count=sum(
-            1 for c in classifications if c and c.get("confidence", 0) < 5
-        ),
-        confirmed_count=0,
-        is_gst_registered=is_gst,
-        bank_account_name=extracted.get("account_name", ""),
-        bsb=extracted.get("bsb", ""),
-        account_number=extracted.get("account_number", ""),
-        period_start=period_start_str or extracted.get("period_start", ""),
-        period_end=period_end_str or extracted.get("period_end", ""),
-        opening_balance=Decimal(str(extracted.get("opening_balance", 0))),
-        closing_balance=Decimal(str(extracted.get("closing_balance", 0))),
-    )
-
-    # Create PendingTransactions with GST
-    for txn, cls in zip(transactions, classifications):
-        if cls is None:
-            cls = {
-                "account_code": "0000",
-                "account_name": "Suspense",
-                "tax_type": "N-T",
-                "confidence": 1,
-                "reasoning": "",
-                "from_learning": False,
-            }
-
-        amount = Decimal(str(txn.get("amount", 0)))
-        tax_type = cls.get("tax_type", "")
-        abs_amount = abs(amount)
-
-        if is_gst and tax_type in ("GST on Income", "GST on Expenses"):
-            gst_amount = (abs_amount / Decimal("11")).quantize(Decimal("0.01"))
-            net_amount = (abs_amount - gst_amount).quantize(Decimal("0.01"))
+        if filename.lower().endswith(".pdf"):
+            pdf_b64 = base64.b64encode(content).decode("ascii")
+            extracted = extract_transactions_from_pdf(pdf_b64, filename)
         else:
-            gst_amount = Decimal("0.00")
-            net_amount = abs_amount
+            extracted = _parse_excel_bank_statement(content, filename)
 
-        is_auto_confirmed = (
-            cls.get("from_learning", False) and cls.get("confidence", 0) >= 5
+        if not extracted or not extracted.get("transactions"):
+            errors.append(f"{filename}: No transactions could be extracted")
+            continue
+
+        transactions = extracted["transactions"]
+
+        # Filter transactions by period if dates were provided
+        if period_start_date or period_end_date:
+            filtered = []
+            excluded_count = 0
+            for txn in transactions:
+                txn_date_str = txn.get("date", "")
+                txn_date = None
+                for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d %b %Y", "%d %B %Y", "%m/%d/%Y"):
+                    try:
+                        txn_date = dt.strptime(txn_date_str.strip(), fmt).date()
+                        break
+                    except (ValueError, AttributeError):
+                        continue
+
+                if txn_date:
+                    if period_start_date and txn_date < period_start_date:
+                        excluded_count += 1
+                        continue
+                    if period_end_date and txn_date > period_end_date:
+                        excluded_count += 1
+                        continue
+
+                filtered.append(txn)
+
+            logger.info(
+                f"Period filter ({filename}): {len(transactions)} total, {len(filtered)} in period, "
+                f"{excluded_count} excluded ({period_start_str} to {period_end_str})"
+            )
+            transactions = filtered
+
+        if not transactions:
+            errors.append(f"{filename}: No transactions within the selected period")
+            continue
+
+        # Classify
+        classifications = classify_transactions(
+            transactions, entity=entity, is_gst_registered=is_gst
         )
 
-        PendingTransaction.objects.create(
-            job=job,
-            date=txn.get("date", ""),
-            description=txn.get("description", ""),
-            amount=amount,
-            gst_amount=gst_amount,
-            net_amount=net_amount,
-            ai_suggested_code=cls.get("account_code", ""),
-            ai_suggested_name=cls.get("account_name", ""),
-            ai_suggested_tax_type=tax_type,
-            ai_confidence=cls.get("confidence", 1),
-            ai_reasoning=cls.get("reasoning", ""),
-            from_learning=cls.get("from_learning", False),
-            is_confirmed=is_auto_confirmed,
-            confirmed_code=cls.get("account_code", "") if is_auto_confirmed else "",
-            confirmed_name=cls.get("account_name", "") if is_auto_confirmed else "",
-            confirmed_tax_type=tax_type if is_auto_confirmed else "",
+        # Create ReviewJob
+        job = ReviewJob.objects.create(
+            entity=entity,
+            client_name=client_name,
+            file_name=filename,
+            submitted_by=request.user.get_full_name() or request.user.username,
+            source="upload",
+            total_transactions=len(transactions),
+            auto_coded_count=len(transactions),
+            flagged_count=sum(
+                1 for c in classifications if c and c.get("confidence", 0) < 5
+            ),
+            confirmed_count=0,
+            is_gst_registered=is_gst,
+            bank_account_name=extracted.get("account_name", ""),
+            bsb=extracted.get("bsb", ""),
+            account_number=extracted.get("account_number", ""),
+            period_start=period_start_str or extracted.get("period_start", ""),
+            period_end=period_end_str or extracted.get("period_end", ""),
+            opening_balance=Decimal(str(extracted.get("opening_balance", 0))),
+            closing_balance=Decimal(str(extracted.get("closing_balance", 0))),
         )
 
-    # Update confirmed count
-    job.confirmed_count = job.transactions.filter(is_confirmed=True).count()
-    if job.confirmed_count > 0:
-        job.status = "in_progress"
-    job.save()
+        # Create PendingTransactions with GST
+        for txn, cls in zip(transactions, classifications):
+            if cls is None:
+                cls = {
+                    "account_code": "0000",
+                    "account_name": "Suspense",
+                    "tax_type": "N-T",
+                    "confidence": 1,
+                    "reasoning": "",
+                    "from_learning": False,
+                }
 
-    # Log activity
-    ReviewActivity.objects.create(
-        activity_type="new_statement",
-        title="Bank statement uploaded",
-        description=(
-            f"{client_name} — {len(transactions)} transactions, "
-            f"{job.confirmed_count} auto-confirmed"
-            f"{' (GST registered)' if is_gst else ' (not GST registered)'}"
-        ),
+            amount = Decimal(str(txn.get("amount", 0)))
+            tax_type = cls.get("tax_type", "")
+            abs_amount = abs(amount)
+
+            if is_gst and tax_type in ("GST on Income", "GST on Expenses"):
+                gst_amount = (abs_amount / Decimal("11")).quantize(Decimal("0.01"))
+                net_amount = (abs_amount - gst_amount).quantize(Decimal("0.01"))
+            else:
+                gst_amount = Decimal("0.00")
+                net_amount = abs_amount
+
+            is_auto_confirmed = (
+                cls.get("from_learning", False) and cls.get("confidence", 0) >= 5
+            )
+
+            PendingTransaction.objects.create(
+                job=job,
+                date=txn.get("date", ""),
+                description=txn.get("description", ""),
+                amount=amount,
+                gst_amount=gst_amount,
+                net_amount=net_amount,
+                ai_suggested_code=cls.get("account_code", ""),
+                ai_suggested_name=cls.get("account_name", ""),
+                ai_suggested_tax_type=tax_type,
+                ai_confidence=cls.get("confidence", 1),
+                ai_reasoning=cls.get("reasoning", ""),
+                from_learning=cls.get("from_learning", False),
+                is_confirmed=is_auto_confirmed,
+                confirmed_code=cls.get("account_code", "") if is_auto_confirmed else "",
+                confirmed_name=cls.get("account_name", "") if is_auto_confirmed else "",
+                confirmed_tax_type=tax_type if is_auto_confirmed else "",
+            )
+
+        # Update confirmed count
+        job.confirmed_count = job.transactions.filter(is_confirmed=True).count()
+        if job.confirmed_count > 0:
+            job.status = "in_progress"
+        job.save()
+
+        # Log activity
+        ReviewActivity.objects.create(
+            activity_type="new_statement",
+            title="Bank statement uploaded",
+            description=(
+                f"{client_name} — {len(transactions)} transactions from {filename}, "
+                f"{job.confirmed_count} auto-confirmed"
+                f"{' (GST registered)' if is_gst else ' (not GST registered)'}"
+            ),
+        )
+        created_jobs.append(job)
+
+    # Handle response
+    if not created_jobs:
+        error_msg = "; ".join(errors) if errors else "No transactions could be extracted from any file"
+        return JsonResponse({"status": "error", "message": error_msg}, status=400)
+
+    # If single file, redirect to the review detail page
+    if len(created_jobs) == 1:
+        return redirect("review:review_detail", pk=created_jobs[0].pk)
+
+    # If multiple files, redirect to dashboard with success message
+    from django.contrib import messages as django_messages
+    django_messages.success(
+        request,
+        f"Successfully processed {len(created_jobs)} bank statements "
+        f"({sum(j.total_transactions for j in created_jobs)} total transactions)."
+        + (f" Errors: {'; '.join(errors)}" if errors else "")
     )
-
-    return redirect("review:review_detail", pk=job.pk)
+    return redirect("review:dashboard")
 
 
 def _parse_excel_bank_statement(content, filename):
