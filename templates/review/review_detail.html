@@ -196,6 +196,59 @@
         font-size: 0.9rem;
         padding: 10px 32px;
     }
+    /* Classification progress */
+    .classify-bar {
+        background: #e3f2fd;
+        border: 1px solid #90caf9;
+        border-radius: 8px;
+        padding: 12px 20px;
+        margin-bottom: 16px;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+    }
+    .classify-bar .progress {
+        flex: 1;
+        height: 10px;
+    }
+    .classify-bar .classify-text {
+        font-size: 0.85rem;
+        color: #1565c0;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+    .classify-bar .classify-spinner {
+        width: 20px;
+        height: 20px;
+        border: 3px solid #90caf9;
+        border-top-color: #1565c0;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .txn-row-unclassified {
+        background: #f5f5f5;
+    }
+    .txn-row-unclassified td {
+        color: #9e9e9e;
+    }
+    .btn-classify {
+        background: #1565c0;
+        border: none;
+        color: white;
+        font-weight: 600;
+        font-size: 0.85rem;
+        padding: 6px 16px;
+        border-radius: 6px;
+    }
+    .btn-classify:hover {
+        background: #0d47a1;
+        color: white;
+    }
+    .btn-classify:disabled {
+        background: #90caf9;
+        color: white;
+    }
 </style>
 {% endblock %}
 
@@ -256,16 +309,29 @@
     </div>
 </div>
 
+<!-- Classification Progress Bar -->
+<div id="classify-bar" class="classify-bar" style="display: none;">
+    <div class="classify-spinner" id="classify-spinner"></div>
+    <div class="classify-text" id="classify-text">Classifying transactions...</div>
+    <div class="progress" style="flex: 1;">
+        <div id="classify-progress" class="progress-bar bg-primary" style="width: 0%; transition: width 0.3s;"></div>
+    </div>
+    <span class="classify-text" id="classify-count">0 / {{ job.total_transactions }}</span>
+</div>
+
 <!-- Action Bar -->
 <div class="d-flex justify-content-between align-items-center mb-3">
     <div>
         <span class="text-muted" style="font-size: 0.85rem;">
             {{ job.total_transactions }} total transactions &middot;
-            {{ job.auto_coded_count }} auto-coded &middot;
+            <span id="auto-coded-count">{{ job.auto_coded_count }}</span> auto-coded &middot;
             <strong>{{ job.flagged_count }} flagged for review</strong>
         </span>
     </div>
     <div class="d-flex gap-2">
+        <button id="btn-classify" class="btn btn-classify" onclick="startClassification()">
+            <i class="bi bi-robot"></i> Classify with AI
+        </button>
         <button id="btn-accept-all" class="btn btn-accept-all" onclick="acceptAllSuggestions()">
             <i class="bi bi-magic"></i> Accept All AI Suggestions
         </button>
@@ -297,7 +363,7 @@
             <tbody id="txn-body">
                 {% for txn in transactions %}
                 <tr id="row-{{ txn.pk }}"
-                    class="{% if txn.is_confirmed %}txn-row-confirmed{% elif txn.from_learning %}txn-row-learning{% else %}txn-row-pending{% endif %}"
+                    class="{% if txn.is_confirmed %}txn-row-confirmed{% elif txn.ai_confidence == 0 %}txn-row-unclassified{% elif txn.from_learning %}txn-row-learning{% else %}txn-row-pending{% endif %}"
                     data-txn-id="{{ txn.pk }}"
                     data-ai-code="{{ txn.ai_suggested_code }}"
                     data-ai-name="{{ txn.ai_suggested_name }}"
@@ -628,6 +694,183 @@ function submitReview() {
         }
     });
 }
+
+// ---- Async Classification ----
+let classifyRunning = false;
+const TOTAL_TXNS = {{ job.total_transactions }};
+const INITIAL_AUTO_CODED = {{ job.auto_coded_count }};
+
+function startClassification() {
+    if (classifyRunning) return;
+    classifyRunning = true;
+
+    const bar = document.getElementById('classify-bar');
+    const btn = document.getElementById('btn-classify');
+    bar.style.display = 'flex';
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Classifying...';
+
+    classifyNextBatch();
+}
+
+function classifyNextBatch() {
+    fetch(`/api/review/${JOB_ID}/classify-batch/`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': CSRF_TOKEN,
+        },
+        body: JSON.stringify({batch_size: 15}),
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            // Update each classified transaction in the table
+            (data.classified || []).forEach(c => {
+                updateTransactionRow(c);
+            });
+
+            // Update progress
+            const coded = data.auto_coded_count || 0;
+            const pct = TOTAL_TXNS > 0 ? Math.round((coded / TOTAL_TXNS) * 100) : 0;
+            document.getElementById('classify-progress').style.width = pct + '%';
+            document.getElementById('classify-count').textContent = coded + ' / ' + TOTAL_TXNS;
+            document.getElementById('classify-text').textContent = 'Classifying transactions... ' + pct + '%';
+            document.getElementById('auto-coded-count').textContent = coded;
+
+            // Update confirmed count
+            if (data.confirmed_count !== undefined) {
+                document.getElementById('confirmed-count').textContent = data.confirmed_count;
+                const progressPct = FLAGGED_COUNT > 0 ? Math.round((data.confirmed_count / FLAGGED_COUNT) * 100) : 0;
+                document.getElementById('progress-bar').style.width = progressPct + '%';
+            }
+
+            // Continue if more to classify
+            if (data.remaining > 0) {
+                classifyNextBatch();
+            } else {
+                classifyComplete();
+            }
+        } else {
+            classifyError(data.message || 'Unknown error');
+        }
+    })
+    .catch(err => {
+        classifyError(err.message || 'Network error');
+    });
+}
+
+function classifyComplete() {
+    classifyRunning = false;
+    const bar = document.getElementById('classify-bar');
+    const btn = document.getElementById('btn-classify');
+
+    document.getElementById('classify-spinner').style.display = 'none';
+    document.getElementById('classify-text').textContent = 'Classification complete!';
+    document.getElementById('classify-progress').style.width = '100%';
+    document.getElementById('classify-progress').classList.remove('bg-primary');
+    document.getElementById('classify-progress').classList.add('bg-success');
+
+    btn.innerHTML = '<i class="bi bi-check-circle"></i> Classification Complete';
+    btn.classList.remove('btn-classify');
+    btn.classList.add('btn-success');
+    btn.disabled = true;
+
+    // Fade out the bar after 3 seconds
+    setTimeout(() => {
+        bar.style.transition = 'opacity 0.5s';
+        bar.style.opacity = '0';
+        setTimeout(() => { bar.style.display = 'none'; }, 500);
+    }, 3000);
+}
+
+function classifyError(msg) {
+    classifyRunning = false;
+    const btn = document.getElementById('btn-classify');
+    document.getElementById('classify-text').textContent = 'Error: ' + msg;
+    document.getElementById('classify-spinner').style.display = 'none';
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Retry Classification';
+}
+
+function updateTransactionRow(c) {
+    const row = document.getElementById('row-' + c.txn_id);
+    if (!row) return;
+
+    // Update row class
+    row.classList.remove('txn-row-unclassified', 'txn-row-pending');
+    if (c.is_confirmed) {
+        row.classList.add('txn-row-confirmed');
+        row.querySelector('.status-icon').innerHTML = '<i class="bi bi-check-circle-fill text-success"></i>';
+    } else if (c.from_learning) {
+        row.classList.add('txn-row-learning');
+    } else {
+        row.classList.add('txn-row-pending');
+    }
+
+    // Update AI suggestion column
+    const aiCellIdx = IS_GST_REGISTERED ? 6 : 4;
+    const aiCell = row.cells[aiCellIdx];
+    if (aiCell) {
+        let stars = '';
+        for (let i = 1; i <= 5; i++) {
+            stars += i <= c.confidence ? '<i class="bi bi-star-fill"></i>' : '<i class="bi bi-star"></i>';
+        }
+        aiCell.innerHTML =
+            '<div><span style="font-weight:600;">' + c.code + '</span> ' +
+            '<span class="text-muted">' + c.name + '</span></div>' +
+            '<span class="confidence-badge conf-' + c.confidence + '">' + stars + '</span>' +
+            (c.reasoning ? '<span class="text-muted d-block" style="font-size:0.7rem;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + c.reasoning + '">' + c.reasoning + '</span>' : '');
+    }
+
+    // Update GST/Net columns if GST registered
+    if (IS_GST_REGISTERED) {
+        const gstCell = row.querySelector('.gst-amount');
+        const netCell = row.querySelector('.net-amount');
+        if (gstCell && c.gst_amount) gstCell.textContent = '$' + parseFloat(c.gst_amount).toFixed(2);
+        if (netCell && c.net_amount) netCell.textContent = '$' + parseFloat(c.net_amount).toFixed(2);
+    }
+
+    // Update the account picker and tax select with AI suggestions
+    const acctInput = document.getElementById('acct-' + c.txn_id);
+    const taxSelect = document.getElementById('tax-' + c.txn_id);
+
+    if (acctInput && !acctInput.dataset.code) {
+        acctInput.value = c.code + ' \u2014 ' + c.name;
+        acctInput.dataset.code = c.code;
+        acctInput.dataset.name = c.name;
+    }
+
+    if (taxSelect && !taxSelect.value && c.tax_type) {
+        taxSelect.value = c.tax_type;
+    }
+
+    // Update row data attributes
+    row.dataset.aiCode = c.code;
+    row.dataset.aiName = c.name;
+    row.dataset.confirmed = c.is_confirmed ? 'true' : 'false';
+
+    // Re-enable text color for the row
+    row.querySelectorAll('td').forEach(td => td.style.color = '');
+}
+
+// ---- Auto-start classification if there are unclassified transactions ----
+(function() {
+    const autoCoded = INITIAL_AUTO_CODED;
+    if (autoCoded < TOTAL_TXNS) {
+        // There are unclassified transactions - auto-start
+        setTimeout(() => startClassification(), 500);
+    } else {
+        // All classified - hide the classify button
+        const btn = document.getElementById('btn-classify');
+        if (btn) {
+            btn.innerHTML = '<i class="bi bi-check-circle"></i> All Classified';
+            btn.classList.remove('btn-classify');
+            btn.classList.add('btn-success');
+            btn.disabled = true;
+        }
+    }
+})();
 
 // ---- Initial state: enable submit if all already confirmed ----
 (function() {

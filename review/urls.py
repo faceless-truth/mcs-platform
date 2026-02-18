@@ -23,6 +23,10 @@ urlpatterns = [
     path("upload-statement/",
          views.upload_bank_statement, name="upload_statement"),
 
+    # Async classification
+    path("api/review/<uuid:pk>/classify-batch/",
+         views.classify_batch, name="classify_batch"),
+
     # Webhook (n8n)
     path("api/notify/new-review-job/",
          views.notify_new_review_job, name="notify_new_job"),

@@ -539,7 +539,7 @@ def upload_bank_statement(request):
     """
     import base64
     from datetime import datetime as dt
-    from .email_ingestion import extract_transactions_from_pdf, classify_transactions
+    from .email_ingestion import extract_transactions_from_pdf
 
     # Support both single 'file' and multiple 'files' field names
     uploaded_files = request.FILES.getlist("files")
@@ -640,10 +640,9 @@ def upload_bank_statement(request):
             errors.append(f"{filename}: No transactions within the selected period")
             continue
 
-        # Classify
-        classifications = classify_transactions(
-            transactions, entity=entity, is_gst_registered=is_gst
-        )
+        # Save transactions WITHOUT classification (fast)
+        # Classification happens asynchronously on the review page
+        logger.info(f"Creating ReviewJob for {filename} with {len(transactions)} transactions (no classification)")
 
         # Create ReviewJob
         job = ReviewJob.objects.create(
@@ -653,10 +652,8 @@ def upload_bank_statement(request):
             submitted_by=request.user.get_full_name() or request.user.username,
             source="upload",
             total_transactions=len(transactions),
-            auto_coded_count=len(transactions),
-            flagged_count=sum(
-                1 for c in classifications if c and c.get("confidence", 0) < 5
-            ),
+            auto_coded_count=0,
+            flagged_count=len(transactions),
             confirmed_count=0,
             is_gst_registered=is_gst,
             bank_account_name=extracted.get("account_name", ""),
@@ -668,57 +665,29 @@ def upload_bank_statement(request):
             closing_balance=Decimal(str(extracted.get("closing_balance", 0))),
         )
 
-        # Create PendingTransactions with GST
-        for txn, cls in zip(transactions, classifications):
-            if cls is None:
-                cls = {
-                    "account_code": "0000",
-                    "account_name": "Suspense",
-                    "tax_type": "N-T",
-                    "confidence": 1,
-                    "reasoning": "",
-                    "from_learning": False,
-                }
-
+        # Create PendingTransactions - unclassified
+        for txn in transactions:
             amount = Decimal(str(txn.get("amount", 0)))
-            tax_type = cls.get("tax_type", "")
             abs_amount = abs(amount)
-
-            if is_gst and tax_type in ("GST on Income", "GST on Expenses"):
-                gst_amount = (abs_amount / Decimal("11")).quantize(Decimal("0.01"))
-                net_amount = (abs_amount - gst_amount).quantize(Decimal("0.01"))
-            else:
-                gst_amount = Decimal("0.00")
-                net_amount = abs_amount
-
-            is_auto_confirmed = (
-                cls.get("from_learning", False) and cls.get("confidence", 0) >= 5
-            )
 
             PendingTransaction.objects.create(
                 job=job,
                 date=txn.get("date", ""),
                 description=txn.get("description", ""),
                 amount=amount,
-                gst_amount=gst_amount,
-                net_amount=net_amount,
-                ai_suggested_code=cls.get("account_code", ""),
-                ai_suggested_name=cls.get("account_name", ""),
-                ai_suggested_tax_type=tax_type,
-                ai_confidence=cls.get("confidence", 1),
-                ai_reasoning=cls.get("reasoning", ""),
-                from_learning=cls.get("from_learning", False),
-                is_confirmed=is_auto_confirmed,
-                confirmed_code=cls.get("account_code", "") if is_auto_confirmed else "",
-                confirmed_name=cls.get("account_name", "") if is_auto_confirmed else "",
-                confirmed_tax_type=tax_type if is_auto_confirmed else "",
+                gst_amount=Decimal("0.00"),
+                net_amount=abs_amount,
+                ai_suggested_code="",
+                ai_suggested_name="",
+                ai_suggested_tax_type="",
+                ai_confidence=0,
+                ai_reasoning="",
+                from_learning=False,
+                is_confirmed=False,
+                confirmed_code="",
+                confirmed_name="",
+                confirmed_tax_type="",
             )
-
-        # Update confirmed count
-        job.confirmed_count = job.transactions.filter(is_confirmed=True).count()
-        if job.confirmed_count > 0:
-            job.status = "in_progress"
-        job.save()
 
         # Log activity
         ReviewActivity.objects.create(
@@ -886,3 +855,154 @@ def notify_new_review_job(request):
     except Exception as e:
         logger.error(f"Webhook error: {e}")
         return JsonResponse({"status": "error", "message": str(e)}, status=400)
+
+
+# ---------------------------------------------------------------------------
+# Async Classification (AJAX endpoint)
+# ---------------------------------------------------------------------------
+
+@login_required
+@require_POST
+def classify_batch(request, pk):
+    """
+    AJAX endpoint to classify a batch of unclassified transactions for a job.
+    Called repeatedly from the review page to classify in small batches.
+
+    POST /api/review/<pk>/classify-batch/
+    Body: {"batch_size": 15}  (optional, defaults to 15)
+
+    Returns:
+    {
+        "status": "ok",
+        "classified": [...],  // list of {txn_id, code, name, tax_type, confidence, reasoning}
+        "remaining": int,     // how many unclassified transactions remain
+        "total": int,
+        "auto_coded_count": int,
+    }
+    """
+    from .email_ingestion import classify_transactions
+
+    job = get_object_or_404(ReviewJob, pk=pk)
+
+    try:
+        data = json.loads(request.body) if request.body else {}
+    except json.JSONDecodeError:
+        data = {}
+
+    batch_size = min(int(data.get("batch_size", 15)), 30)  # Cap at 30
+
+    # Get unclassified transactions (ai_confidence == 0 and no ai_suggested_code)
+    unclassified = list(
+        job.transactions.filter(ai_confidence=0, ai_suggested_code="")
+        .order_by("date", "description")[:batch_size]
+    )
+
+    if not unclassified:
+        return JsonResponse({
+            "status": "ok",
+            "classified": [],
+            "remaining": 0,
+            "total": job.total_transactions,
+            "auto_coded_count": job.auto_coded_count,
+        })
+
+    # Build transaction dicts for the classifier
+    txn_dicts = [
+        {
+            "date": txn.date,
+            "description": txn.description,
+            "amount": float(txn.amount),
+        }
+        for txn in unclassified
+    ]
+
+    entity = job.entity
+    is_gst = job.is_gst_registered
+
+    try:
+        classifications = classify_transactions(
+            txn_dicts, entity=entity, is_gst_registered=is_gst
+        )
+    except Exception as exc:
+        logger.error(f"classify_batch failed for job {pk}: {exc}", exc_info=True)
+        return JsonResponse({
+            "status": "error",
+            "message": f"Classification error: {str(exc)}",
+        }, status=500)
+
+    # Update each transaction with its classification
+    classified_results = []
+    for txn, cls in zip(unclassified, classifications):
+        if cls is None:
+            cls = {
+                "account_code": "0000",
+                "account_name": "Suspense",
+                "tax_type": "N-T",
+                "confidence": 1,
+                "reasoning": "",
+                "from_learning": False,
+            }
+
+        txn.ai_suggested_code = cls.get("account_code", "0000")
+        txn.ai_suggested_name = cls.get("account_name", "Suspense")
+        txn.ai_suggested_tax_type = cls.get("tax_type", "")
+        txn.ai_confidence = cls.get("confidence", 1)
+        txn.ai_reasoning = cls.get("reasoning", "")
+        txn.from_learning = cls.get("from_learning", False)
+
+        # Calculate GST
+        tax_type = cls.get("tax_type", "")
+        abs_amount = abs(txn.amount)
+        if is_gst and tax_type in ("GST on Income", "GST on Expenses"):
+            txn.gst_amount = (abs_amount / Decimal("11")).quantize(Decimal("0.01"))
+            txn.net_amount = (abs_amount - txn.gst_amount).quantize(Decimal("0.01"))
+        else:
+            txn.gst_amount = Decimal("0.00")
+            txn.net_amount = abs_amount
+
+        # Auto-confirm if from learning with high confidence
+        is_auto_confirmed = (
+            cls.get("from_learning", False) and cls.get("confidence", 0) >= 5
+        )
+        if is_auto_confirmed:
+            txn.is_confirmed = True
+            txn.confirmed_code = txn.ai_suggested_code
+            txn.confirmed_name = txn.ai_suggested_name
+            txn.confirmed_tax_type = tax_type
+
+        txn.save()
+
+        classified_results.append({
+            "txn_id": str(txn.pk),
+            "code": txn.ai_suggested_code,
+            "name": txn.ai_suggested_name,
+            "tax_type": txn.ai_suggested_tax_type,
+            "confidence": txn.ai_confidence,
+            "reasoning": txn.ai_reasoning,
+            "from_learning": txn.from_learning,
+            "gst_amount": str(txn.gst_amount),
+            "net_amount": str(txn.net_amount),
+            "is_confirmed": txn.is_confirmed,
+        })
+
+    # Update job counts
+    job.auto_coded_count = job.transactions.exclude(
+        ai_confidence=0, ai_suggested_code=""
+    ).count()
+    job.confirmed_count = job.transactions.filter(is_confirmed=True).count()
+    if job.confirmed_count > 0 and job.status == "awaiting_review":
+        job.status = "in_progress"
+    job.save()
+
+    remaining = job.transactions.filter(
+        ai_confidence=0, ai_suggested_code=""
+    ).count()
+
+    return JsonResponse({
+        "status": "ok",
+        "classified": classified_results,
+        "remaining": remaining,
+        "total": job.total_transactions,
+        "auto_coded_count": job.auto_coded_count,
+        "confirmed_count": job.confirmed_count,
+    })
