@@ -537,9 +537,8 @@ def upload_bank_statement(request):
     Accepts period_start and period_end to filter out-of-period transactions.
     Supports multiple files via 'files' field.
     """
-    import base64
     from datetime import datetime as dt
-    from .email_ingestion import extract_transactions_from_pdf
+    from .pdf_parsers import extract_transactions_from_pdf_direct
 
     # Support both single 'file' and multiple 'files' field names
     uploaded_files = request.FILES.getlist("files")
@@ -589,8 +588,7 @@ def upload_bank_statement(request):
 
         try:
             if filename.lower().endswith(".pdf"):
-                pdf_b64 = base64.b64encode(content).decode("ascii")
-                extracted = extract_transactions_from_pdf(pdf_b64, filename)
+                extracted = extract_transactions_from_pdf_direct(content, filename)
             else:
                 extracted = _parse_excel_bank_statement(content, filename)
         except Exception as exc:
