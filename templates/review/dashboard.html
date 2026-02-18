@@ -4,57 +4,95 @@
 
 {% block extra_head %}
 <style>
-    .review-card {
+    .dashboard-greeting {
+        text-align: center;
+        padding: 30px 0 10px;
+    }
+    .dashboard-greeting h3 {
+        font-weight: 700;
+        color: #1a1a2e;
+        margin-bottom: 4px;
+    }
+    .dashboard-greeting .datetime {
+        font-size: 0.95rem;
+        color: #6c757d;
+    }
+    .risk-card {
         background: white;
         border-radius: 12px;
         padding: 20px;
         box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-        border-left: 4px solid #ff9800;
+        border-left: 4px solid #dc3545;
         transition: all 0.2s;
-        cursor: pointer;
         text-decoration: none;
         color: inherit;
         display: block;
+        margin-bottom: 12px;
     }
-    .review-card:hover {
+    .risk-card:hover {
         box-shadow: 0 4px 12px rgba(0,0,0,0.12);
         transform: translateY(-1px);
         color: inherit;
     }
-    .review-card .client-name {
+    .risk-card .client-name {
         font-weight: 600;
         font-size: 1.05rem;
         color: #1a1a2e;
     }
-    .review-card .meta {
+    .risk-card .meta {
         font-size: 0.82rem;
         color: #6c757d;
     }
-    .badge-pending {
-        background: #fff3e0;
-        color: #e65100;
+    .no-risks {
+        text-align: center;
+        padding: 30px;
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    .wip-table {
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        overflow: hidden;
+    }
+    .wip-table table {
+        margin-bottom: 0;
+    }
+    .wip-table th {
+        background: #f8f9fa;
+        font-size: 0.82rem;
         font-weight: 600;
-        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+        color: #6c757d;
+        border-bottom: 2px solid #e9ecef;
     }
-    .badge-completed {
-        background: #e8f5e9;
-        color: #2e7d32;
+    .wip-table td {
+        vertical-align: middle;
+        font-size: 0.9rem;
+    }
+    .wip-table .client-link {
+        text-decoration: none;
+        color: #1a1a2e;
         font-weight: 600;
-        font-size: 0.75rem;
     }
-    .completed-card {
-        border-left-color: #4caf50;
-        opacity: 0.7;
+    .wip-table .client-link:hover {
+        color: #0d6efd;
     }
-    .completed-card:hover {
-        opacity: 1;
+    .sidebar-widget {
+        background: white;
+        border-radius: 12px;
+        padding: 16px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        margin-bottom: 16px;
     }
-    .progress-bar-custom {
-        height: 6px;
-        border-radius: 3px;
+    .sidebar-widget h6 {
+        font-size: 0.9rem;
+        margin-bottom: 12px;
     }
     .activity-item {
-        padding: 12px 0;
+        padding: 10px 0;
         border-bottom: 1px solid #f0f0f0;
     }
     .activity-item:last-child {
@@ -70,79 +108,40 @@
         font-size: 0.85rem;
         flex-shrink: 0;
     }
-    .risk-card {
-        background: white;
-        border-radius: 12px;
-        padding: 20px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-        border-left: 4px solid #dc3545;
-        transition: all 0.2s;
-        text-decoration: none;
-        color: inherit;
-        display: block;
-    }
-    .risk-card:hover {
-        box-shadow: 0 4px 12px rgba(0,0,0,0.12);
-        transform: translateY(-1px);
-        color: inherit;
-    }
-    .sidebar-widget {
-        background: white;
-        border-radius: 12px;
-        padding: 16px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-        margin-bottom: 16px;
-    }
-    .sidebar-widget h6 {
-        font-size: 0.9rem;
-        margin-bottom: 12px;
-    }
-    .unfinalised-item {
-        padding: 8px 0;
-        border-bottom: 1px solid #f5f5f5;
-    }
-    .unfinalised-item:last-child {
-        border-bottom: none;
-    }
-    .unfinalised-item a {
-        text-decoration: none;
+    .section-header {
+        font-weight: 700;
+        font-size: 1.1rem;
         color: #1a1a2e;
-        font-weight: 600;
-        font-size: 0.88rem;
-    }
-    .unfinalised-item a:hover {
-        color: #0d6efd;
-    }
-    .unfinalised-item .meta {
-        font-size: 0.76rem;
-        color: #6c757d;
+        margin-bottom: 16px;
     }
 </style>
 {% endblock %}
 
 {% block content %}
-<!-- Personalised Greeting -->
-<div class="mb-4">
-    <h4 class="fw-bold" style="color: #1a1a2e;">{{ greeting }}, {{ first_name }}.</h4>
+<!-- Personalised Greeting with Live Clock -->
+<div class="dashboard-greeting">
+    <h3>{{ greeting }}, {{ first_name }}.</h3>
+    <div class="datetime" id="liveClock"></div>
 </div>
 
-<div class="row g-4">
-    <!-- Left Column: Alerts + Reviews -->
-    <div class="col-lg-8">
+<div class="row g-4 mt-2">
+    <!-- Centre Column: Audit Alerts + Unfinalised Clients -->
+    <div class="col-lg-8 mx-auto">
 
         <!-- Audit Risk Alerts -->
-        {% if risk_alerts %}
         <div class="d-flex justify-content-between align-items-center mb-3">
-            <h5 class="mb-0 fw-bold">
+            <div class="section-header mb-0">
                 <i class="bi bi-shield-exclamation text-danger"></i> Audit Risk Alerts
-            </h5>
+            </div>
+            {% if risk_alerts %}
             <span class="badge bg-danger rounded-pill px-3">
                 {{ risk_alerts|length }} client{{ risk_alerts|length|pluralize }} with risks
             </span>
+            {% endif %}
         </div>
 
         {% for alert in risk_alerts %}
-        <a href="{% url 'core:financial_year_detail' pk=alert.financial_year.pk %}" class="risk-card mb-3">
+        <a href="{% url 'core:financial_year_detail' pk=alert.financial_year.pk %}" class="risk-card">
             <div class="d-flex justify-content-between align-items-start">
                 <div>
                     <div class="client-name">{{ alert.entity_name }}</div>
@@ -170,140 +169,79 @@
                 </div>
             </div>
         </a>
-        {% endfor %}
-        {% endif %}
-
-        <!-- Pending Reviews -->
-        <div class="d-flex justify-content-between align-items-center mb-3 {% if risk_alerts %}mt-4{% endif %}">
-            <h5 class="mb-0 fw-bold">
-                <i class="bi bi-clock-history text-warning"></i> Pending Reviews
-            </h5>
-            <div class="d-flex gap-2 align-items-center">
-                {% if pending_jobs %}
-                <span class="badge bg-warning text-dark rounded-pill px-3">
-                    {{ pending_jobs|length }} awaiting
-                </span>
-                {% endif %}
-                <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#uploadModal">
-                    <i class="bi bi-upload"></i> Upload Statement
-                </button>
-            </div>
-        </div>
-
-        {% for job in pending_jobs %}
-        <a href="{% url 'review:review_detail' pk=job.pk %}" class="review-card mb-3">
-            <div class="d-flex justify-content-between align-items-start">
-                <div>
-                    <div class="client-name">{{ job.client_name }}</div>
-                    <div class="meta mt-1">
-                        <i class="bi bi-file-earmark-pdf text-danger"></i> {{ job.file_name }}
-                    </div>
-                    <div class="meta mt-1">
-                        <i class="bi bi-calendar3"></i> Received {{ job.received_at|date:"d/m/Y" }} at {{ job.received_at|date:"g:i A" }}
-                        {% if job.submitted_by %}
-                        <span class="mx-2">&middot;</span>
-                        <i class="bi bi-person"></i> Submitted by {{ job.submitted_by }}
-                        {% endif %}
-                    </div>
-                </div>
-                <div class="text-end">
-                    <span class="badge badge-pending rounded-pill px-3 py-2">
-                        <i class="bi bi-exclamation-circle"></i> Awaiting Review
-                    </span>
-                    <div class="mt-2">
-                        <span class="fw-bold text-dark" style="font-size: 1.3rem;">{{ job.flagged_count }}</span>
-                        <span class="text-muted" style="font-size: 0.8rem;">transactions</span>
-                    </div>
-                </div>
-            </div>
-            <div class="mt-2">
-                <div class="progress progress-bar-custom">
-                    <div class="progress-bar {% if job.progress_percent > 50 %}bg-success{% else %}bg-warning{% endif %}"
-                         style="width: {{ job.progress_percent }}%"></div>
-                </div>
-                <small class="text-muted">{{ job.confirmed_count }} of {{ job.flagged_count }} confirmed</small>
-            </div>
-        </a>
         {% empty %}
-        <div class="text-center py-5 bg-white rounded-3" style="box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
-            <i class="bi bi-check-circle text-success" style="font-size: 3rem;"></i>
-            <h5 class="mt-3 text-muted">All caught up!</h5>
-            <p class="text-muted">No bank statements awaiting review.</p>
+        <div class="no-risks mb-4">
+            <i class="bi bi-shield-check text-success" style="font-size: 2.5rem;"></i>
+            <h6 class="mt-2 text-muted">No open audit risks</h6>
+            <p class="text-muted small mb-0">All client files are clear.</p>
         </div>
         {% endfor %}
-
-        {% if completed_jobs %}
-        <!-- Recently Completed -->
-        <div class="d-flex justify-content-between align-items-center mb-3 mt-4">
-            <h5 class="mb-0 fw-bold">
-                <i class="bi bi-check-circle text-success"></i> Recently Completed
-            </h5>
-        </div>
-
-        {% for job in completed_jobs %}
-        <div class="review-card completed-card mb-3" style="cursor: default;">
-            <div class="d-flex justify-content-between align-items-start">
-                <div>
-                    <div class="client-name">{{ job.client_name }}</div>
-                    <div class="meta mt-1">
-                        <i class="bi bi-file-earmark-pdf text-danger"></i> {{ job.file_name }}
-                    </div>
-                    <div class="meta mt-1">
-                        <i class="bi bi-calendar3"></i> Completed {{ job.completed_at|date:"d/m/Y" }}
-                        {% if job.submitted_by %}
-                        <span class="mx-2">&middot;</span>
-                        <i class="bi bi-person"></i> {{ job.submitted_by }}
-                        {% endif %}
-                    </div>
-                </div>
-                <div class="text-end">
-                    <span class="badge badge-completed rounded-pill px-3 py-2">
-                        <i class="bi bi-check-circle"></i> Completed
-                    </span>
-                    <div class="mt-2">
-                        <span class="fw-bold text-muted" style="font-size: 1.1rem;">{{ job.flagged_count }}</span>
-                        <span class="text-muted" style="font-size: 0.8rem;">transactions</span>
-                    </div>
-                </div>
-            </div>
-        </div>
-        {% endfor %}
-        {% endif %}
-    </div>
-
-    <!-- Right Column: Sidebar Widgets -->
-    <div class="col-lg-4">
 
         <!-- Unfinalised Client Files -->
+        <div class="section-header mt-4">
+            <i class="bi bi-folder2-open text-primary"></i> Unfinalised Client Files
+            {% if unfinalised_years %}
+            <span class="badge bg-primary rounded-pill ms-1">{{ unfinalised_years|length }}</span>
+            {% endif %}
+        </div>
+
         {% if unfinalised_years %}
-        <div class="sidebar-widget">
-            <h6 class="fw-bold">
-                <i class="bi bi-folder2-open text-primary"></i> Unfinalised Client Files
-                <span class="badge bg-primary rounded-pill ms-1">{{ unfinalised_years|length }}</span>
-            </h6>
-            {% for fy in unfinalised_years %}
-            <div class="unfinalised-item">
-                <a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy.entity.entity_name }}</a>
-                <div class="meta">{{ fy.entity.client.name }} &middot; {{ fy.year_label }}</div>
-            </div>
-            {% endfor %}
+        <div class="wip-table">
+            <table class="table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th class="ps-3">Client</th>
+                        <th>Entity</th>
+                        <th>Period</th>
+                        <th class="text-center">Status</th>
+                        <th class="text-end pe-3">Last Updated</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for fy in unfinalised_years %}
+                    <tr>
+                        <td class="ps-3">
+                            <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="client-link">
+                                {{ fy.entity.client.name }}
+                            </a>
+                        </td>
+                        <td>{{ fy.entity.entity_name }}</td>
+                        <td>{{ fy.year_label }}</td>
+                        <td class="text-center">
+                            {% if fy.status == 'draft' %}
+                            <span class="badge bg-secondary rounded-pill px-2">Draft</span>
+                            {% elif fy.status == 'in_review' %}
+                            <span class="badge bg-warning text-dark rounded-pill px-2">In Review</span>
+                            {% elif fy.status == 'reviewed' %}
+                            <span class="badge bg-info text-dark rounded-pill px-2">Reviewed</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end pe-3">
+                            <small class="text-muted">{{ fy.updated_at|timesince }} ago</small>
+                        </td>
+                        <td>
+                            <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-sm btn-outline-primary py-0 px-2">
+                                Open
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="no-risks">
+            <i class="bi bi-check-circle text-success" style="font-size: 2.5rem;"></i>
+            <h6 class="mt-2 text-muted">All client files are finalised</h6>
         </div>
         {% endif %}
 
-        <!-- Learning Database -->
-        {% if total_patterns > 0 %}
-        <div class="sidebar-widget">
-            <h6 class="fw-bold"><i class="bi bi-lightbulb text-info"></i> Learning Database</h6>
-            <div class="text-center py-2">
-                <div style="font-size: 2rem; font-weight: 700; color: #1a1a2e;">{{ total_patterns }}</div>
-                <small class="text-muted">patterns learned</small>
-            </div>
-            <p class="text-muted mb-0" style="font-size: 0.78rem;">The system learns from every confirmed transaction. The more you review, the smarter it gets.</p>
-        </div>
-        {% endif %}
+    </div>
 
-        <!-- Recent Activity -->
-        <div class="sidebar-widget">
+    <!-- Right Column: Recent Activity -->
+    <div class="col-lg-4">
+        <div class="sidebar-widget" style="max-height: 600px; overflow-y: auto;">
             <h6 class="fw-bold"><i class="bi bi-activity"></i> Recent Activity</h6>
 
             {% for activity in activities %}
@@ -359,224 +297,25 @@
     </div>
 </div>
 
-<!-- Upload Bank Statement Modal -->
-<div class="modal fade" id="uploadModal" tabindex="-1">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title"><i class="bi bi-upload"></i> Upload Bank Statement</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <form method="post" action="{% url 'review:upload_statement' %}" enctype="multipart/form-data">
-                {% csrf_token %}
-                <div class="modal-body">
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold">Entity</label>
-                        <select name="entity_id" id="uploadEntitySelect" class="form-select" required>
-                            <option value="">Select an entity...</option>
-                            {% for entity in entities %}
-                            <option value="{{ entity.pk }}" data-client="{{ entity.client.name }}" data-type="{{ entity.get_entity_type_display }}">
-                                {{ entity.entity_name }} ({{ entity.client.name }})
-                            </option>
-                            {% endfor %}
-                        </select>
-                        <small class="text-muted">Or type a name if entity is not listed:</small>
-                        <input type="text" name="client_name" class="form-control mt-1" placeholder="e.g. Neri Family Trust" id="uploadClientName">
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold">Statement Period</label>
-                        <div class="row g-2">
-                            <div class="col-6">
-                                <label class="form-label small text-muted">From</label>
-                                <input type="date" name="period_start" class="form-control" required>
-                            </div>
-                            <div class="col-6">
-                                <label class="form-label small text-muted">To</label>
-                                <input type="date" name="period_end" class="form-control" required>
-                            </div>
-                        </div>
-                        <small class="text-muted">Transactions outside this period will be excluded.</small>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold">Bank Statement Files</label>
-                        <div id="dropZone" style="border: 2px dashed #ccc; border-radius: 8px; padding: 30px; text-align: center; cursor: pointer; transition: all 0.2s;">
-                            <i class="bi bi-cloud-arrow-up" style="font-size: 2rem; color: #6c757d;"></i>
-                            <p class="mb-1 mt-2">Drag & drop files here</p>
-                            <p class="text-muted small mb-2">or</p>
-                            <label class="btn btn-outline-primary btn-sm mb-0">
-                                <i class="bi bi-folder2-open"></i> Choose Files
-                                <input type="file" name="files" id="fileInput" class="d-none" accept=".pdf,.csv,.xlsx,.xls" multiple>
-                            </label>
-                            <p class="text-muted small mt-2 mb-0">Accepts multiple PDF, CSV, or Excel files</p>
-                        </div>
-                        <div id="fileList" class="mt-2"></div>
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
-                    <button type="submit" class="btn btn-primary" id="uploadSubmitBtn" disabled>
-                        <i class="bi bi-cloud-upload"></i> Process Statements
-                    </button>
-                </div>
-            </form>
-        </div>
-    </div>
-</div>
 <script>
-// Auto-fill client name when entity is selected
-document.getElementById('uploadEntitySelect').addEventListener('change', function() {
-    const selected = this.options[this.selectedIndex];
-    const clientInput = document.getElementById('uploadClientName');
-    if (this.value) {
-        clientInput.value = selected.text.split(' (')[0];
-        clientInput.readOnly = true;
-    } else {
-        clientInput.value = '';
-        clientInput.readOnly = false;
-    }
-});
-
-// Multi-file drag-and-drop upload
-(function() {
-    const dropZone = document.getElementById('dropZone');
-    const fileInput = document.getElementById('fileInput');
-    const fileList = document.getElementById('fileList');
-    const submitBtn = document.getElementById('uploadSubmitBtn');
-    const form = dropZone.closest('form');
-    let selectedFiles = [];
-
-    function updateFileList() {
-        fileList.innerHTML = '';
-        if (selectedFiles.length === 0) {
-            submitBtn.disabled = true;
-            submitBtn.innerHTML = '<i class="bi bi-cloud-upload"></i> Process Statements';
-            return;
-        }
-        submitBtn.disabled = false;
-        submitBtn.innerHTML = `<i class="bi bi-cloud-upload"></i> Process ${selectedFiles.length} Statement${selectedFiles.length > 1 ? 's' : ''}`;
-
-        selectedFiles.forEach((file, idx) => {
-            const ext = file.name.split('.').pop().toUpperCase();
-            const size = (file.size / 1024).toFixed(0);
-            const icon = ext === 'PDF' ? 'bi-file-earmark-pdf text-danger' :
-                         ext === 'CSV' ? 'bi-file-earmark-spreadsheet text-success' :
-                         'bi-file-earmark-excel text-success';
-            const div = document.createElement('div');
-            div.className = 'd-flex align-items-center justify-content-between py-1 px-2 mb-1 rounded bg-light';
-            div.innerHTML = `
-                <span><i class="bi ${icon} me-2"></i>${file.name} <small class="text-muted">(${size} KB)</small></span>
-                <button type="button" class="btn btn-sm btn-outline-danger border-0 py-0" data-idx="${idx}">
-                    <i class="bi bi-x-lg"></i>
-                </button>
-            `;
-            div.querySelector('button').addEventListener('click', function() {
-                selectedFiles.splice(idx, 1);
-                updateFileList();
-            });
-            fileList.appendChild(div);
-        });
-    }
-
-    function addFiles(files) {
-        const allowed = ['.pdf', '.csv', '.xlsx', '.xls'];
-        for (const file of files) {
-            const ext = '.' + file.name.split('.').pop().toLowerCase();
-            if (allowed.includes(ext)) {
-                // Avoid duplicates by name+size
-                const exists = selectedFiles.some(f => f.name === file.name && f.size === file.size);
-                if (!exists) selectedFiles.push(file);
-            }
-        }
-        updateFileList();
-    }
-
-    // File input change
-    fileInput.addEventListener('change', function() {
-        addFiles(this.files);
-        this.value = ''; // Reset so same files can be re-selected
-    });
-
-    // Drag events
-    ['dragenter', 'dragover'].forEach(evt => {
-        dropZone.addEventListener(evt, function(e) {
-            e.preventDefault();
-            e.stopPropagation();
-            dropZone.style.borderColor = '#0d6efd';
-            dropZone.style.backgroundColor = '#f0f7ff';
-        });
-    });
-    ['dragleave', 'drop'].forEach(evt => {
-        dropZone.addEventListener(evt, function(e) {
-            e.preventDefault();
-            e.stopPropagation();
-            dropZone.style.borderColor = '#ccc';
-            dropZone.style.backgroundColor = '';
-        });
-    });
-    dropZone.addEventListener('drop', function(e) {
-        addFiles(e.dataTransfer.files);
-    });
-
-    // Click on drop zone opens file picker
-    dropZone.addEventListener('click', function(e) {
-        if (e.target.tagName !== 'INPUT' && !e.target.closest('label')) {
-            fileInput.click();
-        }
-    });
-
-    // Intercept form submit to attach files via FormData
-    form.addEventListener('submit', function(e) {
-        if (selectedFiles.length === 0) {
-            e.preventDefault();
-            return;
-        }
-        e.preventDefault();
-        submitBtn.disabled = true;
-        submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Processing...';
-
-        const formData = new FormData(form);
-        // Remove the empty file input
-        formData.delete('files');
-        // Append all selected files
-        selectedFiles.forEach(file => {
-            formData.append('files', file);
-        });
-
-        fetch(form.action, {
-            method: 'POST',
-            body: formData,
-            headers: {
-                'X-Requested-With': 'XMLHttpRequest',
-            },
-            redirect: 'manual',
-        })
-        .then(resp => {
-            // If server returned a redirect (non-AJAX fallback), follow it
-            if (resp.type === 'opaqueredirect' || resp.redirected) {
-                window.location.href = resp.url || form.action;
-                return null;
-            }
-            return resp.json();
-        })
-        .then(data => {
-            if (!data) return;
-            if (data.status === 'success' && data.redirect) {
-                window.location.href = data.redirect;
-            } else if (data.status === 'error') {
-                alert(data.message || 'An error occurred processing the statements.');
-                submitBtn.disabled = false;
-                submitBtn.innerHTML = `<i class="bi bi-cloud-upload"></i> Process ${selectedFiles.length} Statement${selectedFiles.length > 1 ? 's' : ''}`;
-            } else if (data.redirect) {
-                window.location.href = data.redirect;
-            }
-        })
-        .catch(err => {
-            console.error('Upload error:', err);
-            alert('An error occurred. Please try again.');
-            submitBtn.disabled = false;
-            submitBtn.innerHTML = `<i class="bi bi-cloud-upload"></i> Process ${selectedFiles.length} Statement${selectedFiles.length > 1 ? 's' : ''}`;
-        });
-    });
-})();
+// Live clock - Melbourne timezone
+function updateClock() {
+    const now = new Date();
+    const options = {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        timeZone: 'Australia/Melbourne',
+        hour12: true,
+    };
+    const formatted = now.toLocaleString('en-AU', options);
+    document.getElementById('liveClock').textContent = formatted;
+}
+updateClock();
+setInterval(updateClock, 1000);
 </script>
 {% endblock %}
