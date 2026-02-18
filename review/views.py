@@ -321,13 +321,21 @@ def review_detail(request, pk):
     job = get_object_or_404(ReviewJob, pk=pk)
     transactions = job.transactions.all().order_by("date", "description")
 
-    # Get chart of accounts for the picker
-    from core.models import AccountMapping
-    accounts = list(
-        AccountMapping.objects.values_list("standard_code", "line_item_label")
-        .order_by("standard_code")
-    )
-    accounts = [{"code": a[0], "name": a[1]} for a in accounts]
+    # Get entity-type-specific chart of accounts for the picker
+    from core.models import ChartOfAccount
+    entity_type = job.entity.entity_type if job.entity else "company"
+    coa_qs = ChartOfAccount.objects.filter(
+        entity_type=entity_type, is_active=True
+    ).order_by("section", "display_order")
+    accounts = [
+        {
+            "code": a.account_code,
+            "name": a.account_name,
+            "section": a.get_section_display(),
+            "tax": a.tax_code,
+        }
+        for a in coa_qs
+    ]
 
     context = {
         "job": job,
@@ -595,9 +603,9 @@ def upload_bank_statement(request):
     for txn, cls in zip(transactions, classifications):
         if cls is None:
             cls = {
-                "account_code": "6-1900",
-                "account_name": "General Expenses",
-                "tax_type": "GST on Expenses" if is_gst else "BAS Excluded",
+                "account_code": "0000",
+                "account_name": "Suspense",
+                "tax_type": "N-T",
                 "confidence": 1,
                 "reasoning": "",
                 "from_learning": False,

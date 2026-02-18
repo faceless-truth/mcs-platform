@@ -482,12 +482,20 @@ function showDropdown(txnId, query) {
     if (filtered.length === 0) {
         dropdown.innerHTML = '<div class="p-2 text-muted" style="font-size:0.82rem;">No matching accounts</div>';
     } else {
-        dropdown.innerHTML = filtered.slice(0, 30).map(a =>
-            `<div class="account-option" data-code="${a.code}" data-name="${a.name}" onclick="selectAccount('${txnId}', '${a.code}', '${a.name.replace(/'/g, "\\'")}')">
+        let lastSection = '';
+        let html = '';
+        filtered.slice(0, 40).forEach(a => {
+            if (a.section && a.section !== lastSection) {
+                html += `<div class="px-2 py-1 bg-light border-bottom" style="font-size:0.7rem; font-weight:600; color:#666;">${a.section}</div>`;
+                lastSection = a.section;
+            }
+            const taxBadge = a.tax ? `<span class="badge bg-secondary bg-opacity-25 text-dark" style="font-size:0.65rem; margin-left:4px;">${a.tax}</span>` : '';
+            html += `<div class="account-option" data-code="${a.code}" data-name="${a.name}" onclick="selectAccount('${txnId}', '${a.code}', '${a.name.replace(/'/g, "\\'")}')"> 
                 <span class="code">${a.code}</span>
-                <span class="name">${a.name}</span>
-            </div>`
-        ).join('');
+                <span class="name">${a.name}${taxBadge}</span>
+            </div>`;
+        });
+        dropdown.innerHTML = html;
     }
     dropdown.classList.add('show');
     activeDropdown = dropdown;

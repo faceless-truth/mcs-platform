@@ -12,7 +12,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from .models import (
-    AccountMapping, RiskRule, RiskReferenceData, RiskFlag,
+    AccountMapping, ChartOfAccount, RiskRule, RiskReferenceData, RiskFlag,
     FinancialYear, Entity, Client,
 )
 
@@ -23,43 +23,96 @@ from .models import (
 @login_required
 def chart_of_accounts(request):
     """
-    Display the MC&S standard chart of accounts (AccountMapping).
-    Grouped by financial statement and section.
+    Display the MC&S entity-type-specific chart of accounts.
+    Grouped by section, with entity type tabs.
     """
     query = request.GET.get("q", "")
-    statement_filter = request.GET.get("statement", "")
+    entity_type_filter = request.GET.get("entity_type", "company")
+    section_filter = request.GET.get("section", "")
 
-    accounts = AccountMapping.objects.all()
+    accounts = ChartOfAccount.objects.filter(
+        entity_type=entity_type_filter, is_active=True
+    )
 
     if query:
         accounts = accounts.filter(
-            Q(standard_code__icontains=query)
-            | Q(line_item_label__icontains=query)
-            | Q(statement_section__icontains=query)
+            Q(account_code__icontains=query)
+            | Q(account_name__icontains=query)
+            | Q(classification__icontains=query)
         )
 
-    if statement_filter:
-        accounts = accounts.filter(financial_statement=statement_filter)
+    if section_filter:
+        accounts = accounts.filter(section=section_filter)
 
-    # Group by financial statement then section
+    accounts = accounts.order_by("section", "display_order")
+
+    # Group by section
     grouped = {}
     for acc in accounts:
-        stmt = acc.get_financial_statement_display()
-        section = acc.statement_section
-        if stmt not in grouped:
-            grouped[stmt] = {}
-        if section not in grouped[stmt]:
-            grouped[stmt][section] = []
-        grouped[stmt][section].append(acc)
+        section_label = acc.get_section_display()
+        if section_label not in grouped:
+            grouped[section_label] = []
+        grouped[section_label].append(acc)
+
+    # Get counts per entity type for the tabs
+    entity_counts = {}
+    for et_value, et_label in Entity.EntityType.choices:
+        if et_value == "smsf":
+            continue  # SMSF doesn't have its own chart
+        entity_counts[et_value] = {
+            "label": et_label,
+            "count": ChartOfAccount.objects.filter(
+                entity_type=et_value, is_active=True
+            ).count(),
+        }
 
     context = {
         "grouped_accounts": grouped,
-        "total_accounts": AccountMapping.objects.count(),
+        "total_accounts": ChartOfAccount.objects.filter(
+            entity_type=entity_type_filter, is_active=True
+        ).count(),
+        "total_all": ChartOfAccount.objects.filter(is_active=True).count(),
         "query": query,
-        "statement_filter": statement_filter,
-        "statement_choices": AccountMapping.FinancialStatement.choices,
+        "entity_type_filter": entity_type_filter,
+        "section_filter": section_filter,
+        "section_choices": ChartOfAccount.StatementSection.choices,
+        "entity_counts": entity_counts,
     }
     return render(request, "core/chart_of_accounts.html", context)
+
+
+@login_required
+def chart_of_accounts_api(request):
+    """
+    JSON API endpoint for chart of accounts.
+    Used by the bank statement review page and other AJAX consumers.
+    """
+    entity_type = request.GET.get("entity_type", "company")
+    section = request.GET.get("section", "")
+    q = request.GET.get("q", "")
+
+    qs = ChartOfAccount.objects.filter(
+        entity_type=entity_type, is_active=True
+    ).order_by("section", "display_order")
+
+    if section:
+        qs = qs.filter(section=section)
+    if q:
+        qs = qs.filter(
+            Q(account_code__icontains=q) | Q(account_name__icontains=q)
+        )
+
+    accounts = [
+        {
+            "code": a.account_code,
+            "name": a.account_name,
+            "section": a.get_section_display(),
+            "tax": a.tax_code,
+            "classification": a.classification,
+        }
+        for a in qs[:500]
+    ]
+    return JsonResponse({"accounts": accounts})
 
 
 # ---------------------------------------------------------------------------

@@ -60,6 +60,7 @@ urlpatterns = [
 
     # Chart of Accounts
     path("chart-of-accounts/", views_audit.chart_of_accounts, name="chart_of_accounts"),
+    path("api/chart-of-accounts/", views_audit.chart_of_accounts_api, name="chart_of_accounts_api"),
 
     # Audit Library
     path("audit-library/", views_audit.audit_library, name="audit_library"),

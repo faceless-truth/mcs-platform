@@ -330,41 +330,92 @@ def extract_transactions_from_pdf(pdf_b64, filename="statement.pdf"):
 # AI Transaction Classification
 # ---------------------------------------------------------------------------
 
-CHART_OF_ACCOUNTS = """CHART OF ACCOUNTS:
-INCOME: 4-1000 Sales Revenue (GST), 4-1100 Service Revenue (GST), 4-1200 Interest Income (ITS), 4-1300 Other Income (GST), 4-2000 Rental Income (GST)
-EXPENSES: 6-1000 Accounting Fees (GST), 6-1100 Advertising (GST), 6-1200 Bank Charges (ITS), 6-1300 Cleaning (GST), 6-1400 Computer/IT (GST), 6-1600 Electricity/Gas (GST), 6-1700 Entertainment (GST), 6-1800 Fuel & Oil (GST), 6-1900 General Expenses (GST), 6-2000 Insurance (ITS), 6-2100 Interest Paid (ITS), 6-2200 Legal Fees (GST), 6-2300 Motor Vehicle (GST), 6-2400 Office Supplies (GST), 6-2500 Postage (GST), 6-2600 Printing (GST), 6-2700 Rates & Taxes (ITS), 6-2800 Rent (GST), 6-2900 Repairs & Maintenance (GST), 6-3000 Subscriptions (GST), 6-3100 Superannuation (ITS), 6-3200 Telephone (GST), 6-3300 Tools & Equipment (GST), 6-3400 Travel (GST), 6-3500 Wages (ITS), 6-3600 Workers Comp (ITS), 6-3700 Uniforms (GST)
-BALANCE SHEET: 2-1000 Director/Beneficiary Loan (N-T), 1-1000 Cash at Bank (N-T), 2-2000 PAYG Withholding (ITS), 2-3000 GST Collected/Paid (N-T)
+# ---------------------------------------------------------------------------
+# Dynamic Chart of Accounts from Database
+# ---------------------------------------------------------------------------
 
-RULES:
-- Fuel (BP, Shell, Ampol, EG Group, 7-Eleven, United, Caltex) = 6-1800, GST
-- Hardware (Bunnings, Total Tools) = 6-3300, GST
-- Insurance = 6-2000, ITS
-- ATO payments = 2-2000, ITS
-- Bank fees = 6-1200, ITS
-- Telco (Telstra, Optus) = 6-3200, GST
-- Internal transfers = 2-1000, N-T
-- Customer payments/deposits = 4-1000, GST
-- Interest earned = 4-1200, ITS
-- Rent/lease = 6-2800, GST
-- Utilities (AGL, Origin) = 6-1600, GST
-- Wages = 6-3500, ITS
-- Super = 6-3100, ITS
-- Software (Microsoft, Google, Xero) = 6-1400, GST
+def _get_chart_of_accounts_prompt(entity_type=None):
+    """
+    Build the CHART OF ACCOUNTS prompt dynamically from the database.
+    Uses entity-type-specific accounts when entity_type is provided,
+    otherwise falls back to company accounts as a sensible default.
+    """
+    from core.models import ChartOfAccount
 
-TAX TYPE CODES:
-- GST = GST on Income (for income) or GST on Expenses (for expenses)
-- ITS = Input Taxed (no GST component)
-- N-T = Not Reportable (balance sheet items, internal transfers)
-- GST-Free = GST Free Income or GST Free Expenses
+    et = entity_type or "company"
+    accounts = ChartOfAccount.objects.filter(
+        entity_type=et, is_active=True
+    ).order_by("section", "display_order")
 
-CONFIDENCE: 5=Certain, 4=Very likely, 3=Probable, 2=Uncertain, 1=Unknown"""
+    if not accounts.exists():
+        # Fallback: try any entity type
+        accounts = ChartOfAccount.objects.filter(
+            is_active=True
+        ).order_by("section", "display_order")[:200]
+
+    # Group by section
+    sections = {}
+    for acct in accounts:
+        section_label = acct.get_section_display()
+        if section_label not in sections:
+            sections[section_label] = []
+        tax_hint = f" ({acct.tax_code})" if acct.tax_code else ""
+        sections[section_label].append(
+            f"{acct.account_code} {acct.account_name}{tax_hint}"
+        )
+
+    # Build the prompt — only include P&L and key balance sheet accounts
+    # to keep the prompt concise for the AI
+    lines = ["CHART OF ACCOUNTS:"]
+    priority_sections = [
+        "Revenue", "Cost of Sales", "Expenses",
+        "Assets", "Liabilities", "Equity",
+        "Capital Accounts", "P&L Appropriation", "Suspense",
+    ]
+    for section in priority_sections:
+        if section in sections:
+            acct_list = ", ".join(sections[section][:80])  # Cap per section
+            lines.append(f"{section.upper()}: {acct_list}")
+
+    lines.append("")
+    lines.append("CLASSIFICATION RULES:")
+    lines.append("- Fuel (BP, Shell, Ampol, EG Group, 7-Eleven, United, Caltex) = Fuel & oil account, GST")
+    lines.append("- Hardware (Bunnings, Total Tools) = Tools & equipment account, GST")
+    lines.append("- Insurance = Insurance account, ITS")
+    lines.append("- ATO payments = PAYG/Tax Payable account, ITS")
+    lines.append("- Bank fees = Bank charges account, ITS")
+    lines.append("- Telco (Telstra, Optus, Vodafone) = Telephone account, GST")
+    lines.append("- Internal transfers = Loan/Drawing account, N-T")
+    lines.append("- Customer payments/deposits = Sales account, GST")
+    lines.append("- Interest earned = Interest received account, ITS")
+    lines.append("- Rent/lease = Rent account, GST")
+    lines.append("- Utilities (AGL, Origin, Energy Australia) = Electricity/gas account, GST")
+    lines.append("- Wages/salary = Wages account, ITS")
+    lines.append("- Super = Superannuation account, ITS")
+    lines.append("- Software (Microsoft, Google, Xero, MYOB) = Computer/IT account, GST")
+    lines.append("")
+    lines.append("TAX TYPE CODES:")
+    lines.append("- GST = GST on Income (for income) or GST on Expenses (for expenses)")
+    lines.append("- ITS = Input Taxed (no GST component)")
+    lines.append("- N-T = Not Reportable (balance sheet items, internal transfers)")
+    lines.append("- GST-Free = GST Free Income or GST Free Expenses")
+    lines.append("- ADS = Adjustment (non-standard)")
+    lines.append("")
+    lines.append("IMPORTANT: You MUST use account codes from the chart above. Do NOT invent codes.")
+    lines.append("CONFIDENCE: 5=Certain, 4=Very likely, 3=Probable, 2=Uncertain, 1=Unknown")
+
+    return "\n".join(lines)
+
+
+# Keep a module-level fallback for backward compatibility
+CHART_OF_ACCOUNTS = _get_chart_of_accounts_prompt.__doc__  # Will be replaced at runtime
 
 
 def classify_transactions(transactions, entity=None, is_gst_registered=True):
     """
     Classify a list of transactions using:
     1. Learning database (per-client patterns) — highest priority
-    2. OpenAI API — for unknown transactions
+    2. OpenAI API with entity-type-specific chart of accounts — for unknown transactions
 
     For GST-registered clients, calculates GST component.
     For non-GST clients, all tax types default to BAS Excluded.
@@ -374,6 +425,9 @@ def classify_transactions(transactions, entity=None, is_gst_registered=True):
     results = []
     unknown_txns = []
     unknown_indices = []
+
+    # Determine entity type for chart of accounts lookup
+    entity_type = entity.entity_type if entity else "company"
 
     # Step 1: Check learning database for known patterns
     for i, txn in enumerate(transactions):
@@ -402,12 +456,14 @@ def classify_transactions(transactions, entity=None, is_gst_registered=True):
 
     # Step 2: AI classify unknown transactions in batches
     if unknown_txns:
-        ai_results = _ai_classify_batch(unknown_txns, is_gst_registered)
+        ai_results = _ai_classify_batch(
+            unknown_txns, is_gst_registered, entity_type=entity_type
+        )
         for idx, ai_result in zip(unknown_indices, ai_results):
             results[idx] = {
                 "index": idx,
-                "account_code": ai_result.get("accountCode", "6-1900"),
-                "account_name": ai_result.get("accountName", "General Expenses"),
+                "account_code": ai_result.get("accountCode", "0000"),
+                "account_name": ai_result.get("accountName", "Suspense"),
                 "tax_type": _map_tax_type(
                     ai_result.get("taxType", "GST"),
                     transactions[idx].get("amount", 0),
@@ -490,15 +546,18 @@ def _map_tax_type(ai_tax_type, amount, is_gst_registered):
     return mapping.get(ai_tax_upper, "GST on Expenses" if not is_income else "GST on Income")
 
 
-def _ai_classify_batch(transactions, is_gst_registered=True, batch_size=15):
+def _ai_classify_batch(transactions, is_gst_registered=True, batch_size=15, entity_type=None):
     """
-    Classify transactions using OpenAI API.
+    Classify transactions using OpenAI API with entity-type-specific chart of accounts.
     Processes in batches of batch_size.
     """
     from openai import OpenAI
 
     client = OpenAI()
     all_results = []
+
+    # Build the chart of accounts prompt from the database
+    chart_prompt = _get_chart_of_accounts_prompt(entity_type)
 
     for i in range(0, len(transactions), batch_size):
         batch = transactions[i:i + batch_size]
@@ -524,9 +583,10 @@ def _ai_classify_batch(transactions, is_gst_registered=True, batch_size=15):
                 "All tax types should be 'BAS Excluded'."
             )
 
+        entity_label = (entity_type or "company").replace("_", " ").title()
         prompt = (
-            f"Classify these Australian bank transactions:\n\n"
-            f"{CHART_OF_ACCOUNTS}{gst_context}\n\n"
+            f"Classify these Australian bank transactions for a {entity_label} entity:\n\n"
+            f"{chart_prompt}{gst_context}\n\n"
             f"TRANSACTIONS:\n{txn_list}\n\n"
             f"Return JSON: {{\"classifications\": ["
             f"{{\"accountCode\": str, \"accountName\": str, "
@@ -538,7 +598,15 @@ def _ai_classify_batch(transactions, is_gst_registered=True, batch_size=15):
             response = client.chat.completions.create(
                 model="gpt-4.1-mini",
                 messages=[
-                    {"role": "system", "content": "You are an Australian accounting AI assistant."},
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are an Australian accounting AI assistant for MC&S Pty Ltd. "
+                            "You classify bank transactions using the provided chart of accounts. "
+                            "You MUST only use account codes from the chart provided. "
+                            "If unsure, use account code 0000 (Suspense) with low confidence."
+                        ),
+                    },
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.1,
@@ -557,9 +625,9 @@ def _ai_classify_batch(transactions, is_gst_registered=True, batch_size=15):
             # Pad with defaults if AI returned fewer results
             while len(classifications) < len(batch):
                 classifications.append({
-                    "accountCode": "6-1900",
-                    "accountName": "General Expenses",
-                    "taxType": "GST",
+                    "accountCode": "0000",
+                    "accountName": "Suspense",
+                    "taxType": "N-T",
                     "confidence": 1,
                     "reasoning": "No classification returned",
                 })
@@ -571,9 +639,9 @@ def _ai_classify_batch(transactions, is_gst_registered=True, batch_size=15):
             # Return defaults for the batch
             for _ in batch:
                 all_results.append({
-                    "accountCode": "6-1900",
-                    "accountName": "General Expenses",
-                    "taxType": "GST",
+                    "accountCode": "0000",
+                    "accountName": "Suspense",
+                    "taxType": "N-T",
                     "confidence": 1,
                     "reasoning": f"Classification error: {str(e)}",
                 })
@@ -668,9 +736,9 @@ def process_bank_statement_email(email_data):
         for txn, cls in zip(transactions, classifications):
             if cls is None:
                 cls = {
-                    "account_code": "6-1900",
-                    "account_name": "General Expenses",
-                    "tax_type": "GST on Expenses",
+                    "account_code": "0000",
+                    "account_name": "Suspense",
+                    "tax_type": "N-T",
                     "confidence": 1,
                     "reasoning": "",
                     "from_learning": False,

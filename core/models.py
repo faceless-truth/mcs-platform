@@ -338,6 +338,97 @@ class AccountMapping(models.Model):
 
 
 # ---------------------------------------------------------------------------
+# Chart of Account (entity-type-specific detailed accounts)
+# ---------------------------------------------------------------------------
+class ChartOfAccount(models.Model):
+    """
+    Entity-type-specific chart of accounts.
+    These are the detailed account codes (e.g. 0500 Sales, 1510 Accountancy)
+    that transactions and trial balance lines are coded to.
+    Each entity type (Company, Trust, Partnership, Sole Trader) has its own
+    set of accounts. These accounts roll up to AccountMapping line items
+    for financial statement generation.
+    """
+
+    class StatementSection(models.TextChoices):
+        SUSPENSE = "suspense", "Suspense"
+        REVENUE = "revenue", "Revenue"
+        COST_OF_SALES = "cost_of_sales", "Cost of Sales"
+        EXPENSES = "expenses", "Expenses"
+        ASSETS = "assets", "Assets"
+        LIABILITIES = "liabilities", "Liabilities"
+        EQUITY = "equity", "Equity"
+        CAPITAL_ACCOUNTS = "capital_accounts", "Capital Accounts"
+        PL_APPROPRIATION = "pl_appropriation", "P&L Appropriation"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entity_type = models.CharField(
+        max_length=20, choices=Entity.EntityType.choices,
+        help_text="Which entity type this account belongs to",
+    )
+    account_code = models.CharField(
+        max_length=20,
+        help_text='Account code, e.g. "0500", "1510", "2000.01"',
+    )
+    account_name = models.CharField(
+        max_length=255,
+        help_text='Account name, e.g. "Sales", "Accountancy"',
+    )
+    classification = models.CharField(
+        max_length=255, blank=True, default="",
+        help_text='Tax classification, e.g. "Other sales revenue", "Trading income"',
+    )
+    section = models.CharField(
+        max_length=30, choices=StatementSection.choices,
+        help_text="Which section of the financial statements this belongs to",
+    )
+    tax_code = models.CharField(
+        max_length=20, blank=True, default="",
+        help_text='Default tax code: GST, ADS, ITS, FRE, CAP, INP, etc.',
+    )
+    maps_to = models.ForeignKey(
+        "AccountMapping",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="detailed_accounts",
+        help_text="Which financial statement line item this rolls up to",
+    )
+    is_active = models.BooleanField(default=True)
+    display_order = models.IntegerField(
+        default=0,
+        help_text="Sort order within the section",
+    )
+
+    class Meta:
+        ordering = ["entity_type", "section", "account_code"]
+        unique_together = ["entity_type", "account_code"]
+        indexes = [
+            models.Index(fields=["entity_type", "section"]),
+            models.Index(fields=["entity_type", "is_active"]),
+        ]
+
+    def __str__(self):
+        return f"{self.account_code} — {self.account_name} ({self.get_entity_type_display()})"
+
+    @property
+    def is_revenue(self):
+        return self.section in (self.StatementSection.REVENUE, self.StatementSection.COST_OF_SALES)
+
+    @property
+    def is_expense(self):
+        return self.section == self.StatementSection.EXPENSES
+
+    @property
+    def is_balance_sheet(self):
+        return self.section in (
+            self.StatementSection.ASSETS,
+            self.StatementSection.LIABILITIES,
+            self.StatementSection.EQUITY,
+            self.StatementSection.CAPITAL_ACCOUNTS,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Client Account Mapping (per-entity mapping of client codes to standard codes)
 # ---------------------------------------------------------------------------
 class ClientAccountMapping(models.Model):

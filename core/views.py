@@ -10,7 +10,7 @@ from django.utils import timezone
 
 from .models import (
     Client, Entity, FinancialYear, TrialBalanceLine,
-    AccountMapping, ClientAccountMapping, AdjustingJournal,
+    AccountMapping, ChartOfAccount, ClientAccountMapping, AdjustingJournal,
     JournalLine, GeneratedDocument, AuditLog, EntityOfficer,
 )
 from .forms import (
@@ -480,12 +480,24 @@ def _process_trial_balance_upload(fy, file):
             errors.append(f"Row {i}: {str(e)}")
             continue
 
-        # Try to find existing mapping for this entity
+        # Try to find existing mapping for this entity (learning from prior imports)
         mapping = ClientAccountMapping.objects.filter(
             entity=entity, client_account_code=account_code
         ).first()
 
         mapped_item = mapping.mapped_line_item if mapping else None
+
+        # If no existing mapping, try to match against the standard chart of accounts
+        # for this entity type. This provides automatic mapping for known account codes.
+        coa_match = None
+        if not mapped_item:
+            coa_match = ChartOfAccount.objects.filter(
+                entity_type=entity.entity_type,
+                account_code=account_code,
+                is_active=True,
+            ).first()
+            if coa_match and coa_match.maps_to:
+                mapped_item = coa_match.maps_to
 
         TrialBalanceLine.objects.create(
             financial_year=fy,
