@@ -325,6 +325,25 @@ def financial_year_detail(request, pk):
     risk_flags = RiskFlag.objects.filter(financial_year=fy).order_by('-severity', '-created_at')
     open_risk_count = risk_flags.filter(status='open').count()
 
+    # Build a lookup: account_code -> list of open risk flag titles/descriptions
+    # affected_accounts is a JSON list of dicts: [{"account_code": "2992", "account_name": "Clearing", ...}]
+    flagged_accounts = {}  # {account_code: [{"title": ..., "severity": ..., "description": ...}]}
+    for flag in risk_flags.filter(status__in=['open', 'reviewed']):
+        for acc in (flag.affected_accounts or []):
+            code = acc.get('account_code', '') if isinstance(acc, dict) else str(acc)
+            if code:
+                if code not in flagged_accounts:
+                    flagged_accounts[code] = []
+                flagged_accounts[code].append({
+                    'title': flag.title,
+                    'severity': flag.severity,
+                    'description': flag.description[:120],
+                })
+
+    # Annotate TB lines with risk flag info for template highlighting
+    for line in tb_lines:
+        line.risk_flags_list = flagged_accounts.get(line.account_code, [])
+
     # Depreciation assets
     depreciation_assets = DepreciationAsset.objects.filter(financial_year=fy)
     dep_categories = OrderedDict()
@@ -374,6 +393,7 @@ def financial_year_detail(request, pk):
         # Audit Risk
         "risk_flags": risk_flags,
         "open_risk_count": open_risk_count,
+        "flagged_accounts": flagged_accounts,
         # Depreciation
         "depreciation_assets": depreciation_assets,
         "dep_categories": dep_categories,

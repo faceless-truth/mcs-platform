@@ -190,12 +190,20 @@
                         </td>
                     </tr>
                     {% for line in lines %}
-                    <tr class="{% if not line.mapped_line_item %}table-warning{% endif %}{% if line.is_adjustment %} fst-italic{% endif %}" style="border-color: #e9ecef;">
-                        <td><code class="text-muted">{{ line.account_code }}</code></td>
+                    <tr class="{% if line.risk_flags_list %}table-danger{% elif not line.mapped_line_item %}table-warning{% endif %}{% if line.is_adjustment %} fst-italic{% endif %}" style="border-color: #e9ecef;">
+                        <td><code class="{% if line.risk_flags_list %}text-danger fw-bold{% else %}text-muted{% endif %}">{{ line.account_code }}</code></td>
                         <td>
+                            {% if line.risk_flags_list %}<i class="bi bi-exclamation-octagon-fill text-danger me-1" title="{% for rf in line.risk_flags_list %}{{ rf.title }}{% if not forloop.last %}; {% endif %}{% endfor %}"></i>{% endif %}
                             {{ line.account_name }}
                             {% if line.is_adjustment %}<span class="badge bg-info text-dark ms-1" style="font-size: 0.7rem;">Adj</span>{% endif %}
                             {% if not line.mapped_line_item %}<small class="text-danger ms-1"><i class="bi bi-exclamation-triangle"></i></small>{% endif %}
+                            {% if line.risk_flags_list %}
+                            <div class="mt-1">
+                                {% for rf in line.risk_flags_list %}
+                                <small class="text-danger d-block" style="font-size: 0.75rem;"><i class="bi bi-flag-fill"></i> {{ rf.title }}</small>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
                         </td>
                         <td class="text-end">{% if line.debit and line.debit != 0 %}{{ line.debit|floatformat:2|intcomma }}{% endif %}</td>
                         <td class="text-end">{% if line.credit and line.credit != 0 %}{{ line.credit|floatformat:2|intcomma }}{% endif %}</td>
