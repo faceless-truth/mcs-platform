@@ -1808,3 +1808,386 @@ def meeting_note_toggle_followup(request, pk):
     note.follow_up_completed = not note.follow_up_completed
     note.save(update_fields=["follow_up_completed"])
     return JsonResponse({"completed": note.follow_up_completed})
+
+
+
+# ---------------------------------------------------------------------------
+# GST Activity Statement
+# ---------------------------------------------------------------------------
+@login_required
+def gst_activity_statement(request, pk):
+    """
+    Generate a GST Activity Statement (BAS summary) for a financial year.
+    Maps trial balance lines to BAS labels using ChartOfAccount tax codes.
+    Supports both Simpler BAS (G1, 1A, 1B) and Full BAS (G1-G20).
+    """
+    fy = get_object_or_404(
+        FinancialYear.objects.select_related("entity", "entity__client"),
+        pk=pk,
+    )
+    entity = fy.entity
+    entity_type = entity.entity_type  # company, trust, partnership, sole_trader
+
+    # Build a lookup: account_code -> ChartOfAccount for this entity type
+    coa_lookup = {}
+    for coa in ChartOfAccount.objects.filter(entity_type=entity_type, is_active=True):
+        coa_lookup[coa.account_code] = coa
+
+    # Get all trial balance lines for this financial year
+    tb_lines = fy.trial_balance_lines.all()
+
+    # Initialize BAS labels
+    g1 = Decimal("0")   # Total sales (including GST)
+    g2 = Decimal("0")   # Export sales
+    g3 = Decimal("0")   # Other GST-free sales
+    g4 = Decimal("0")   # Input taxed sales
+    g10 = Decimal("0")  # Capital purchases (including GST)
+    g11 = Decimal("0")  # Non-capital purchases (including GST)
+    g13 = Decimal("0")  # Purchases for making input taxed sales
+    g14 = Decimal("0")  # Purchases without GST (GST-free purchases)
+    g15 = Decimal("0")  # Private use / not income tax deductible
+    g7 = Decimal("0")   # Sales adjustments
+    g18 = Decimal("0")  # Purchase adjustments
+
+    # Detailed line items for the breakdown
+    sales_lines = []
+    purchase_lines = []
+    capital_lines = []
+    excluded_lines = []
+
+    for line in tb_lines:
+        coa = coa_lookup.get(line.account_code)
+        if not coa:
+            excluded_lines.append({
+                "code": line.account_code,
+                "name": line.account_name,
+                "amount": abs(line.closing_balance),
+                "reason": "Not in chart of accounts",
+            })
+            continue
+
+        section = coa.section
+        tax_code = (coa.tax_code or "").upper().strip()
+        # Use closing balance; revenue is typically credit (negative in TB)
+        amount = abs(line.closing_balance)
+
+        if section == "Revenue":
+            # All revenue goes to G1
+            g1 += amount
+            bas_label = "G1"
+
+            if tax_code == "GST":
+                bas_label = "G1 (Taxable)"
+            elif tax_code == "ITS":
+                g4 += amount
+                bas_label = "G4 (Input Taxed)"
+            elif tax_code == "ADS":
+                g7 += amount
+                bas_label = "G7 (Adjustment)"
+            elif tax_code in ("", "FRE", "N-T"):
+                g3 += amount
+                bas_label = "G3 (GST-Free)"
+
+            sales_lines.append({
+                "code": line.account_code,
+                "name": line.account_name,
+                "tax_code": tax_code or "N-T",
+                "amount": amount,
+                "bas_label": bas_label,
+            })
+
+        elif section == "Expenses":
+            # Non-capital purchases go to G11
+            if tax_code in ("INP", "GST"):
+                g11 += amount
+                bas_label = "G11 (Non-Capital)"
+            elif tax_code in ("IOA",):
+                g11 += amount
+                g13 += amount
+                bas_label = "G11/G13 (Input Taxed)"
+            elif tax_code in ("FOA", "FRE"):
+                g11 += amount
+                g14 += amount
+                bas_label = "G11/G14 (GST-Free)"
+            elif tax_code == "ADS":
+                g11 += amount
+                g18 += amount
+                bas_label = "G11/G18 (Adjustment)"
+            else:
+                # No tax code - still include in G11 but also G14
+                g11 += amount
+                g14 += amount
+                bas_label = "G11/G14 (No GST)"
+
+            purchase_lines.append({
+                "code": line.account_code,
+                "name": line.account_name,
+                "tax_code": tax_code or "N-T",
+                "amount": amount,
+                "bas_label": bas_label,
+            })
+
+        elif section == "Assets":
+            if tax_code == "CAP":
+                g10 += amount
+                bas_label = "G10 (Capital)"
+                capital_lines.append({
+                    "code": line.account_code,
+                    "name": line.account_name,
+                    "tax_code": tax_code,
+                    "amount": amount,
+                    "bas_label": bas_label,
+                })
+            elif tax_code == "FCA":
+                g10 += amount
+                g14 += amount
+                bas_label = "G10/G14 (GST-Free Capital)"
+                capital_lines.append({
+                    "code": line.account_code,
+                    "name": line.account_name,
+                    "tax_code": tax_code,
+                    "amount": amount,
+                    "bas_label": bas_label,
+                })
+            # Other assets (no tax code) are balance sheet items, not on BAS
+
+        # Liabilities, Equity, Capital Accounts - not on BAS
+
+    # Calculated fields
+    g5 = g2 + g3 + g4                    # Total non-taxable sales
+    g6 = g1 - g5                          # Sales subject to GST
+    g8 = g6 + g7                          # Sales subject to GST after adjustments
+    g9 = (g8 / Decimal("11")).quantize(Decimal("0.01")) if g8 else Decimal("0")  # GST on sales
+
+    g12 = g10 + g11                       # Total purchases
+    g16 = g13 + g14 + g15                 # Non-creditable purchases
+    g17 = g12 - g16                       # Purchases subject to GST
+    g19 = g17 + g18                       # Purchases subject to GST after adjustments
+    g20 = (g19 / Decimal("11")).quantize(Decimal("0.01")) if g19 else Decimal("0")  # GST on purchases
+
+    label_1a = g9                         # GST on sales (payable)
+    label_1b = g20                        # GST on purchases (credit)
+    gst_payable = label_1a - label_1b     # Net GST payable (or refund if negative)
+
+    # Build the context
+    bas_data = {
+        # Sales section
+        "G1": g1, "G2": g2, "G3": g3, "G4": g4,
+        "G5": g5, "G6": g6, "G7": g7, "G8": g8, "G9": g9,
+        # Purchases section
+        "G10": g10, "G11": g11, "G12": g12, "G13": g13,
+        "G14": g14, "G15": g15, "G16": g16, "G17": g17,
+        "G18": g18, "G19": g19, "G20": g20,
+        # Summary
+        "1A": label_1a, "1B": label_1b,
+        "gst_payable": gst_payable,
+    }
+
+    context = {
+        "fy": fy,
+        "entity": entity,
+        "client": entity.client,
+        "bas_data": bas_data,
+        "sales_lines": sales_lines,
+        "purchase_lines": purchase_lines,
+        "capital_lines": capital_lines,
+        "excluded_lines": excluded_lines,
+        "is_gst_registered": entity.is_gst_registered,
+    }
+    return render(request, "core/gst_activity_statement.html", context)
+
+
+@login_required
+def gst_activity_statement_download(request, pk):
+    """Download GST Activity Statement as Excel."""
+    import io
+
+    fy = get_object_or_404(
+        FinancialYear.objects.select_related("entity", "entity__client"),
+        pk=pk,
+    )
+    entity = fy.entity
+    entity_type = entity.entity_type
+
+    # Re-run the calculation (same logic as the view)
+    coa_lookup = {}
+    for coa in ChartOfAccount.objects.filter(entity_type=entity_type, is_active=True):
+        coa_lookup[coa.account_code] = coa
+
+    tb_lines = fy.trial_balance_lines.all()
+
+    g1 = g2 = g3 = g4 = g7 = Decimal("0")
+    g10 = g11 = g13 = g14 = g15 = g18 = Decimal("0")
+    detail_rows = []
+
+    for line in tb_lines:
+        coa = coa_lookup.get(line.account_code)
+        if not coa:
+            continue
+        section = coa.section
+        tax_code = (coa.tax_code or "").upper().strip()
+        amount = abs(line.closing_balance)
+
+        bas_label = ""
+        if section == "Revenue":
+            g1 += amount
+            if tax_code == "GST":
+                bas_label = "G1"
+            elif tax_code == "ITS":
+                g4 += amount
+                bas_label = "G4"
+            elif tax_code == "ADS":
+                g7 += amount
+                bas_label = "G7"
+            else:
+                g3 += amount
+                bas_label = "G3"
+        elif section == "Expenses":
+            if tax_code in ("INP", "GST"):
+                g11 += amount
+                bas_label = "G11"
+            elif tax_code == "IOA":
+                g11 += amount
+                g13 += amount
+                bas_label = "G11/G13"
+            elif tax_code in ("FOA", "FRE"):
+                g11 += amount
+                g14 += amount
+                bas_label = "G11/G14"
+            elif tax_code == "ADS":
+                g11 += amount
+                g18 += amount
+                bas_label = "G11/G18"
+            else:
+                g11 += amount
+                g14 += amount
+                bas_label = "G11/G14"
+        elif section == "Assets":
+            if tax_code == "CAP":
+                g10 += amount
+                bas_label = "G10"
+            elif tax_code == "FCA":
+                g10 += amount
+                g14 += amount
+                bas_label = "G10/G14"
+
+        if bas_label:
+            detail_rows.append({
+                "code": line.account_code,
+                "name": line.account_name,
+                "tax_code": tax_code or "N-T",
+                "amount": float(amount),
+                "bas_label": bas_label,
+            })
+
+    g5 = g2 + g3 + g4
+    g6 = g1 - g5
+    g8 = g6 + g7
+    g9 = (g8 / Decimal("11")).quantize(Decimal("0.01")) if g8 else Decimal("0")
+    g12 = g10 + g11
+    g16 = g13 + g14 + g15
+    g17 = g12 - g16
+    g19 = g17 + g18
+    g20 = (g19 / Decimal("11")).quantize(Decimal("0.01")) if g19 else Decimal("0")
+    label_1a = g9
+    label_1b = g20
+
+    # Create Excel workbook
+    wb = openpyxl.Workbook()
+
+    # Sheet 1: BAS Summary
+    ws = wb.active
+    ws.title = "GST Activity Statement"
+
+    # Header
+    ws.append([f"GST Activity Statement — {entity.entity_name}"])
+    ws.append([f"Period: {fy.start_date.strftime('%d/%m/%Y')} to {fy.end_date.strftime('%d/%m/%Y')}"])
+    ws.append([f"ABN: {entity.abn or 'N/A'}"])
+    ws.append([])
+
+    # GST on Sales
+    ws.append(["GST ON SALES"])
+    ws.append(["Label", "Description", "Amount"])
+    ws.append(["G1", "Total sales (including any GST)", float(g1)])
+    ws.append(["G2", "Export sales", float(g2)])
+    ws.append(["G3", "Other GST-free sales", float(g3)])
+    ws.append(["G4", "Input taxed sales", float(g4)])
+    ws.append(["G5", "G2 + G3 + G4", float(g5)])
+    ws.append(["G6", "Total sales subject to GST (G1 - G5)", float(g6)])
+    ws.append(["G7", "Adjustments", float(g7)])
+    ws.append(["G8", "Total sales subject to GST after adjustments (G6 + G7)", float(g8)])
+    ws.append(["G9", "GST on sales (G8 ÷ 11)", float(g9)])
+    ws.append([])
+
+    # GST on Purchases
+    ws.append(["GST ON PURCHASES"])
+    ws.append(["Label", "Description", "Amount"])
+    ws.append(["G10", "Capital purchases (including any GST)", float(g10)])
+    ws.append(["G11", "Non-capital purchases (including any GST)", float(g11)])
+    ws.append(["G12", "G10 + G11", float(g12)])
+    ws.append(["G13", "Purchases for making input taxed sales", float(g13)])
+    ws.append(["G14", "Purchases without GST in the price", float(g14)])
+    ws.append(["G15", "Estimated purchases for private use", float(g15)])
+    ws.append(["G16", "G13 + G14 + G15", float(g16)])
+    ws.append(["G17", "Total purchases subject to GST (G12 - G16)", float(g17)])
+    ws.append(["G18", "Adjustments", float(g18)])
+    ws.append(["G19", "Total purchases subject to GST after adjustments (G17 + G18)", float(g19)])
+    ws.append(["G20", "GST on purchases (G19 ÷ 11)", float(g20)])
+    ws.append([])
+
+    # Summary
+    ws.append(["BAS SUMMARY"])
+    ws.append(["Label", "Description", "Amount"])
+    ws.append(["1A", "GST on sales", float(label_1a)])
+    ws.append(["1B", "GST on purchases", float(label_1b)])
+    ws.append(["", "Net GST payable / (refundable)", float(label_1a - label_1b)])
+
+    # Format columns
+    ws.column_dimensions["A"].width = 8
+    ws.column_dimensions["B"].width = 55
+    ws.column_dimensions["C"].width = 18
+
+    # Bold headers
+    from openpyxl.styles import Font, numbers
+    bold = Font(bold=True)
+    for row_idx in [1, 2, 3, 5, 6, 17, 18, 31, 32]:
+        for cell in ws[row_idx]:
+            cell.font = bold
+
+    # Number format for amount column
+    for row in ws.iter_rows(min_row=7, max_col=3, max_row=ws.max_row):
+        cell = row[2]
+        if isinstance(cell.value, (int, float)):
+            cell.number_format = '#,##0.00'
+
+    # Sheet 2: Detail Breakdown
+    ws2 = wb.create_sheet("Detail Breakdown")
+    ws2.append(["Account Code", "Account Name", "Tax Code", "Amount", "BAS Label"])
+    for row in detail_rows:
+        ws2.append([row["code"], row["name"], row["tax_code"], row["amount"], row["bas_label"]])
+
+    ws2.column_dimensions["A"].width = 14
+    ws2.column_dimensions["B"].width = 40
+    ws2.column_dimensions["C"].width = 12
+    ws2.column_dimensions["D"].width = 18
+    ws2.column_dimensions["E"].width = 14
+
+    for cell in ws2[1]:
+        cell.font = bold
+    for row in ws2.iter_rows(min_row=2, min_col=4, max_col=4, max_row=ws2.max_row):
+        row[0].number_format = '#,##0.00'
+
+    # Write to response
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+
+    entity_name = entity.entity_name.replace(" ", "_")
+    filename = f"GST_Activity_Statement_{entity_name}_{fy.start_date.strftime('%Y%m%d')}_{fy.end_date.strftime('%Y%m%d')}.xlsx"
+
+    response = HttpResponse(
+        buffer.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response

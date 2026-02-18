@@ -86,6 +86,10 @@ urlpatterns = [
     path("notes/<uuid:pk>/delete/", views.meeting_note_delete, name="meeting_note_delete"),
     path("notes/<uuid:pk>/toggle-followup/", views.meeting_note_toggle_followup, name="meeting_note_toggle_followup"),
 
+    # GST Activity Statement
+    path("years/<uuid:pk>/gst/", views.gst_activity_statement, name="gst_activity_statement"),
+    path("years/<uuid:pk>/gst/download/", views.gst_activity_statement_download, name="gst_activity_statement_download"),
+
     # HTMX partials
     path("htmx/client-search/", views.htmx_client_search, name="htmx_client_search"),
     path("htmx/tb-line/<uuid:pk>/map/", views.htmx_map_tb_line, name="htmx_map_tb_line"),

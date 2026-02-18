@@ -1,0 +1,353 @@
+{% extends "base.html" %}
+{% block title %}GST Activity Statement — {{ entity.entity_name }} — StatementHub{% endblock %}
+
+{% block content %}
+<!-- Breadcrumb -->
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb small">
+        <li class="breadcrumb-item"><a href="{% url 'core:client_list' %}">Clients</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'core:client_detail' pk=client.pk %}">{{ client.name }}</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy.year_label }}</a></li>
+        <li class="breadcrumb-item active">GST Activity Statement</li>
+    </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-start mb-4">
+    <div>
+        <h4 class="mb-1"><i class="bi bi-receipt"></i> GST Activity Statement</h4>
+        <p class="text-muted mb-0">
+            {{ entity.entity_name }} &middot;
+            {{ fy.start_date|date:"d M Y" }} to {{ fy.end_date|date:"d M Y" }}
+            {% if entity.abn %}&middot; ABN: {{ entity.abn }}{% endif %}
+        </p>
+    </div>
+    <div class="d-flex gap-2">
+        <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-arrow-left"></i> Back to {{ fy.year_label }}
+        </a>
+        <a href="{% url 'core:gst_activity_statement_download' pk=fy.pk %}" class="btn btn-success btn-sm">
+            <i class="bi bi-file-earmark-excel"></i> Download Excel
+        </a>
+    </div>
+</div>
+
+{% if not is_gst_registered %}
+<div class="alert alert-warning">
+    <i class="bi bi-exclamation-triangle"></i>
+    <strong>Note:</strong> This entity is not marked as GST registered. The GST Activity Statement is shown for reference only.
+    You can update the GST registration status on the <a href="{% url 'core:entity_detail' pk=entity.pk %}">entity detail page</a>.
+</div>
+{% endif %}
+
+<!-- BAS Summary Cards -->
+<div class="row g-3 mb-4">
+    <div class="col-md-4">
+        <div class="card border-primary">
+            <div class="card-body text-center">
+                <h6 class="card-subtitle text-muted mb-1">1A — GST on Sales</h6>
+                <h3 class="text-primary mb-0">${{ bas_data.1A|floatformat:2 }}</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card border-success">
+            <div class="card-body text-center">
+                <h6 class="card-subtitle text-muted mb-1">1B — GST on Purchases</h6>
+                <h3 class="text-success mb-0">${{ bas_data.1B|floatformat:2 }}</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card {% if bas_data.gst_payable > 0 %}border-danger{% else %}border-info{% endif %}">
+            <div class="card-body text-center">
+                <h6 class="card-subtitle text-muted mb-1">
+                    {% if bas_data.gst_payable > 0 %}Net GST Payable{% else %}Net GST Refundable{% endif %}
+                </h6>
+                <h3 class="{% if bas_data.gst_payable > 0 %}text-danger{% else %}text-info{% endif %} mb-0">
+                    ${{ bas_data.gst_payable|floatformat:2 }}
+                </h3>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Tabs -->
+<ul class="nav nav-tabs" id="gstTabs" role="tablist">
+    <li class="nav-item">
+        <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#summaryTab" type="button">
+            <i class="bi bi-calculator"></i> BAS Summary
+        </button>
+    </li>
+    <li class="nav-item">
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#salesTab" type="button">
+            <i class="bi bi-graph-up-arrow"></i> Sales Detail ({{ sales_lines|length }})
+        </button>
+    </li>
+    <li class="nav-item">
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#purchasesTab" type="button">
+            <i class="bi bi-cart"></i> Purchases Detail ({{ purchase_lines|length }})
+        </button>
+    </li>
+    <li class="nav-item">
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#capitalTab" type="button">
+            <i class="bi bi-building"></i> Capital ({{ capital_lines|length }})
+        </button>
+    </li>
+    {% if excluded_lines %}
+    <li class="nav-item">
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#excludedTab" type="button">
+            <i class="bi bi-exclamation-circle"></i> Excluded ({{ excluded_lines|length }})
+        </button>
+    </li>
+    {% endif %}
+</ul>
+
+<div class="tab-content mt-3">
+    <!-- BAS Summary Tab -->
+    <div class="tab-pane fade show active" id="summaryTab">
+        <div class="row g-4">
+            <!-- GST on Sales (G1-G9) -->
+            <div class="col-lg-6">
+                <div class="card">
+                    <div class="card-header bg-primary text-white">
+                        <strong>GST on Sales</strong>
+                    </div>
+                    <div class="card-body p-0">
+                        <table class="table table-sm mb-0">
+                            <thead class="table-light">
+                                <tr><th>Label</th><th>Description</th><th class="text-end">Amount</th></tr>
+                            </thead>
+                            <tbody>
+                                <tr><td><strong>G1</strong></td><td>Total sales (including any GST)</td><td class="text-end">${{ bas_data.G1|floatformat:2 }}</td></tr>
+                                <tr><td>G2</td><td>Export sales</td><td class="text-end">${{ bas_data.G2|floatformat:2 }}</td></tr>
+                                <tr><td>G3</td><td>Other GST-free sales</td><td class="text-end">${{ bas_data.G3|floatformat:2 }}</td></tr>
+                                <tr><td>G4</td><td>Input taxed sales</td><td class="text-end">${{ bas_data.G4|floatformat:2 }}</td></tr>
+                                <tr class="table-light"><td><strong>G5</strong></td><td>G2 + G3 + G4</td><td class="text-end"><strong>${{ bas_data.G5|floatformat:2 }}</strong></td></tr>
+                                <tr><td><strong>G6</strong></td><td>Total sales subject to GST (G1 − G5)</td><td class="text-end"><strong>${{ bas_data.G6|floatformat:2 }}</strong></td></tr>
+                                <tr><td>G7</td><td>Adjustments</td><td class="text-end">${{ bas_data.G7|floatformat:2 }}</td></tr>
+                                <tr class="table-light"><td><strong>G8</strong></td><td>Total sales subject to GST after adj. (G6 + G7)</td><td class="text-end"><strong>${{ bas_data.G8|floatformat:2 }}</strong></td></tr>
+                                <tr class="table-primary"><td><strong>G9</strong></td><td>GST on sales (G8 ÷ 11)</td><td class="text-end"><strong>${{ bas_data.G9|floatformat:2 }}</strong></td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- GST on Purchases (G10-G20) -->
+            <div class="col-lg-6">
+                <div class="card">
+                    <div class="card-header bg-success text-white">
+                        <strong>GST on Purchases</strong>
+                    </div>
+                    <div class="card-body p-0">
+                        <table class="table table-sm mb-0">
+                            <thead class="table-light">
+                                <tr><th>Label</th><th>Description</th><th class="text-end">Amount</th></tr>
+                            </thead>
+                            <tbody>
+                                <tr><td><strong>G10</strong></td><td>Capital purchases (including any GST)</td><td class="text-end">${{ bas_data.G10|floatformat:2 }}</td></tr>
+                                <tr><td><strong>G11</strong></td><td>Non-capital purchases (including any GST)</td><td class="text-end">${{ bas_data.G11|floatformat:2 }}</td></tr>
+                                <tr class="table-light"><td><strong>G12</strong></td><td>G10 + G11</td><td class="text-end"><strong>${{ bas_data.G12|floatformat:2 }}</strong></td></tr>
+                                <tr><td>G13</td><td>Purchases for making input taxed sales</td><td class="text-end">${{ bas_data.G13|floatformat:2 }}</td></tr>
+                                <tr><td>G14</td><td>Purchases without GST in the price</td><td class="text-end">${{ bas_data.G14|floatformat:2 }}</td></tr>
+                                <tr><td>G15</td><td>Estimated purchases for private use</td><td class="text-end">${{ bas_data.G15|floatformat:2 }}</td></tr>
+                                <tr class="table-light"><td><strong>G16</strong></td><td>G13 + G14 + G15</td><td class="text-end"><strong>${{ bas_data.G16|floatformat:2 }}</strong></td></tr>
+                                <tr><td><strong>G17</strong></td><td>Total purchases subject to GST (G12 − G16)</td><td class="text-end"><strong>${{ bas_data.G17|floatformat:2 }}</strong></td></tr>
+                                <tr><td>G18</td><td>Adjustments</td><td class="text-end">${{ bas_data.G18|floatformat:2 }}</td></tr>
+                                <tr class="table-light"><td><strong>G19</strong></td><td>Total purchases subject to GST after adj. (G17 + G18)</td><td class="text-end"><strong>${{ bas_data.G19|floatformat:2 }}</strong></td></tr>
+                                <tr class="table-success"><td><strong>G20</strong></td><td>GST on purchases (G19 ÷ 11)</td><td class="text-end"><strong>${{ bas_data.G20|floatformat:2 }}</strong></td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- BAS Summary Box -->
+        <div class="card mt-4">
+            <div class="card-header bg-dark text-white">
+                <strong><i class="bi bi-receipt-cutoff"></i> Activity Statement Summary</strong>
+            </div>
+            <div class="card-body">
+                <table class="table table-bordered mb-0" style="max-width: 600px;">
+                    <tbody>
+                        <tr>
+                            <td><strong>1A</strong></td>
+                            <td>GST on sales</td>
+                            <td class="text-end"><strong>${{ bas_data.1A|floatformat:2 }}</strong></td>
+                        </tr>
+                        <tr>
+                            <td><strong>1B</strong></td>
+                            <td>GST on purchases (credit)</td>
+                            <td class="text-end"><strong>${{ bas_data.1B|floatformat:2 }}</strong></td>
+                        </tr>
+                        <tr class="{% if bas_data.gst_payable > 0 %}table-danger{% else %}table-info{% endif %}">
+                            <td colspan="2">
+                                <strong>{% if bas_data.gst_payable > 0 %}Net GST Payable to ATO{% else %}Net GST Refundable from ATO{% endif %}</strong>
+                            </td>
+                            <td class="text-end"><strong>${{ bas_data.gst_payable|floatformat:2 }}</strong></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Sales Detail Tab -->
+    <div class="tab-pane fade" id="salesTab">
+        <div class="card">
+            <div class="card-body p-0">
+                <table class="table table-sm table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Account Code</th>
+                            <th>Account Name</th>
+                            <th>Tax Code</th>
+                            <th class="text-end">Amount</th>
+                            <th>BAS Label</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for line in sales_lines %}
+                        <tr>
+                            <td><code>{{ line.code }}</code></td>
+                            <td>{{ line.name }}</td>
+                            <td><span class="badge bg-secondary">{{ line.tax_code }}</span></td>
+                            <td class="text-end">${{ line.amount|floatformat:2 }}</td>
+                            <td><span class="badge bg-primary">{{ line.bas_label }}</span></td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="5" class="text-center text-muted py-3">No sales lines in trial balance</td></tr>
+                        {% endfor %}
+                    </tbody>
+                    {% if sales_lines %}
+                    <tfoot class="table-light">
+                        <tr>
+                            <td colspan="3"><strong>Total (G1)</strong></td>
+                            <td class="text-end"><strong>${{ bas_data.G1|floatformat:2 }}</strong></td>
+                            <td></td>
+                        </tr>
+                    </tfoot>
+                    {% endif %}
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Purchases Detail Tab -->
+    <div class="tab-pane fade" id="purchasesTab">
+        <div class="card">
+            <div class="card-body p-0">
+                <table class="table table-sm table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Account Code</th>
+                            <th>Account Name</th>
+                            <th>Tax Code</th>
+                            <th class="text-end">Amount</th>
+                            <th>BAS Label</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for line in purchase_lines %}
+                        <tr>
+                            <td><code>{{ line.code }}</code></td>
+                            <td>{{ line.name }}</td>
+                            <td><span class="badge bg-secondary">{{ line.tax_code }}</span></td>
+                            <td class="text-end">${{ line.amount|floatformat:2 }}</td>
+                            <td><span class="badge bg-success">{{ line.bas_label }}</span></td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="5" class="text-center text-muted py-3">No purchase lines in trial balance</td></tr>
+                        {% endfor %}
+                    </tbody>
+                    {% if purchase_lines %}
+                    <tfoot class="table-light">
+                        <tr>
+                            <td colspan="3"><strong>Total (G11)</strong></td>
+                            <td class="text-end"><strong>${{ bas_data.G11|floatformat:2 }}</strong></td>
+                            <td></td>
+                        </tr>
+                    </tfoot>
+                    {% endif %}
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Capital Detail Tab -->
+    <div class="tab-pane fade" id="capitalTab">
+        <div class="card">
+            <div class="card-body p-0">
+                <table class="table table-sm table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Account Code</th>
+                            <th>Account Name</th>
+                            <th>Tax Code</th>
+                            <th class="text-end">Amount</th>
+                            <th>BAS Label</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for line in capital_lines %}
+                        <tr>
+                            <td><code>{{ line.code }}</code></td>
+                            <td>{{ line.name }}</td>
+                            <td><span class="badge bg-secondary">{{ line.tax_code }}</span></td>
+                            <td class="text-end">${{ line.amount|floatformat:2 }}</td>
+                            <td><span class="badge bg-warning text-dark">{{ line.bas_label }}</span></td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="5" class="text-center text-muted py-3">No capital acquisitions in trial balance</td></tr>
+                        {% endfor %}
+                    </tbody>
+                    {% if capital_lines %}
+                    <tfoot class="table-light">
+                        <tr>
+                            <td colspan="3"><strong>Total (G10)</strong></td>
+                            <td class="text-end"><strong>${{ bas_data.G10|floatformat:2 }}</strong></td>
+                            <td></td>
+                        </tr>
+                    </tfoot>
+                    {% endif %}
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Excluded Tab -->
+    {% if excluded_lines %}
+    <div class="tab-pane fade" id="excludedTab">
+        <div class="alert alert-info">
+            <i class="bi bi-info-circle"></i> These trial balance lines could not be mapped to a BAS label because they are not in the chart of accounts for this entity type.
+        </div>
+        <div class="card">
+            <div class="card-body p-0">
+                <table class="table table-sm table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Account Code</th>
+                            <th>Account Name</th>
+                            <th class="text-end">Amount</th>
+                            <th>Reason</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for line in excluded_lines %}
+                        <tr>
+                            <td><code>{{ line.code }}</code></td>
+                            <td>{{ line.name }}</td>
+                            <td class="text-end">${{ line.amount|floatformat:2 }}</td>
+                            <td><span class="text-muted">{{ line.reason }}</span></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
