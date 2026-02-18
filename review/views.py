@@ -696,9 +696,21 @@ def upload_bank_statement(request):
             description=(
                 f"{client_name} — {len(transactions)} transactions from {filename}, "
                 f"{job.confirmed_count} auto-confirmed"
-                f"{' (GST registered)' if is_gst else ' (not GST registered)'}"
+                f"{'  (GST registered)' if is_gst else ' (not GST registered)'}"
             ),
         )
+        # Dashboard activity log
+        try:
+            from core.models import ActivityLog
+            ActivityLog.objects.create(
+                user=request.user,
+                event_type="bank_upload",
+                title=f"Bank statement uploaded: {filename}",
+                description=f"{client_name} — {len(transactions)} transactions extracted",
+                url=f"/review/{job.pk}/",
+            )
+        except Exception:
+            pass
         created_jobs.append(job)
 
     # Handle response
@@ -998,6 +1010,21 @@ def classify_batch(request, pk):
     remaining = job.transactions.filter(
         ai_confidence=0, ai_suggested_code=""
     ).count()
+
+    # Log activity when ALL classification is complete (remaining == 0)
+    if remaining == 0:
+        try:
+            from core.models import ActivityLog
+            client_name = job.entity.entity_name if job.entity else job.client_name
+            ActivityLog.objects.create(
+                user=request.user,
+                event_type="classify_complete",
+                title=f"AI classification complete: {client_name}",
+                description=f"{job.total_transactions} transactions classified, {job.confirmed_count} auto-confirmed",
+                url=f"/review/{job.pk}/",
+            )
+        except Exception:
+            pass
 
     return JsonResponse({
         "status": "ok",

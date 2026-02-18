@@ -107,6 +107,11 @@ urlpatterns = [
     path("review-txn/<uuid:pk>/approve/", views.review_approve_transaction, name="review_approve_transaction"),
     path("years/<uuid:pk>/review/approve-all/", views.review_approve_all, name="review_approve_all"),
 
+    # Notifications / Activity
+    path("api/notifications/", views.notifications_api, name="notifications_api"),
+    path("api/notifications/<uuid:pk>/read/", views.mark_notification_read, name="mark_notification_read"),
+    path("api/notifications/read-all/", views.mark_all_notifications_read, name="mark_all_notifications_read"),
+
     # HTMX partials
     path("htmx/client-search/", views.htmx_client_search, name="htmx_client_search"),
     path("htmx/tb-line/<uuid:pk>/map/", views.htmx_map_tb_line, name="htmx_map_tb_line"),

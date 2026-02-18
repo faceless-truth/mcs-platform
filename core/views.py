@@ -13,7 +13,7 @@ from .models import (
     AccountMapping, ChartOfAccount, ClientAccountMapping, AdjustingJournal,
     JournalLine, GeneratedDocument, AuditLog, EntityOfficer,
     ClientAssociate, AccountingSoftware, MeetingNote,
-    DepreciationAsset, RiskFlag, StockItem,
+    DepreciationAsset, RiskFlag, StockItem, ActivityLog,
 )
 from .forms import (
     ClientForm, EntityForm, FinancialYearForm,
@@ -49,33 +49,67 @@ def dashboard(request):
             Q(assigned_accountant=user) & Q(is_active=True)
         )
 
-    # Summary stats
-    total_clients = clients.count()
-    total_entities = Entity.objects.filter(client__in=clients).count()
-    draft_count = FinancialYear.objects.filter(
-        entity__client__in=clients, status="draft"
-    ).count()
-    in_review_count = FinancialYear.objects.filter(
-        entity__client__in=clients, status="in_review"
-    ).count()
-    finalised_count = FinancialYear.objects.filter(
-        entity__client__in=clients, status="finalised"
-    ).count()
+    # Time-based greeting
+    import datetime
+    now = timezone.localtime(timezone.now())
+    hour = now.hour
+    if hour < 12:
+        greeting = "Good morning"
+    elif hour < 17:
+        greeting = "Good afternoon"
+    else:
+        greeting = "Good evening"
 
-    # Recent activity
-    recent_years = (
-        FinancialYear.objects.filter(entity__client__in=clients)
+    # Unfinalised financial years (Draft, In Review, Reviewed) — grouped by client
+    unfinalised_years = (
+        FinancialYear.objects.filter(
+            entity__client__in=clients,
+            status__in=["draft", "in_review", "reviewed"],
+        )
         .select_related("entity", "entity__client")
-        .order_by("-updated_at")[:10]
+        .order_by("entity__client__name", "entity__entity_name", "-period_end")
     )
 
+    # Open audit risk flags across all clients I'm working on
+    open_risk_flags = (
+        RiskFlag.objects.filter(
+            financial_year__entity__client__in=clients,
+            status__in=["open", "reviewed"],
+        )
+        .select_related("financial_year", "financial_year__entity", "financial_year__entity__client")
+        .order_by("-severity", "-created_at")[:20]
+    )
+
+    # Group risk flags by client/entity for display
+    risk_summary = {}
+    for flag in open_risk_flags:
+        key = f"{flag.financial_year.entity.client.name} — {flag.financial_year.entity.entity_name}"
+        if key not in risk_summary:
+            risk_summary[key] = {
+                "client_name": flag.financial_year.entity.client.name,
+                "entity_name": flag.financial_year.entity.entity_name,
+                "fy_pk": flag.financial_year.pk,
+                "flags": [],
+            }
+        risk_summary[key]["flags"].append(flag)
+
+    # Recent activity log
+    recent_activities = (
+        ActivityLog.objects.all()
+        .order_by("-created_at")[:30]
+    )
+
+    # Unread notification count for the bell
+    unread_count = ActivityLog.objects.filter(is_read=False).count()
+
     context = {
-        "total_clients": total_clients,
-        "total_entities": total_entities,
-        "draft_count": draft_count,
-        "in_review_count": in_review_count,
-        "finalised_count": finalised_count,
-        "recent_years": recent_years,
+        "greeting": greeting,
+        "now": now,
+        "unfinalised_years": unfinalised_years,
+        "risk_summary": risk_summary,
+        "open_risk_count": open_risk_flags.count(),
+        "recent_activities": recent_activities,
+        "unread_count": unread_count,
     }
     return render(request, "core/dashboard.html", context)
 
@@ -2627,3 +2661,42 @@ def review_approve_all(request, pk):
 
     messages.success(request, f"Approved {count} transactions with AI suggestions.")
     return redirect("core:financial_year_detail", pk=pk)
+
+
+# ---------------------------------------------------------------------------
+# Activity Log / Notifications
+# ---------------------------------------------------------------------------
+@login_required
+def mark_notification_read(request, pk):
+    """Mark a single activity log entry as read."""
+    activity = get_object_or_404(ActivityLog, pk=pk)
+    activity.is_read = True
+    activity.save()
+    return JsonResponse({"status": "ok"})
+
+
+@login_required
+def mark_all_notifications_read(request):
+    """Mark all unread notifications as read."""
+    ActivityLog.objects.filter(is_read=False).update(is_read=True)
+    return JsonResponse({"status": "ok"})
+
+
+@login_required
+def notifications_api(request):
+    """Return recent unread notifications as JSON for polling."""
+    activities = (
+        ActivityLog.objects.filter(is_read=False)
+        .order_by("-created_at")[:10]
+    )
+    data = []
+    for a in activities:
+        data.append({
+            "id": str(a.pk),
+            "event_type": a.event_type,
+            "title": a.title,
+            "description": a.description,
+            "url": a.url,
+            "created_at": a.created_at.isoformat(),
+        })
+    return JsonResponse({"unread_count": ActivityLog.objects.filter(is_read=False).count(), "items": data})

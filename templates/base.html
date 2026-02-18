@@ -60,7 +60,22 @@
                     </li>
                     {% endif %}
                 </ul>
-                <ul class="navbar-nav">
+                <ul class="navbar-nav align-items-center">
+                    <!-- Notification Bell -->
+                    <li class="nav-item dropdown me-2">
+                        <a class="nav-link position-relative" href="#" role="button" data-bs-toggle="dropdown" id="notificationBell">
+                            <i class="bi bi-bell fs-5"></i>
+                            <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger d-none" id="notifBadge" style="font-size: 0.6rem;">0</span>
+                        </a>
+                        <ul class="dropdown-menu dropdown-menu-end shadow" style="width: 360px; max-height: 400px; overflow-y: auto;" id="notifDropdown">
+                            <li class="dropdown-header d-flex justify-content-between align-items-center">
+                                <strong>Notifications</strong>
+                                <a href="#" class="text-decoration-none small" id="markAllRead">Mark all read</a>
+                            </li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li class="text-center text-muted py-3" id="notifEmpty"><small>No new notifications</small></li>
+                        </ul>
+                    </li>
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
                             <i class="bi bi-person-circle"></i> {{ user.get_full_name|default:user.username }}
@@ -109,6 +124,106 @@
     </footer>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+    {% if user.is_authenticated %}
+    <script>
+    // Notification polling
+    (function() {
+        const badge = document.getElementById('notifBadge');
+        const dropdown = document.getElementById('notifDropdown');
+        const emptyMsg = document.getElementById('notifEmpty');
+        const markAllBtn = document.getElementById('markAllRead');
+        const csrfToken = '{{ csrf_token }}';
+
+        function getEventIcon(eventType) {
+            const icons = {
+                'bank_upload': 'bi-bank',
+                'classify_complete': 'bi-check-circle text-success',
+                'classify_started': 'bi-hourglass-split text-warning',
+                'tb_import': 'bi-file-earmark-spreadsheet',
+                'journal_posted': 'bi-journal-check',
+                'year_finalised': 'bi-trophy text-success',
+                'audit_run': 'bi-shield-exclamation text-danger',
+                'review_approved': 'bi-check2-all text-primary',
+                'doc_generated': 'bi-file-earmark-word',
+                'general': 'bi-info-circle',
+            };
+            return icons[eventType] || 'bi-info-circle';
+        }
+
+        function timeAgo(dateStr) {
+            const now = new Date();
+            const d = new Date(dateStr);
+            const secs = Math.floor((now - d) / 1000);
+            if (secs < 60) return 'just now';
+            if (secs < 3600) return Math.floor(secs / 60) + 'm ago';
+            if (secs < 86400) return Math.floor(secs / 3600) + 'h ago';
+            return Math.floor(secs / 86400) + 'd ago';
+        }
+
+        function pollNotifications() {
+            fetch('{% url "core:notifications_api" %}')
+            .then(r => r.json())
+            .then(data => {
+                if (data.unread_count > 0) {
+                    badge.textContent = data.unread_count;
+                    badge.classList.remove('d-none');
+                } else {
+                    badge.classList.add('d-none');
+                }
+                // Rebuild dropdown items
+                const dividers = dropdown.querySelectorAll('.dropdown-divider');
+                const header = dropdown.querySelector('.dropdown-header');
+                dropdown.innerHTML = '';
+                dropdown.appendChild(header.parentElement);
+                const hr = document.createElement('li');
+                hr.innerHTML = '<hr class="dropdown-divider">';
+                dropdown.appendChild(hr);
+
+                if (data.items.length === 0) {
+                    const empty = document.createElement('li');
+                    empty.className = 'text-center text-muted py-3';
+                    empty.innerHTML = '<small>No new notifications</small>';
+                    dropdown.appendChild(empty);
+                } else {
+                    data.items.forEach(item => {
+                        const li = document.createElement('li');
+                        li.innerHTML = `<a class="dropdown-item py-2" href="${item.url || '#'}" style="white-space: normal;">
+                            <div class="d-flex align-items-start">
+                                <i class="bi ${getEventIcon(item.event_type)} me-2 mt-1"></i>
+                                <div>
+                                    <div class="fw-semibold" style="font-size: 0.85rem;">${item.title}</div>
+                                    <small class="text-muted">${item.description}</small>
+                                    <div class="text-muted" style="font-size: 0.75rem;">${timeAgo(item.created_at)}</div>
+                                </div>
+                            </div>
+                        </a>`;
+                        dropdown.appendChild(li);
+                    });
+                }
+            })
+            .catch(() => {});
+        }
+
+        if (markAllBtn) {
+            markAllBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                fetch('{% url "core:mark_all_notifications_read" %}', {
+                    method: 'POST',
+                    headers: {'X-CSRFToken': csrfToken},
+                })
+                .then(() => pollNotifications());
+            });
+        }
+
+        // Poll every 15 seconds
+        pollNotifications();
+        setInterval(pollNotifications, 15000);
+    })();
+    </script>
+    {% endif %}
+
     {% block extra_js %}{% endblock %}
 </body>
 </html>

@@ -1,105 +1,178 @@
 {% extends "base.html" %}
+{% load tz %}
 {% block title %}Dashboard - StatementHub{% endblock %}
 
 {% block content %}
-<div class="mb-4">
-    <h4><i class="bi bi-speedometer2"></i> Dashboard</h4>
-    <p class="text-muted">Welcome back, {{ user.get_full_name|default:user.username }}.</p>
-</div>
+<div class="row">
+    <!-- ===== LEFT / CENTER COLUMN ===== -->
+    <div class="col-lg-8">
 
-<!-- Summary Cards -->
-<div class="row g-3 mb-4">
-    <div class="col-md-2">
-        <div class="card text-center border-0 shadow-sm">
-            <div class="card-body">
-                <h2 class="mb-0 text-primary">{{ total_clients }}</h2>
-                <small class="text-muted">Clients</small>
-            </div>
+        <!-- Greeting & Date/Time -->
+        <div class="text-center mb-4 pt-3">
+            <h3 class="fw-light mb-1">{{ greeting }}, {{ user.first_name|default:user.username }}.</h3>
+            <p class="text-muted mb-0" id="liveDateTime" style="font-size: 1.05rem;"></p>
         </div>
-    </div>
-    <div class="col-md-2">
-        <div class="card text-center border-0 shadow-sm">
-            <div class="card-body">
-                <h2 class="mb-0 text-info">{{ total_entities }}</h2>
-                <small class="text-muted">Entities</small>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-2">
-        <div class="card text-center border-0 shadow-sm">
-            <div class="card-body">
-                <h2 class="mb-0 text-warning">{{ draft_count }}</h2>
-                <small class="text-muted">Draft</small>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-2">
-        <div class="card text-center border-0 shadow-sm">
-            <div class="card-body">
-                <h2 class="mb-0 text-orange">{{ in_review_count }}</h2>
-                <small class="text-muted">In Review</small>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-2">
-        <div class="card text-center border-0 shadow-sm">
-            <div class="card-body">
-                <h2 class="mb-0 text-success">{{ finalised_count }}</h2>
-                <small class="text-muted">Finalised</small>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-2">
-        <div class="card text-center border-0 shadow-sm">
-            <div class="card-body">
-                <a href="{% url 'core:client_list' %}" class="btn btn-primary btn-sm w-100">
-                    <i class="bi bi-people"></i> View Clients
-                </a>
-            </div>
-        </div>
-    </div>
-</div>
 
-<!-- Recent Activity -->
-<div class="card">
-    <div class="card-header d-flex justify-content-between align-items-center">
-        <h6 class="mb-0">Recent Activity</h6>
+        <!-- Audit Risk Alerts -->
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-header bg-white border-bottom d-flex justify-content-between align-items-center">
+                <h6 class="mb-0">
+                    <i class="bi bi-shield-exclamation text-danger me-1"></i>
+                    Audit Risk Alerts
+                    {% if open_risk_count > 0 %}
+                    <span class="badge bg-danger ms-1">{{ open_risk_count }}</span>
+                    {% endif %}
+                </h6>
+            </div>
+            <div class="card-body">
+                {% if risk_summary %}
+                    {% for key, info in risk_summary.items %}
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <a href="{% url 'core:risk_flags' pk=info.fy_pk %}" class="fw-semibold text-decoration-none">
+                                {{ info.client_name }} &mdash; {{ info.entity_name }}
+                            </a>
+                            <span class="badge bg-danger">{{ info.flags|length }} issue{{ info.flags|length|pluralize }}</span>
+                        </div>
+                        <div class="ps-3">
+                            {% for flag in info.flags %}
+                            <div class="d-flex align-items-start mb-1">
+                                <i class="bi bi-exclamation-triangle-fill me-2 {% if flag.severity == 'high' %}text-danger{% elif flag.severity == 'medium' %}text-warning{% else %}text-info{% endif %}" style="font-size: 0.8rem; margin-top: 3px;"></i>
+                                <small class="{% if flag.severity == 'high' %}text-danger{% elif flag.severity == 'medium' %}text-dark{% else %}text-muted{% endif %}">
+                                    {{ flag.title }}
+                                </small>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% if not forloop.last %}<hr class="my-2">{% endif %}
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center py-3">
+                        <i class="bi bi-shield-check text-success" style="font-size: 2rem;"></i>
+                        <p class="text-muted mb-0 mt-2">No open audit risks across your clients.</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Unfinalised Clients -->
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-header bg-white border-bottom">
+                <h6 class="mb-0">
+                    <i class="bi bi-folder2-open me-1"></i>
+                    Work in Progress
+                </h6>
+            </div>
+            <div class="card-body p-0">
+                {% if unfinalised_years %}
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0 align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Client</th>
+                                <th>Entity</th>
+                                <th>Period</th>
+                                <th>Status</th>
+                                <th class="text-end">Last Updated</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for fy in unfinalised_years %}
+                            <tr>
+                                <td class="fw-semibold">{{ fy.entity.client.name }}</td>
+                                <td>{{ fy.entity.entity_name }}</td>
+                                <td>
+                                    <small class="text-muted">{{ fy.year_label }}</small>
+                                </td>
+                                <td>
+                                    <span class="badge bg-{% if fy.status == 'draft' %}warning text-dark{% elif fy.status == 'in_review' %}info{% elif fy.status == 'reviewed' %}primary{% else %}success{% endif %}">
+                                        {{ fy.get_status_display }}
+                                    </span>
+                                </td>
+                                <td class="text-end">
+                                    <small class="text-muted">{{ fy.updated_at|timesince }} ago</small>
+                                </td>
+                                <td class="text-end">
+                                    <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-sm btn-outline-primary">
+                                        Open
+                                    </a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center py-4">
+                    <i class="bi bi-check-circle text-success" style="font-size: 2rem;"></i>
+                    <p class="text-muted mb-0 mt-2">All financial years are finalised. Nice work!</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
     </div>
-    <div class="table-responsive">
-        <table class="table table-hover mb-0">
-            <thead class="table-light">
-                <tr>
-                    <th>Client</th>
-                    <th>Entity</th>
-                    <th>Year</th>
-                    <th>Status</th>
-                    <th>Last Updated</th>
-                    <th></th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for fy in recent_years %}
-                <tr>
-                    <td>{{ fy.entity.client.name }}</td>
-                    <td>{{ fy.entity.entity_name }}</td>
-                    <td>{{ fy.year_label }}</td>
-                    <td>
-                        <span class="badge bg-{% if fy.status == 'draft' %}warning text-dark{% elif fy.status == 'in_review' %}info{% elif fy.status == 'reviewed' %}primary{% else %}success{% endif %}">
-                            {{ fy.get_status_display }}
-                        </span>
-                    </td>
-                    <td>{{ fy.updated_at|timesince }} ago</td>
-                    <td>
-                        <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-sm btn-outline-primary">
-                            Open
-                        </a>
-                    </td>
-                </tr>
-                {% empty %}
-                <tr><td colspan="6" class="text-center text-muted py-4">No financial years yet. Start by creating a client.</td></tr>
-                {% endfor %}
-            </tbody>
-        </table>
+
+    <!-- ===== RIGHT COLUMN — Recent Activity ===== -->
+    <div class="col-lg-4">
+        <div class="card border-0 shadow-sm" style="position: sticky; top: 80px;">
+            <div class="card-header bg-white border-bottom">
+                <h6 class="mb-0">
+                    <i class="bi bi-clock-history me-1"></i>
+                    Recent Activity
+                </h6>
+            </div>
+            <div class="card-body p-0" style="max-height: 70vh; overflow-y: auto;">
+                {% if recent_activities %}
+                <div class="list-group list-group-flush">
+                    {% for activity in recent_activities %}
+                    <a href="{{ activity.url|default:'#' }}" class="list-group-item list-group-item-action py-2 px-3 {% if not activity.is_read %}bg-light{% endif %}" style="border-left: 3px solid {% if activity.event_type == 'classify_complete' %}#198754{% elif activity.event_type == 'bank_upload' %}#0d6efd{% elif activity.event_type == 'audit_run' %}#dc3545{% elif activity.event_type == 'classify_started' %}#ffc107{% else %}#6c757d{% endif %};">
+                        <div class="d-flex align-items-start">
+                            <i class="bi {% if activity.event_type == 'bank_upload' %}bi-bank text-primary{% elif activity.event_type == 'classify_complete' %}bi-check-circle-fill text-success{% elif activity.event_type == 'classify_started' %}bi-hourglass-split text-warning{% elif activity.event_type == 'tb_import' %}bi-file-earmark-spreadsheet text-info{% elif activity.event_type == 'journal_posted' %}bi-journal-check text-primary{% elif activity.event_type == 'year_finalised' %}bi-trophy-fill text-success{% elif activity.event_type == 'audit_run' %}bi-shield-exclamation text-danger{% elif activity.event_type == 'review_approved' %}bi-check2-all text-primary{% elif activity.event_type == 'doc_generated' %}bi-file-earmark-word text-primary{% else %}bi-info-circle text-muted{% endif %} me-2 mt-1"></i>
+                            <div class="flex-grow-1">
+                                <div class="fw-semibold" style="font-size: 0.85rem;">{{ activity.title }}</div>
+                                {% if activity.description %}
+                                <small class="text-muted">{{ activity.description }}</small>
+                                {% endif %}
+                                <div class="text-muted" style="font-size: 0.75rem;">{{ activity.created_at|timesince }} ago</div>
+                            </div>
+                            {% if not activity.is_read %}
+                            <span class="badge bg-primary rounded-pill" style="font-size: 0.5rem;">&bull;</span>
+                            {% endif %}
+                        </div>
+                    </a>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="text-center py-4">
+                    <i class="bi bi-clock text-muted" style="font-size: 2rem;"></i>
+                    <p class="text-muted mb-0 mt-2">No recent activity yet.</p>
+                    <small class="text-muted">Activity will appear here as you work.</small>
+                </div>
+                {% endif %}
+            </div>
+        </div>
     </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Live date/time clock
+(function() {
+    function updateClock() {
+        const now = new Date();
+        const options = {
+            weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+            hour: '2-digit', minute: '2-digit', second: '2-digit',
+            timeZone: 'Australia/Melbourne'
+        };
+        document.getElementById('liveDateTime').textContent = now.toLocaleDateString('en-AU', options);
+    }
+    updateClock();
+    setInterval(updateClock, 1000);
+})();
+</script>
 {% endblock %}

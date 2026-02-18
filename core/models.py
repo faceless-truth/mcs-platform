@@ -1373,3 +1373,67 @@ class StockItem(models.Model):
     def stock_movement(self):
         """Closing stock minus opening stock."""
         return self.closing_value - self.opening_value
+
+
+# ---------------------------------------------------------------------------
+# Activity Log (Dashboard Feed & Notifications)
+# ---------------------------------------------------------------------------
+class ActivityLog(models.Model):
+    """
+    Tracks significant events in the system for the dashboard activity feed
+    and notification bell. Events include bank statement uploads, AI
+    classification completions, trial balance imports, journal postings, etc.
+    """
+
+    class EventType(models.TextChoices):
+        BANK_UPLOAD = "bank_upload", "Bank Statement Uploaded"
+        CLASSIFY_COMPLETE = "classify_complete", "AI Classification Complete"
+        CLASSIFY_STARTED = "classify_started", "AI Classification Started"
+        TB_IMPORT = "tb_import", "Trial Balance Imported"
+        JOURNAL_POSTED = "journal_posted", "Journal Entry Posted"
+        YEAR_FINALISED = "year_finalised", "Financial Year Finalised"
+        AUDIT_RUN = "audit_run", "Audit Risk Analysis Run"
+        REVIEW_APPROVED = "review_approved", "Transactions Approved"
+        DOCUMENT_GENERATED = "doc_generated", "Document Generated"
+        GENERAL = "general", "General"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="activity_logs",
+    )
+    event_type = models.CharField(
+        max_length=30, choices=EventType.choices, default=EventType.GENERAL
+    )
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True, default="")
+    entity = models.ForeignKey(
+        Entity,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="activity_logs",
+    )
+    financial_year = models.ForeignKey(
+        FinancialYear,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="activity_logs",
+    )
+    url = models.CharField(max_length=500, blank=True, default="")
+    is_read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["user", "-created_at"]),
+            models.Index(fields=["is_read", "-created_at"]),
+        ]
+
+    def __str__(self):
+        return f"[{self.get_event_type_display()}] {self.title}"
