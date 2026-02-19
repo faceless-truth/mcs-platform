@@ -233,15 +233,16 @@ PL_APPROP_RULES = [
 ]
 
 SECTION_RULES = {
-    "Revenue": REVENUE_RULES,
-    "Cost of Sales": COS_RULES,
-    "Expenses": EXPENSE_RULES,
-    "Assets": ASSET_RULES,
-    "Liabilities": LIABILITY_RULES,
-    "Equity": EQUITY_RULES,
-    "Capital Accounts": CAPITAL_ACCOUNT_RULES,
-    "P and L Appropriation": PL_APPROP_RULES,
-    "Suspense": [],  # Suspense stays unmapped
+    # Keys must match ChartOfAccount.StatementSection values (lowercase)
+    "revenue": REVENUE_RULES,
+    "cost_of_sales": COS_RULES,
+    "expenses": EXPENSE_RULES,
+    "assets": ASSET_RULES,
+    "liabilities": LIABILITY_RULES,
+    "equity": EQUITY_RULES,
+    "capital_accounts": CAPITAL_ACCOUNT_RULES,
+    "pl_appropriation": PL_APPROP_RULES,
+    "suspense": [],  # Suspense stays unmapped
 }
 
 
@@ -258,18 +259,18 @@ def match_account(account_name, section, entity_type):
             if kw.lower() in name_lower:
                 return code
 
-    # Section-level fallbacks
-    if section == "Revenue":
+    # Section-level fallbacks (keys match DB values)
+    if section == "revenue":
         return "IS-REV-001"
-    elif section == "Cost of Sales":
+    elif section == "cost_of_sales":
         return "IS-COS-001"
-    elif section == "Expenses":
+    elif section == "expenses":
         return "IS-EXP-016"  # Other expenses
-    elif section == "Assets":
+    elif section == "assets":
         return "BS-NCA-007"  # Other non-current assets
-    elif section == "Liabilities":
+    elif section == "liabilities":
         return "BS-CL-005"  # Other current liabilities
-    elif section == "Equity":
+    elif section == "equity":
         if entity_type == "trust":
             return "BS-EQ-005"
         elif entity_type == "partnership":
@@ -277,11 +278,11 @@ def match_account(account_name, section, entity_type):
         elif entity_type == "sole_trader":
             return "BS-EQ-008"
         return "BS-EQ-002"
-    elif section == "Capital Accounts":
+    elif section == "capital_accounts":
         if entity_type == "partnership":
             return "BS-EQ-007"
         return "BS-EQ-005"
-    elif section == "P and L Appropriation":
+    elif section == "pl_appropriation":
         return "BS-EQ-002"
 
     return None

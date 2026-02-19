@@ -40,6 +40,7 @@ from django.db import transaction
 from .models import (
     Entity, EntityOfficer, FinancialYear, TrialBalanceLine,
     DepreciationAsset, ClientAccountMapping, AccountMapping,
+    ChartOfAccount,
 )
 
 logger = logging.getLogger(__name__)
@@ -954,18 +955,29 @@ def import_access_ledger_zip(zip_file, client=None, replace_existing=False):
         logger.info(f"Cleared existing data for {entity_name}")
         result["entity"] = entity
     else:
+        # Auto-create a Client if none provided
+        from .models import Client
+        if not client:
+            client, _ = Client.objects.get_or_create(
+                name=entity_name,
+                defaults={
+                    "contact_email": entity_info.get("email", ""),
+                },
+            )
+            logger.info(f"Auto-created client: {client.name} (pk={client.pk})")
+
         # Create new entity
         entity = Entity.objects.create(
             entity_name=entity_name,
             entity_type=entity_info["entity_type"],
             abn=entity_info["abn"],
-            tfn=entity_info.get("tfn", ""),
             trading_as=entity_info.get("trading_as", ""),
             client=client,
             metadata={
                 "access_ledger_code": entity_info["client_code"],
                 "address": entity_info["address"],
                 "email": entity_info.get("email", ""),
+                "tfn": entity_info.get("tfn", ""),
                 "imported_from": "access_ledger",
             },
         )
@@ -993,6 +1005,16 @@ def import_access_ledger_zip(zip_file, client=None, replace_existing=False):
     prior_fy = None
     fy_map = {}  # year_int -> FinancialYear instance
     chart_by_year = {}  # year_int -> chart dict (for auto-mapping)
+
+    # Pre-build ChartOfAccount mapping cache for this entity type
+    # This maps account_code -> AccountMapping for instant lookup during import
+    coa_mapping_cache = {}
+    entity_type = entity_info["entity_type"]
+    for coa in ChartOfAccount.objects.filter(
+        entity_type=entity_type, maps_to__isnull=False, is_active=True
+    ).select_related("maps_to"):
+        coa_mapping_cache[coa.account_code] = coa.maps_to
+    logger.info(f"Loaded {len(coa_mapping_cache)} ChartOfAccount mappings for {entity_type}")
 
     for year in reader.years:
         # Parse Year.txt for dates
@@ -1052,7 +1074,13 @@ def import_access_ledger_zip(zip_file, client=None, replace_existing=False):
         # --- Parse and import trial balance ---
         tb_lines = _parse_balance(reader, year, chart)
         tb_objects = []
+        mapped_in_year = 0
         for line_data in tb_lines:
+            # Look up mapping from ChartOfAccount (pre-populated by map_accounts)
+            mapped_item = coa_mapping_cache.get(line_data["account_code"])
+            if mapped_item:
+                mapped_in_year += 1
+
             tb_objects.append(TrialBalanceLine(
                 financial_year=fy,
                 account_code=line_data["account_code"],
@@ -1063,13 +1091,14 @@ def import_access_ledger_zip(zip_file, client=None, replace_existing=False):
                 closing_balance=line_data["closing_balance"],
                 prior_debit=line_data["prior_debit"],
                 prior_credit=line_data["prior_credit"],
+                mapped_line_item=mapped_item,
                 is_adjustment=False,
             ))
 
         if tb_objects:
             TrialBalanceLine.objects.bulk_create(tb_objects)
             result["total_tb_lines"] += len(tb_objects)
-            logger.info(f"  Year {year}: {len(tb_objects)} TB lines imported")
+            logger.info(f"  Year {year}: {len(tb_objects)} TB lines imported ({mapped_in_year} mapped via ChartOfAccount)")
 
         # --- Parse and import depreciation ---
         dep_assets = _parse_depreciation(reader, year)
@@ -1103,12 +1132,14 @@ def import_access_ledger_zip(zip_file, client=None, replace_existing=False):
 
         # --- Create account mappings ---
         for line_data in tb_lines:
+            mapped_item = coa_mapping_cache.get(line_data["account_code"])
+            defaults = {"client_account_name": line_data["account_name"]}
+            if mapped_item:
+                defaults["mapped_line_item"] = mapped_item
             ClientAccountMapping.objects.update_or_create(
                 entity=entity,
                 client_account_code=line_data["account_code"],
-                defaults={
-                    "client_account_name": line_data["account_name"],
-                },
+                defaults=defaults,
             )
 
         prior_fy = fy
