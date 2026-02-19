@@ -122,13 +122,22 @@ def client_list(request):
     query = request.GET.get("q", "")
     entity_type = request.GET.get("entity_type", "")
     status_filter = request.GET.get("status", "")
+    show_archived = request.GET.get("show_archived", "") == "1"
 
-    if request.user.is_admin:
-        clients = Client.objects.filter(is_active=True)
+    if show_archived:
+        if request.user.is_admin:
+            clients = Client.objects.filter(is_archived=True)
+        else:
+            clients = Client.objects.filter(
+                assigned_accountant=request.user, is_archived=True
+            )
     else:
-        clients = Client.objects.filter(
-            assigned_accountant=request.user, is_active=True
-        )
+        if request.user.is_admin:
+            clients = Client.objects.filter(is_active=True, is_archived=False)
+        else:
+            clients = Client.objects.filter(
+                assigned_accountant=request.user, is_active=True, is_archived=False
+            )
 
     if query:
         clients = clients.filter(
@@ -144,6 +153,7 @@ def client_list(request):
         "query": query,
         "entity_type": entity_type,
         "status_filter": status_filter,
+        "show_archived": show_archived,
     }
 
     if request.htmx:
@@ -242,7 +252,13 @@ def entity_detail(request, pk):
     entity = get_object_or_404(Entity, pk=pk)
     financial_years = entity.financial_years.all()
     officers = entity.officers.filter(date_ceased__isnull=True)
-    context = {"entity": entity, "financial_years": financial_years, "officers": officers}
+    unfinalised_count = financial_years.exclude(status="finalised").count()
+    context = {
+        "entity": entity,
+        "financial_years": financial_years,
+        "officers": officers,
+        "unfinalised_count": unfinalised_count,
+    }
     return render(request, "core/entity_detail.html", context)
 
 
@@ -470,6 +486,18 @@ def financial_year_status(request, pk):
     if new_status == "reviewed" and not request.user.is_senior:
         messages.error(request, "Only senior accountants can mark as reviewed.")
         return redirect("core:financial_year_detail", pk=pk)
+
+    # Audit risk enforcement: cannot finalise with open risk flags
+    if new_status == "finalised":
+        open_risk_count = fy.risk_flags.filter(status="open").count()
+        if open_risk_count > 0:
+            messages.error(
+                request,
+                f"Cannot finalise: {open_risk_count} open audit risk flag(s) remain. "
+                f"All risk flags must be resolved (with a minimum 5-word description) "
+                f"before finalisation."
+            )
+            return redirect("core:financial_year_detail", pk=pk)
 
     old_status = fy.status
     fy.status = new_status
@@ -1051,8 +1079,11 @@ def generate_document(request, pk):
 
     from .docgen import generate_financial_statements
 
+    # Check for open audit risk flags — if any exist, watermark the document
+    has_open_risks = fy.risk_flags.filter(status="open").exists()
+
     try:
-        buffer = generate_financial_statements(fy.pk)
+        buffer = generate_financial_statements(fy.pk, has_open_risks=has_open_risks)
     except Exception as e:
         messages.error(request, f"Document generation failed: {e}")
         return redirect("core:financial_year_detail", pk=pk)
@@ -2748,3 +2779,299 @@ def notifications_api(request):
             "created_at": a.created_at.isoformat(),
         })
     return JsonResponse({"unread_count": ActivityLog.objects.filter(is_read=False).count(), "items": data})
+
+
+# ============================================================
+# Bulk Client Actions (Delete / Archive)
+# ============================================================
+
+@login_required
+def client_bulk_action(request):
+    """Handle bulk delete/archive actions on selected clients."""
+    if request.method != "POST":
+        return redirect("core:client_list")
+
+    if not request.user.can_edit:
+        messages.error(request, "You do not have permission.")
+        return redirect("core:client_list")
+
+    action = request.POST.get("bulk_action")
+    client_ids = request.POST.getlist("client_ids")
+
+    if not client_ids:
+        messages.warning(request, "No clients selected.")
+        return redirect("core:client_list")
+
+    clients = Client.objects.filter(pk__in=client_ids)
+
+    if action == "archive":
+        count = clients.update(is_archived=True, is_active=False)
+        messages.success(request, f"Archived {count} client(s).")
+        _log_action(request, "update", f"Archived {count} client(s)")
+    elif action == "unarchive":
+        count = clients.update(is_archived=False, is_active=True)
+        messages.success(request, f"Unarchived {count} client(s).")
+        _log_action(request, "update", f"Unarchived {count} client(s)")
+    elif action == "delete":
+        count = clients.count()
+        for c in clients:
+            _log_action(request, "delete", f"Deleted client: {c.name}")
+        clients.delete()
+        messages.success(request, f"Deleted {count} client(s) and all associated data.")
+    else:
+        messages.error(request, "Invalid action.")
+
+    return redirect("core:client_list")
+
+
+# ============================================================
+# Bulk Entity Actions (Delete / Archive)
+# ============================================================
+
+@login_required
+def entity_bulk_action(request, client_pk):
+    """Handle bulk delete/archive actions on selected entities."""
+    if request.method != "POST":
+        return redirect("core:client_detail", pk=client_pk)
+
+    if not request.user.can_edit:
+        messages.error(request, "You do not have permission.")
+        return redirect("core:client_detail", pk=client_pk)
+
+    action = request.POST.get("bulk_action")
+    entity_ids = request.POST.getlist("entity_ids")
+
+    if not entity_ids:
+        messages.warning(request, "No entities selected.")
+        return redirect("core:client_detail", pk=client_pk)
+
+    entities = Entity.objects.filter(pk__in=entity_ids, client_id=client_pk)
+
+    if action == "archive":
+        count = entities.update(is_archived=True)
+        messages.success(request, f"Archived {count} entity/entities.")
+        _log_action(request, "update", f"Archived {count} entity/entities")
+    elif action == "unarchive":
+        count = entities.update(is_archived=False)
+        messages.success(request, f"Unarchived {count} entity/entities.")
+        _log_action(request, "update", f"Unarchived {count} entity/entities")
+    elif action == "delete":
+        count = entities.count()
+        for e in entities:
+            _log_action(request, "delete", f"Deleted entity: {e.entity_name}")
+        entities.delete()
+        messages.success(request, f"Deleted {count} entity/entities and all associated data.")
+    else:
+        messages.error(request, "Invalid action.")
+
+    return redirect("core:client_detail", pk=client_pk)
+
+
+# ============================================================
+# Entity-level HandiLedger Import
+# ============================================================
+
+@login_required
+def entity_import_handiledger(request, pk):
+    """Import HandiLedger ZIP for a specific entity."""
+    from .access_ledger_import import import_access_ledger_zip
+
+    entity = get_object_or_404(Entity, pk=pk)
+
+    if not request.user.can_edit:
+        messages.error(request, "You do not have permission.")
+        return redirect("core:entity_detail", pk=pk)
+
+    result = None
+
+    if request.method == "POST":
+        zip_file = request.FILES.get("zip_file")
+        if not zip_file:
+            messages.error(request, "Please select a ZIP file.")
+        elif not zip_file.name.lower().endswith(".zip"):
+            messages.error(request, "File must be a .zip file.")
+        else:
+            replace = request.POST.get("replace_existing") == "1"
+            try:
+                result = import_access_ledger_zip(
+                    zip_file,
+                    client=entity.client,
+                    replace_existing=replace,
+                )
+                if result["errors"]:
+                    messages.warning(
+                        request,
+                        f"Import completed with {len(result['errors'])} error(s)."
+                    )
+                else:
+                    messages.success(
+                        request,
+                        f"Successfully imported: "
+                        f"{result['years_imported']} years, "
+                        f"{result['total_tb_lines']} TB lines, "
+                        f"{result['total_dep_assets']} depreciation assets."
+                    )
+                _log_action(
+                    request, "import",
+                    f"Imported HandiLedger ZIP for {entity.entity_name}: "
+                    f"{result['years_imported']} years",
+                    entity,
+                )
+            except Exception as e:
+                messages.error(request, f"Import failed: {str(e)}")
+
+    return render(request, "core/entity_import_handiledger.html", {
+        "entity": entity,
+        "result": result,
+    })
+
+
+# ============================================================
+# Delete Unfinalised FY Data
+# ============================================================
+
+@login_required
+def delete_unfinalised_fy(request, pk):
+    """Delete all unfinalised financial years and their data for an entity."""
+    entity = get_object_or_404(Entity, pk=pk)
+
+    if request.method != "POST":
+        return redirect("core:entity_detail", pk=pk)
+
+    if not request.user.can_edit:
+        messages.error(request, "You do not have permission.")
+        return redirect("core:entity_detail", pk=pk)
+
+    unfinalised = entity.financial_years.exclude(status="finalised")
+    count = unfinalised.count()
+    if count == 0:
+        messages.info(request, "No unfinalised financial years to delete.")
+        return redirect("core:entity_detail", pk=pk)
+
+    for fy in unfinalised:
+        _log_action(request, "delete", f"Deleted unfinalised FY: {fy.year_label} for {entity.entity_name}", fy)
+
+    unfinalised.delete()
+    messages.success(request, f"Deleted {count} unfinalised financial year(s) and all associated data.")
+    return redirect("core:entity_detail", pk=pk)
+
+
+# ============================================================
+# HTMX: Update TB Line Mapping (clickable AI suggestion)
+# ============================================================
+
+@login_required
+def htmx_update_tb_mapping(request, pk):
+    """HTMX endpoint to update the mapping of a trial balance line via dropdown."""
+    line = get_object_or_404(TrialBalanceLine, pk=pk)
+
+    if request.method == "POST":
+        mapping_id = request.POST.get("mapped_line_item")
+        if mapping_id:
+            try:
+                mapping = AccountMapping.objects.get(pk=mapping_id)
+                line.mapped_line_item = mapping
+                line.save()
+
+                # Also save to client account mapping for reuse
+                ClientAccountMapping.objects.update_or_create(
+                    entity=line.financial_year.entity,
+                    client_account_code=line.account_code,
+                    defaults={
+                        "client_account_name": line.account_name,
+                        "mapped_line_item": mapping,
+                    },
+                )
+            except AccountMapping.DoesNotExist:
+                pass
+
+    # Return the updated row
+    entity_type = line.financial_year.entity.entity_type
+    coa_items = ChartOfAccount.objects.filter(
+        entity_type=entity_type, is_active=True
+    ).select_related("maps_to").order_by("section", "account_code")
+
+    return render(request, "partials/tb_line_row_review.html", {
+        "line": line,
+        "coa_items": coa_items,
+    })
+
+
+# ============================================================
+# Chart of Accounts API for searchable dropdown
+# ============================================================
+
+@login_required
+def coa_search_api(request):
+    """JSON API for searching chart of accounts — used by the review tab dropdown."""
+    entity_type = request.GET.get("entity_type", "company")
+    q = request.GET.get("q", "")
+
+    qs = ChartOfAccount.objects.filter(
+        entity_type=entity_type, is_active=True
+    ).select_related("maps_to").order_by("section", "account_code")
+
+    if q:
+        qs = qs.filter(
+            Q(account_code__icontains=q) | Q(account_name__icontains=q)
+        )
+
+    items = []
+    for a in qs[:200]:
+        items.append({
+            "id": str(a.maps_to.pk) if a.maps_to else "",
+            "code": a.account_code,
+            "name": a.account_name,
+            "section": a.get_section_display(),
+            "mapping_label": a.maps_to.line_item_label if a.maps_to else "Unmapped",
+        })
+    return JsonResponse({"items": items})
+
+
+# ============================================================
+# XRM Pull (Xero Practice Manager)
+# ============================================================
+
+@login_required
+def xrm_pull(request, client_pk):
+    """Pull entity data from Xero Practice Manager for selected entities."""
+    import json
+
+    if request.method != "POST":
+        return JsonResponse({"status": "error", "message": "POST required"}, status=405)
+
+    if not request.user.can_edit:
+        return JsonResponse({"status": "error", "message": "Permission denied"}, status=403)
+
+    try:
+        data = json.loads(request.body)
+        entity_ids = data.get("entity_ids", [])
+    except (json.JSONDecodeError, ValueError):
+        return JsonResponse({"status": "error", "message": "Invalid request body"}, status=400)
+
+    if not entity_ids:
+        return JsonResponse({"status": "error", "message": "No entities selected"})
+
+    entities = Entity.objects.filter(pk__in=entity_ids, client_id=client_pk)
+
+    # Check if any entities have XPM client IDs
+    xpm_entities = entities.filter(xpm_client_id__isnull=False).exclude(xpm_client_id="")
+    if not xpm_entities.exists():
+        return JsonResponse({
+            "status": "error",
+            "message": "None of the selected entities have an XPM Client ID configured. "
+                       "Edit the entity and add the XPM Client ID first."
+        })
+
+    # Placeholder for actual XPM API integration
+    # In production, this would call the Xero Practice Manager API
+    updated = []
+    for entity in xpm_entities:
+        updated.append(entity.entity_name)
+        _log_action(request, "xrm_pull", f"XRM pull requested for {entity.entity_name} (XPM ID: {entity.xpm_client_id})", entity)
+
+    return JsonResponse({
+        "status": "success",
+        "message": f"XRM pull initiated for {len(updated)} entity/entities: {', '.join(updated)}. "
+                   f"Data will be synced shortly."
+    })

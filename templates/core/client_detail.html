@@ -15,9 +15,7 @@
         <h4 class="mb-1">{{ client.name }}</h4>
         <p class="text-muted mb-0">
             {% if client.contact_email %}<i class="bi bi-envelope"></i> {{ client.contact_email }}{% endif %}
-            {% if client.contact_phone %} &middot; <i class="bi bi-telephone"></i> {{ client.contact_phone }}{% endif %}
             {% if client.assigned_accountant %} &middot; <i class="bi bi-person-badge"></i> <strong>{{ client.assigned_accountant.get_full_name }}</strong>{% endif %}
-            {% if client.xpm_client_id %} &middot; <span class="badge bg-info text-dark"><i class="bi bi-link-45deg"></i> XPM Linked</span>{% endif %}
         </p>
     </div>
     <div class="d-flex gap-2 flex-wrap justify-content-end">
@@ -28,6 +26,9 @@
         <a href="{% url 'core:entity_create' client_pk=client.pk %}" class="btn btn-primary btn-sm">
             <i class="bi bi-plus-lg"></i> Add Entity
         </a>
+        <button id="xrmBtn" class="btn btn-success btn-sm d-none">
+            <i class="bi bi-cloud-download"></i> XRM
+        </button>
         {% endif %}
     </div>
 </div>
@@ -109,6 +110,25 @@
         </div>
         {% endif %}
 
+        <!-- Entity Bulk Action Bar (hidden until selection) -->
+        <div id="entity-bulk-bar" class="alert alert-info d-none mb-3">
+            <form method="post" action="{% url 'core:entity_bulk_action' client_pk=client.pk %}" id="entityBulkForm">
+                {% csrf_token %}
+                <div class="d-flex align-items-center gap-3">
+                    <span id="entity-selected-count" class="fw-bold">0 selected</span>
+                    <button type="submit" name="bulk_action" value="archive" class="btn btn-warning btn-sm"
+                            onclick="return confirm('Archive selected entities?');">
+                        <i class="bi bi-archive"></i> Archive
+                    </button>
+                    <button type="submit" name="bulk_action" value="delete" class="btn btn-danger btn-sm"
+                            onclick="return confirm('PERMANENTLY DELETE selected entities and ALL their data? This cannot be undone.');">
+                        <i class="bi bi-trash"></i> Delete
+                    </button>
+                </div>
+                <div id="entity-hidden-inputs"></div>
+            </form>
+        </div>
+
         <!-- Entities -->
         <div class="card mb-3">
             <div class="card-header">
@@ -118,6 +138,9 @@
                 <table class="table table-hover mb-0">
                     <thead class="table-light">
                         <tr>
+                            <th style="width: 40px;">
+                                <input type="checkbox" class="form-check-input" id="selectAllEntities" title="Select all">
+                            </th>
                             <th>Entity Name</th>
                             <th>Type</th>
                             <th>ABN</th>
@@ -128,15 +151,19 @@
                     </thead>
                     <tbody>
                         {% for entity in entities %}
-                        <tr>
+                        <tr{% if entity.is_archived %} class="table-secondary"{% endif %}>
+                            <td>
+                                <input type="checkbox" class="form-check-input entity-checkbox" value="{{ entity.pk }}">
+                            </td>
                             <td>
                                 <a href="{% url 'core:entity_detail' pk=entity.pk %}" class="text-decoration-none fw-semibold">
                                     {{ entity.entity_name }}
                                 </a>
                                 {% if entity.trading_as %}<br><small class="text-muted">t/a {{ entity.trading_as }}</small>{% endif %}
+                                {% if entity.is_archived %}<span class="badge bg-secondary ms-1">Archived</span>{% endif %}
                             </td>
                             <td><span class="badge bg-info text-dark">{{ entity.get_entity_type_display }}</span></td>
-                            <td>{{ entity.abn|default:"—" }}</td>
+                            <td>{{ entity.abn|default:"\u2014" }}</td>
                             <td>{{ entity.get_reporting_framework_display }}</td>
                             <td><span class="badge bg-secondary">{{ entity.financial_years.count }}</span></td>
                             <td>
@@ -146,7 +173,7 @@
                             </td>
                         </tr>
                         {% empty %}
-                        <tr><td colspan="6" class="text-center text-muted py-3">No entities yet. Add one to get started.</td></tr>
+                        <tr><td colspan="7" class="text-center text-muted py-3">No entities yet. Add one to get started.</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>
@@ -587,6 +614,89 @@ document.addEventListener('DOMContentLoaded', function() {
             window.location.hash = e.target.getAttribute('data-bs-target');
         });
     });
+
+    // Entity checkbox selection
+    const selectAllEntities = document.getElementById('selectAllEntities');
+    const entityBulkBar = document.getElementById('entity-bulk-bar');
+    const entitySelectedCount = document.getElementById('entity-selected-count');
+    const entityHiddenInputs = document.getElementById('entity-hidden-inputs');
+    const xrmBtn = document.getElementById('xrmBtn');
+
+    function updateEntityBulkBar() {
+        const checked = document.querySelectorAll('.entity-checkbox:checked');
+        if (entityHiddenInputs) entityHiddenInputs.innerHTML = '';
+        if (checked.length > 0) {
+            if (entityBulkBar) entityBulkBar.classList.remove('d-none');
+            if (entitySelectedCount) entitySelectedCount.textContent = checked.length + ' selected';
+            if (xrmBtn) xrmBtn.classList.remove('d-none');
+            checked.forEach(cb => {
+                const input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = 'entity_ids';
+                input.value = cb.value;
+                if (entityHiddenInputs) entityHiddenInputs.appendChild(input);
+            });
+        } else {
+            if (entityBulkBar) entityBulkBar.classList.add('d-none');
+            if (xrmBtn) xrmBtn.classList.add('d-none');
+        }
+    }
+
+    if (selectAllEntities) {
+        selectAllEntities.addEventListener('change', function() {
+            document.querySelectorAll('.entity-checkbox').forEach(cb => {
+                cb.checked = selectAllEntities.checked;
+            });
+            updateEntityBulkBar();
+        });
+    }
+
+    document.addEventListener('change', function(e) {
+        if (e.target.classList.contains('entity-checkbox')) {
+            updateEntityBulkBar();
+        }
+    });
+
+    // XRM button: pull entity data from Xero Practice Manager
+    if (xrmBtn) {
+        xrmBtn.addEventListener('click', function() {
+            const checked = document.querySelectorAll('.entity-checkbox:checked');
+            if (checked.length === 0) {
+                alert('Please select at least one entity.');
+                return;
+            }
+            const entityIds = Array.from(checked).map(cb => cb.value);
+            if (!confirm('Pull data from Xero Practice Manager for ' + entityIds.length + ' selected entity/entities?')) return;
+
+            xrmBtn.disabled = true;
+            xrmBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Pulling...';
+
+            fetch('{% url "core:xrm_pull" client_pk=client.pk %}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value,
+                },
+                body: JSON.stringify({entity_ids: entityIds}),
+            })
+            .then(resp => resp.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    alert(data.message || 'XRM data pulled successfully.');
+                    location.reload();
+                } else {
+                    alert(data.message || 'XRM pull failed.');
+                }
+            })
+            .catch(err => {
+                alert('XRM pull error: ' + err.message);
+            })
+            .finally(() => {
+                xrmBtn.disabled = false;
+                xrmBtn.innerHTML = '<i class="bi bi-cloud-download"></i> XRM';
+            });
+        });
+    }
 });
 </script>
 {% endblock %}

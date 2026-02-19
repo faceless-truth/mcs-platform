@@ -115,4 +115,23 @@ urlpatterns = [
     # HTMX partials
     path("htmx/client-search/", views.htmx_client_search, name="htmx_client_search"),
     path("htmx/tb-line/<uuid:pk>/map/", views.htmx_map_tb_line, name="htmx_map_tb_line"),
+
+    # Bulk Actions
+    path("clients/bulk-action/", views.client_bulk_action, name="client_bulk_action"),
+    path("clients/<uuid:client_pk>/entities/bulk-action/", views.entity_bulk_action, name="entity_bulk_action"),
+
+    # Entity-level HandiLedger Import
+    path("entities/<uuid:pk>/import-handiledger/", views.entity_import_handiledger, name="entity_import_handiledger"),
+
+    # Delete Unfinalised FY Data
+    path("entities/<uuid:pk>/delete-unfinalised/", views.delete_unfinalised_fy, name="delete_unfinalised_fy"),
+
+    # HTMX: Update TB Line Mapping
+    path("htmx/tb-line/<uuid:pk>/update-mapping/", views.htmx_update_tb_mapping, name="htmx_update_tb_mapping"),
+
+    # COA Search API (for review tab dropdown)
+    path("api/coa-search/", views.coa_search_api, name="coa_search_api"),
+
+    # XRM Pull (Xero Practice Manager)
+    path("clients/<uuid:client_pk>/xrm-pull/", views.xrm_pull, name="xrm_pull"),
 ]

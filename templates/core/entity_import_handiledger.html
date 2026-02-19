@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Import HandiLedger - {{ entity.entity_name }} - StatementHub{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'core:client_list' %}">Clients</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'core:client_detail' pk=entity.client.pk %}">{{ entity.client.name }}</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
+        <li class="breadcrumb-item active">Import HandiLedger</li>
+    </ol>
+</nav>
+
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-file-earmark-zip"></i> Import from HandiLedger / Access Ledger</h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted">
+                    Upload a HandiLedger ZIP file to import all financial years contained in the archive.
+                    The system will automatically create financial years, import trial balance data, depreciation assets,
+                    and map all accounts to the standard chart of accounts.
+                </p>
+
+                <div class="alert alert-info">
+                    <i class="bi bi-info-circle"></i>
+                    <strong>Entity:</strong> {{ entity.entity_name }}
+                    ({{ entity.get_entity_type_display }})
+                    {% if entity.abn %} &middot; ABN: {{ entity.abn }}{% endif %}
+                </div>
+
+                <form method="post" enctype="multipart/form-data">
+                    {% csrf_token %}
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">HandiLedger ZIP File</label>
+                        <input type="file" name="zip_file" class="form-control" accept=".zip" required>
+                        <div class="form-text">Select the .zip file exported from HandiLedger / Access Ledger.</div>
+                    </div>
+                    <div class="mb-3 form-check">
+                        <input type="checkbox" class="form-check-input" name="replace_existing" value="1" id="replaceCheck">
+                        <label class="form-check-label" for="replaceCheck">
+                            Replace existing financial year data if years already exist
+                        </label>
+                    </div>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-cloud-upload"></i> Import ZIP
+                    </button>
+                    <a href="{% url 'core:entity_detail' pk=entity.pk %}" class="btn btn-outline-secondary ms-2">Cancel</a>
+                </form>
+
+                {% if result %}
+                <hr>
+                <h6 class="mt-3"><i class="bi bi-check-circle text-success"></i> Import Results</h6>
+                <table class="table table-sm">
+                    <tr><td>Entity</td><td><strong>{{ result.entity_name }}</strong></td></tr>
+                    <tr><td>Years Imported</td><td><strong>{{ result.years_imported }}</strong></td></tr>
+                    <tr><td>Total TB Lines</td><td>{{ result.total_tb_lines }}</td></tr>
+                    <tr><td>Mapped TB Lines</td><td>{{ result.total_mapped_lines }}</td></tr>
+                    <tr><td>Depreciation Assets</td><td>{{ result.total_dep_assets }}</td></tr>
+                    <tr><td>Officers Created</td><td>{{ result.officers_created }}</td></tr>
+                </table>
+                {% if result.errors %}
+                <div class="alert alert-warning mt-2">
+                    <strong>Warnings:</strong>
+                    <ul class="mb-0">
+                        {% for err in result.errors %}
+                        <li>{{ err }}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                {% endif %}
+                <a href="{% url 'core:entity_detail' pk=entity.pk %}" class="btn btn-primary mt-2">
+                    <i class="bi bi-arrow-left"></i> Back to Entity
+                </a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

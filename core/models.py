@@ -32,6 +32,10 @@ class Client(models.Model):
         help_text="Xero Practice Manager reference",
     )
     is_active = models.BooleanField(default=True)
+    is_archived = models.BooleanField(
+        default=False,
+        help_text="Archived clients are hidden from the default list but data is preserved.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -130,6 +134,18 @@ class Entity(models.Model):
     show_cents = models.BooleanField(
         default=False,
         help_text="Show amounts with cents (2 decimal places). Default for trusts and sole traders.",
+    )
+    xpm_client_id = models.CharField(
+        max_length=100, blank=True, verbose_name="XPM Client ID",
+        help_text="Xero Practice Manager reference",
+    )
+    contact_phone = models.CharField(
+        max_length=50, blank=True,
+        help_text="Primary contact phone for this entity",
+    )
+    is_archived = models.BooleanField(
+        default=False,
+        help_text="Archived entities are hidden from the default list but data is preserved.",
     )
     metadata = models.JSONField(
         default=dict, blank=True,

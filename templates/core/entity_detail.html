@@ -18,6 +18,8 @@
             {% if entity.abn %} &middot; ABN: {{ entity.abn }}{% endif %}
             {% if entity.acn %} &middot; ACN: {{ entity.acn }}{% endif %}
             &middot; {{ entity.get_reporting_framework_display }}
+            {% if entity.xpm_client_id %} &middot; <span class="badge bg-info text-dark"><i class="bi bi-link-45deg"></i> XPM: {{ entity.xpm_client_id }}</span>{% endif %}
+            {% if entity.contact_phone %} &middot; <i class="bi bi-telephone"></i> {{ entity.contact_phone }}{% endif %}
         </p>
     </div>
     <div class="d-flex gap-2">
@@ -30,6 +32,9 @@
         </a>
         <a href="{% url 'core:entity_edit' pk=entity.pk %}" class="btn btn-outline-primary btn-sm">
             <i class="bi bi-pencil"></i> Edit
+        </a>
+        <a href="{% url 'core:entity_import_handiledger' pk=entity.pk %}" class="btn btn-outline-success btn-sm">
+            <i class="bi bi-file-earmark-zip"></i> Import HandiLedger
         </a>
         <a href="{% url 'core:financial_year_create' entity_pk=entity.pk %}" class="btn btn-primary btn-sm">
             <i class="bi bi-plus-lg"></i> New Financial Year
@@ -67,8 +72,17 @@
 
 <!-- Financial Years -->
 <div class="card">
-    <div class="card-header">
+    <div class="card-header d-flex justify-content-between align-items-center">
         <h6 class="mb-0"><i class="bi bi-calendar3"></i> Financial Years</h6>
+        {% if user.can_edit and unfinalised_count > 0 %}
+        <form method="post" action="{% url 'core:delete_unfinalised_fy' pk=entity.pk %}" class="d-inline"
+              onsubmit="return confirm('DELETE all {{ unfinalised_count }} unfinalised financial year(s) and ALL their data (trial balances, journals, depreciation, risk flags, documents)? This cannot be undone.');">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-outline-danger btn-sm">
+                <i class="bi bi-trash"></i> Delete {{ unfinalised_count }} Unfinalised Year{{ unfinalised_count|pluralize }}
+            </button>
+        </form>
+        {% endif %}
     </div>
     <div class="table-responsive">
         <table class="table table-hover mb-0">
@@ -107,7 +121,7 @@
                     </td>
                 </tr>
                 {% empty %}
-                <tr><td colspan="7" class="text-center text-muted py-3">No financial years yet.</td></tr>
+                <tr><td colspan="7" class="text-center text-muted py-3">No financial years yet. Import from HandiLedger or create one manually.</td></tr>
                 {% endfor %}
             </tbody>
         </table>

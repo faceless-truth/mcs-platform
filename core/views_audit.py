@@ -216,10 +216,22 @@ def risk_flags_view(request, pk):
 @login_required
 @require_POST
 def resolve_risk_flag(request, pk):
-    """Resolve a single risk flag."""
+    """Resolve a single risk flag. Requires minimum 5-word resolution notes."""
     flag = get_object_or_404(RiskFlag, pk=pk)
+    resolution_notes = request.POST.get("resolution_notes", "").strip()
+
+    # Require minimum 5 words in the resolution notes
+    word_count = len(resolution_notes.split())
+    if word_count < 5:
+        messages.error(
+            request,
+            f"Resolution notes must contain at least 5 words (you wrote {word_count}). "
+            f"Please describe how this risk was addressed."
+        )
+        return redirect("core:risk_flags", pk=flag.financial_year.pk)
+
     flag.status = "resolved"
-    flag.resolution_notes = request.POST.get("resolution_notes", "")
+    flag.resolution_notes = resolution_notes
     flag.resolved_by = request.user
     flag.resolved_at = timezone.now()
     flag.save()

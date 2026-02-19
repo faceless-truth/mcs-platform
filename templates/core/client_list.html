@@ -4,11 +4,22 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h4 class="mb-0"><i class="bi bi-people-fill"></i> Clients</h4>
-    {% if user.can_edit %}
-    <a href="{% url 'core:client_create' %}" class="btn btn-primary">
-        <i class="bi bi-plus-lg"></i> New Client
-    </a>
-    {% endif %}
+    <div class="d-flex gap-2">
+        {% if show_archived %}
+        <a href="{% url 'core:client_list' %}" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-eye"></i> Show Active
+        </a>
+        {% else %}
+        <a href="{% url 'core:client_list' %}?show_archived=1" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-archive"></i> Show Archived
+        </a>
+        {% endif %}
+        {% if user.can_edit %}
+        <a href="{% url 'core:client_create' %}" class="btn btn-primary">
+            <i class="bi bi-plus-lg"></i> New Client
+        </a>
+        {% endif %}
+    </div>
 </div>
 
 <!-- Search Bar -->
@@ -28,12 +39,39 @@
     </div>
 </div>
 
+<!-- Bulk Action Toolbar (hidden until selection) -->
+<div id="bulk-action-bar" class="alert alert-info d-none mb-3">
+    <form method="post" action="{% url 'core:client_bulk_action' %}" id="bulkActionForm">
+        {% csrf_token %}
+        <div class="d-flex align-items-center gap-3">
+            <span id="selected-count" class="fw-bold">0 selected</span>
+            <button type="submit" name="bulk_action" value="archive" class="btn btn-warning btn-sm"
+                    onclick="return confirm('Archive selected clients? They will be hidden from the active list.');">
+                <i class="bi bi-archive"></i> Archive
+            </button>
+            <button type="submit" name="bulk_action" value="delete" class="btn btn-danger btn-sm"
+                    onclick="return confirm('PERMANENTLY DELETE selected clients and ALL their data? This cannot be undone.');">
+                <i class="bi bi-trash"></i> Delete
+            </button>
+            {% if show_archived %}
+            <button type="submit" name="bulk_action" value="unarchive" class="btn btn-success btn-sm">
+                <i class="bi bi-arrow-counterclockwise"></i> Unarchive
+            </button>
+            {% endif %}
+        </div>
+        <div id="bulk-hidden-inputs"></div>
+    </form>
+</div>
+
 <!-- Client Table -->
 <div class="card">
     <div class="table-responsive">
         <table class="table table-hover mb-0">
             <thead class="table-light">
                 <tr>
+                    <th style="width: 40px;">
+                        <input type="checkbox" class="form-check-input" id="selectAllClients" title="Select all">
+                    </th>
                     <th>Client Name</th>
                     <th>Entities</th>
                     <th>Assigned To</th>
@@ -47,4 +85,44 @@
         </table>
     </div>
 </div>
+
+<script>
+(function() {
+    const selectAll = document.getElementById('selectAllClients');
+    const bulkBar = document.getElementById('bulk-action-bar');
+    const selectedCount = document.getElementById('selected-count');
+    const hiddenInputs = document.getElementById('bulk-hidden-inputs');
+
+    function updateBulkBar() {
+        const checked = document.querySelectorAll('.client-checkbox:checked');
+        hiddenInputs.innerHTML = '';
+        if (checked.length > 0) {
+            bulkBar.classList.remove('d-none');
+            selectedCount.textContent = checked.length + ' selected';
+            checked.forEach(cb => {
+                const input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = 'client_ids';
+                input.value = cb.value;
+                hiddenInputs.appendChild(input);
+            });
+        } else {
+            bulkBar.classList.add('d-none');
+        }
+    }
+
+    selectAll.addEventListener('change', function() {
+        document.querySelectorAll('.client-checkbox').forEach(cb => {
+            cb.checked = selectAll.checked;
+        });
+        updateBulkBar();
+    });
+
+    document.addEventListener('change', function(e) {
+        if (e.target.classList.contains('client-checkbox')) {
+            updateBulkBar();
+        }
+    });
+})();
+</script>
 {% endblock %}

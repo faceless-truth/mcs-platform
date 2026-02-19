@@ -2678,10 +2678,72 @@ def _add_compilation_report(doc, entity, fy):
 # Main Generation Function
 # =============================================================================
 
-def generate_financial_statements(financial_year_id) -> io.BytesIO:
+def _add_audit_risk_watermark(doc):
+    """Add a diagonal 'AUDIT RISK' watermark to all sections of the document.
+    Uses a Word-compatible shape in the default header."""
+    watermark_xml = (
+        f'<w:r {nsdecls("w", "v", "o", "w10")}>' 
+        '  <w:rPr><w:noProof/></w:rPr>'
+        '  <w:pict>'
+        '    <v:shapetype id="_x0000_t136" coordsize="21600,21600" '
+        '      o:spt="136" adj="10800" '
+        '      path="m@7,l@8,m@5,21600l@6,21600e">'
+        '      <v:formulas>'
+        '        <v:f eqn="sum #0 0 10800"/>'
+        '        <v:f eqn="prod #0 2 1"/>'
+        '        <v:f eqn="sum 21600 0 @1"/>'
+        '        <v:f eqn="sum 0 0 @2"/>'
+        '        <v:f eqn="sum 21600 0 @3"/>'
+        '        <v:f eqn="if @0 @3 0"/>'
+        '        <v:f eqn="if @0 21600 @1"/>'
+        '        <v:f eqn="if @0 0 @2"/>'
+        '        <v:f eqn="if @0 @4 21600"/>'
+        '        <v:f eqn="mid @5 @6"/>'
+        '        <v:f eqn="mid @8 @5"/>'
+        '        <v:f eqn="mid @7 @8"/>'
+        '        <v:f eqn="mid @6 @7"/>'
+        '        <v:f eqn="sum @6 0 @5"/>'
+        '      </v:formulas>'
+        '      <v:path textpathok="t" o:connecttype="custom" '
+        '        o:connectlocs="@9,0;@10,10800;@11,21600;@12,10800" '
+        '        o:connectangles="270,180,90,0"/>'
+        '      <v:textpath on="t" fitshape="t"/>'
+        '      <v:handles><v:h position="#0,bottomRight" xrange="6629,14971"/></v:handles>'
+        '      <o:lock v:ext="edit" text="t" shapetype="t"/>'
+        '    </v:shapetype>'
+        '    <v:shape id="PowerPlusWaterMarkObject" '
+        '      o:spid="_x0000_s2049" type="#_x0000_t136" '
+        '      style="position:absolute;margin-left:0;margin-top:0;'
+        '        width:500pt;height:120pt;rotation:315;'
+        '        z-index:-251658752;mso-position-horizontal:center;'
+        '        mso-position-horizontal-relative:margin;'
+        '        mso-position-vertical:center;'
+        '        mso-position-vertical-relative:margin" '
+        '      o:allowincell="f" fillcolor="#d3d3d3" stroked="f">'
+        '      <v:fill opacity=".35"/>'
+        '      <v:textpath style="font-family:&quot;Times New Roman&quot;;'
+        '        font-size:1pt" string="AUDIT RISK"/>'
+        '    </v:shape>'
+        '  </w:pict>'
+        '</w:r>'
+    )
+
+    for section in doc.sections:
+        header = section.header
+        header.is_linked_to_previous = False
+        if header.paragraphs:
+            p = header.paragraphs[0]
+        else:
+            p = header.add_paragraph()
+        p._element.append(parse_xml(watermark_xml))
+
+
+def generate_financial_statements(financial_year_id, has_open_risks=False) -> io.BytesIO:
     """
     Generate a complete set of financial statements for a financial year.
     Returns a BytesIO object containing the Word document.
+    
+    If has_open_risks is True, an 'AUDIT RISK' watermark is added to every page.
     """
     fy = FinancialYear.objects.select_related(
         "entity", "entity__client", "prior_year"
@@ -2785,6 +2847,10 @@ def generate_financial_statements(financial_year_id) -> io.BytesIO:
         _add_depreciation_schedule(doc, entity, fy, show_cents=show_cents)
         _add_compilation_report(doc, entity, fy)
         _add_declaration(doc, entity, fy)
+
+    # Add AUDIT RISK watermark if there are open risk flags
+    if has_open_risks:
+        _add_audit_risk_watermark(doc)
 
     # Save to BytesIO
     buffer = io.BytesIO()

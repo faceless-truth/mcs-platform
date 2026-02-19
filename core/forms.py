@@ -10,7 +10,7 @@ from .models import (
 class ClientForm(forms.ModelForm):
     class Meta:
         model = Client
-        fields = ("name", "contact_email", "contact_phone", "assigned_accountant", "xpm_client_id", "is_active")
+        fields = ("name", "contact_email", "assigned_accountant", "is_active")
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -28,6 +28,7 @@ class EntityForm(forms.ModelForm):
             "entity_name", "trading_as", "entity_type", "abn", "acn",
             "registration_date", "financial_year_end",
             "reporting_framework", "company_size", "show_cents",
+            "xpm_client_id", "contact_phone",
         )
         widgets = {
             "registration_date": forms.DateInput(attrs={"type": "date"}),

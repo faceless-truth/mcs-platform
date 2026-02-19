@@ -1,0 +1,39 @@
+<tr class="{% if not line.mapped_line_item %}table-warning{% endif %}" id="tb-line-{{ line.pk }}">
+    <td><code class="text-muted">{{ line.account_code }}</code></td>
+    <td>{{ line.account_name }}</td>
+    <td class="text-end">{% if line.debit and line.debit != 0 %}{{ line.debit|floatformat:2 }}{% endif %}</td>
+    <td class="text-end">{% if line.credit and line.credit != 0 %}{{ line.credit|floatformat:2 }}{% endif %}</td>
+    <td>
+        {% if line.mapped_line_item %}
+        <span class="badge bg-success">{{ line.mapped_line_item.line_item_label }}</span>
+        {% else %}
+        <span class="badge bg-warning text-dark">Unmapped</span>
+        {% endif %}
+    </td>
+    <td>
+        <div class="dropdown d-inline">
+            <button class="btn btn-sm btn-outline-secondary dropdown-toggle py-0" type="button"
+                    data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
+                    style="font-size: 0.8rem;">
+                {% if line.mapped_line_item %}{{ line.mapped_line_item.line_item_label }}{% else %}Select mapping{% endif %}
+            </button>
+            <div class="dropdown-menu p-2" style="width: 380px; max-height: 350px;">
+                <input type="text" class="form-control form-control-sm mb-2 coa-search-input"
+                       placeholder="Search by code or name..." data-line-id="{{ line.pk }}">
+                <div class="coa-results-list overflow-auto" style="max-height: 280px;" data-line-id="{{ line.pk }}">
+                    {% for coa in coa_items %}
+                    {% if coa.maps_to %}
+                    <a href="#" class="dropdown-item small py-1 coa-option"
+                       data-line-id="{{ line.pk }}"
+                       data-mapping-id="{{ coa.maps_to.pk }}"
+                       data-code="{{ coa.account_code }}"
+                       data-name="{{ coa.account_name }}">
+                        <code>{{ coa.account_code }}</code> {{ coa.account_name }}
+                    </a>
+                    {% endif %}
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </td>
+</tr>

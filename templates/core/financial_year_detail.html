@@ -66,6 +66,11 @@
                 <i class="bi bi-file-earmark-pdf"></i> PDF
             </a>
         </div>
+        {% if open_risk_count > 0 %}
+        <span class="badge bg-danger fs-6" title="Documents will include AUDIT RISK watermark until all risk flags are resolved">
+            <i class="bi bi-exclamation-triangle-fill"></i> AUDIT RISK
+        </span>
+        {% endif %}
     </div>
 </div>
 
@@ -426,13 +431,12 @@
                         </td>
                         <td>
                             {% if flag.status == 'open' %}
-                            <form method="post" action="{% url 'core:resolve_risk_flag' pk=flag.pk %}" class="d-inline">
-                                {% csrf_token %}
-                                <input type="hidden" name="status" value="resolved">
-                                <button type="submit" class="btn btn-sm btn-outline-success" title="Mark as resolved">
-                                    <i class="bi bi-check-lg"></i>
-                                </button>
-                            </form>
+                            <button class="btn btn-sm btn-outline-success resolve-risk-btn" title="Resolve this risk"
+                                    data-flag-id="{{ flag.pk }}" data-flag-title="{{ flag.title }}">
+                                <i class="bi bi-check-lg"></i>
+                            </button>
+                            {% elif flag.resolution_notes %}
+                            <small class="text-muted" title="{{ flag.resolution_notes }}">{{ flag.resolved_at|date:"d/m/Y" }}</small>
                             {% else %}
                             <small class="text-muted">{{ flag.resolved_at|date:"d/m/Y"|default:"-" }}</small>
                             {% endif %}
@@ -449,6 +453,47 @@
             <p class="small">Run an audit check to scan the trial balance for potential issues.</p>
         </div>
         {% endif %}
+
+        {% if open_risk_count > 0 %}
+        <div class="alert alert-danger mt-3">
+            <i class="bi bi-exclamation-triangle-fill"></i>
+            <strong>Finalisation Blocked:</strong> {{ open_risk_count }} open audit risk flag{{ open_risk_count|pluralize }} must be resolved before this financial year can be finalised.
+            Each resolution requires a minimum 5-word description. All generated documents will carry an <strong>AUDIT RISK</strong> watermark until all flags are resolved.
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Resolve Risk Flag Modal -->
+    <div class="modal fade" id="resolveRiskModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-shield-check"></i> Resolve Audit Risk</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <form method="post" id="resolveRiskForm">
+                    {% csrf_token %}
+                    <div class="modal-body">
+                        <p class="fw-bold" id="resolveRiskTitle"></p>
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Resolution Notes <span class="text-danger">*</span></label>
+                            <textarea name="resolution_notes" class="form-control" rows="3" required
+                                      id="resolveRiskNotes"
+                                      placeholder="Describe how this risk was addressed (minimum 5 words)..."></textarea>
+                            <div class="form-text">
+                                <span id="resolveWordCount">0</span> / 5 words minimum
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-success" id="resolveRiskSubmit" disabled>
+                            <i class="bi bi-check-circle"></i> Resolve
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
     </div>
 
     <!-- ===== DEPRECIATION TAB ===== -->
@@ -669,7 +714,7 @@
                         <th>Description</th>
                         <th class="text-end" style="width: 110px;">Amount</th>
                         <th style="width: 80px;">AI Code</th>
-                        <th>AI Suggestion</th>
+                        <th>AI Suggestion <small class="text-muted">(click to change)</small></th>
                         <th style="width: 60px;">Conf.</th>
                         <th style="width: 100px;">Source</th>
                         <th style="width: 80px;">Action</th>
@@ -684,7 +729,22 @@
                             ${{ txn.amount|floatformat:2|intcomma }}
                         </td>
                         <td><code>{{ txn.ai_suggested_code|default:"-" }}</code></td>
-                        <td>{{ txn.ai_suggested_name|default:"Unclassified" }}</td>
+                        <td>
+                            <div class="dropdown d-inline">
+                                <button class="btn btn-sm btn-outline-info dropdown-toggle py-0 review-coa-btn" type="button"
+                                        data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
+                                        style="font-size: 0.8rem;" data-txn-id="{{ txn.pk }}">
+                                    {{ txn.ai_suggested_name|default:"Unclassified" }}
+                                </button>
+                                <div class="dropdown-menu p-2" style="width: 380px; max-height: 350px;">
+                                    <input type="text" class="form-control form-control-sm mb-2 review-coa-search"
+                                           placeholder="Search by code or name..." data-txn-id="{{ txn.pk }}">
+                                    <div class="review-coa-results overflow-auto" style="max-height: 280px;" data-txn-id="{{ txn.pk }}">
+                                        <div class="text-center text-muted py-2"><small>Type to search chart of accounts...</small></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </td>
                         <td>
                             {% if txn.ai_confidence > 0 %}
                             <span class="badge bg-{% if txn.ai_confidence >= 4 %}success{% elif txn.ai_confidence >= 3 %}info{% else %}warning text-dark{% endif %}">
@@ -696,10 +756,10 @@
                         </td>
                         <td><small class="text-muted">{{ txn.job.file_name|truncatewords:2 }}</small></td>
                         <td>
-                            <form method="post" action="{% url 'core:review_approve_transaction' pk=txn.pk %}" class="d-inline">
+                            <form method="post" action="{% url 'core:review_approve_transaction' pk=txn.pk %}" class="d-inline review-approve-form" data-txn-id="{{ txn.pk }}">
                                 {% csrf_token %}
-                                <input type="hidden" name="confirmed_code" value="{{ txn.ai_suggested_code }}">
-                                <input type="hidden" name="confirmed_name" value="{{ txn.ai_suggested_name }}">
+                                <input type="hidden" name="confirmed_code" value="{{ txn.ai_suggested_code }}" class="review-code-input">
+                                <input type="hidden" name="confirmed_name" value="{{ txn.ai_suggested_name }}" class="review-name-input">
                                 <input type="hidden" name="confirmed_tax_type" value="{{ txn.ai_suggested_tax_type }}">
                                 <button type="submit" class="btn btn-sm btn-outline-success py-0 px-1" title="Approve">
                                     <i class="bi bi-check-lg"></i>
@@ -1099,6 +1159,102 @@
             submitBtn.disabled = false;
             submitBtn.innerHTML = `<i class="bi bi-cloud-upload"></i> Process ${selectedFiles.length} Statement${selectedFiles.length > 1 ? 's' : ''}`;
         });
+    });
+})();
+
+// ===== Audit Risk: Resolve Modal =====
+(function() {
+    document.addEventListener('click', function(e) {
+        const btn = e.target.closest('.resolve-risk-btn');
+        if (!btn) return;
+        const flagId = btn.dataset.flagId;
+        const flagTitle = btn.dataset.flagTitle;
+        document.getElementById('resolveRiskTitle').textContent = flagTitle;
+        document.getElementById('resolveRiskForm').action = '/risk-flags/' + flagId + '/resolve/';
+        document.getElementById('resolveRiskNotes').value = '';
+        document.getElementById('resolveWordCount').textContent = '0';
+        document.getElementById('resolveRiskSubmit').disabled = true;
+        const modal = new bootstrap.Modal(document.getElementById('resolveRiskModal'));
+        modal.show();
+    });
+
+    const notesField = document.getElementById('resolveRiskNotes');
+    const wordCount = document.getElementById('resolveWordCount');
+    const submitBtn = document.getElementById('resolveRiskSubmit');
+    if (notesField) {
+        notesField.addEventListener('input', function() {
+            const words = this.value.trim().split(/\s+/).filter(w => w.length > 0).length;
+            wordCount.textContent = words;
+            submitBtn.disabled = words < 5;
+            wordCount.style.color = words >= 5 ? '#198754' : '#dc3545';
+        });
+    }
+})();
+
+// ===== Review Tab: Searchable COA Dropdown =====
+(function() {
+    let searchTimers = {};
+    const entityType = '{{ entity.entity_type }}';
+
+    document.addEventListener('input', function(e) {
+        if (!e.target.classList.contains('review-coa-search')) return;
+        const txnId = e.target.dataset.txnId;
+        const query = e.target.value.trim();
+        const resultsDiv = document.querySelector(`.review-coa-results[data-txn-id="${txnId}"]`);
+
+        if (searchTimers[txnId]) clearTimeout(searchTimers[txnId]);
+
+        if (query.length < 1) {
+            resultsDiv.innerHTML = '<div class="text-center text-muted py-2"><small>Type to search chart of accounts...</small></div>';
+            return;
+        }
+
+        searchTimers[txnId] = setTimeout(function() {
+            fetch(`{% url 'core:coa_search_api' %}?entity_type=${entityType}&q=${encodeURIComponent(query)}`)
+            .then(resp => resp.json())
+            .then(data => {
+                if (data.items.length === 0) {
+                    resultsDiv.innerHTML = '<div class="text-center text-muted py-2"><small>No matching accounts found.</small></div>';
+                    return;
+                }
+                resultsDiv.innerHTML = data.items.map(item =>
+                    `<a href="#" class="dropdown-item small py-1 review-coa-option"
+                        data-txn-id="${txnId}"
+                        data-code="${item.code}"
+                        data-name="${item.name}"
+                        data-section="${item.section}">
+                        <code>${item.code}</code> ${item.name}
+                        <small class="text-muted d-block">${item.section}</small>
+                    </a>`
+                ).join('');
+            });
+        }, 250);
+    });
+
+    document.addEventListener('click', function(e) {
+        const option = e.target.closest('.review-coa-option');
+        if (!option) return;
+        e.preventDefault();
+
+        const txnId = option.dataset.txnId;
+        const code = option.dataset.code;
+        const name = option.dataset.name;
+
+        // Update the dropdown button text
+        const btn = document.querySelector(`.review-coa-btn[data-txn-id="${txnId}"]`);
+        if (btn) btn.textContent = `${code} - ${name}`;
+
+        // Update the hidden form fields
+        const form = document.querySelector(`.review-approve-form[data-txn-id="${txnId}"]`);
+        if (form) {
+            form.querySelector('.review-code-input').value = code;
+            form.querySelector('.review-name-input').value = name;
+        }
+
+        // Close the dropdown
+        const dropdownEl = btn.closest('.dropdown');
+        const bsDropdown = bootstrap.Dropdown.getInstance(btn);
+        if (bsDropdown) bsDropdown.hide();
     });
 })();
 </script>
