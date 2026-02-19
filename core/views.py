@@ -3208,39 +3208,257 @@ def xrm_pull(request, pk):
                        "Edit the entity and add the XPM Client ID first."
         })
 
-    # ---------------------------------------------------------------
-    # XPM API Integration Placeholder
-    # In production, this calls the Xero Practice Manager API to pull:
-    #   - Entity Info: ABN, ACN, TFN, address, email, phone
-    #   - Relationships: contacts, related entities
-    #   - Officers: directors, trustees, partners
-    # ---------------------------------------------------------------
-    # Example of what the API integration would do:
-    # from integrations.xpm import XPMClient
-    # xpm = XPMClient()
-    # data = xpm.get_client(entity.xpm_client_id)
-    # entity.abn = data.get('abn', entity.abn)
-    # entity.acn = data.get('acn', entity.acn)
-    # entity.tfn = data.get('tfn', entity.tfn)
-    # entity.contact_email = data.get('email', entity.contact_email)
-    # entity.contact_phone = data.get('phone', entity.contact_phone)
-    # entity.address_line_1 = data.get('address_line_1', entity.address_line_1)
-    # entity.address_line_2 = data.get('address_line_2', entity.address_line_2)
-    # entity.suburb = data.get('suburb', entity.suburb)
-    # entity.state = data.get('state', entity.state)
-    # entity.postcode = data.get('postcode', entity.postcode)
-    # entity.country = data.get('country', entity.country)
-    # entity.save()
-    # -- Also sync relationships and officers from XPM contacts --
+    # Get active XPM connection
+    from integrations.models import XPMConnection
+    from integrations.xpm_sync import (
+        _ensure_valid_token, _xpm_get, _xml_text, _xml_name,
+        STRUCTURE_MAP, RELATIONSHIP_MAP,
+    )
+    import xml.etree.ElementTree as ET
 
-    _log_action(request, "xrm_pull", f"XRM pull requested for {entity.entity_name} (XPM ID: {entity.xpm_client_id})", entity)
+    connection = XPMConnection.objects.filter(status="active").first()
+    if not connection:
+        return JsonResponse({
+            "status": "error",
+            "message": "No active XPM connection. Go to Integrations > XPM to connect first."
+        })
 
-    return JsonResponse({
-        "status": "success",
-        "message": f"XRM pull initiated for {entity.entity_name}. "
-                   f"Entity Info, Relationships, and Officers will be synced from XPM ID: {entity.xpm_client_id}. "
-                   f"Note: Full XPM API integration is pending configuration."
-    })
+    # Ensure token is valid (refresh if needed)
+    if not _ensure_valid_token(connection):
+        return JsonResponse({
+            "status": "error",
+            "message": "XPM token has expired and could not be refreshed. "
+                       "Please reconnect via Integrations > XPM."
+        })
+
+    try:
+        # Fetch detailed client data from XPM
+        root = _xpm_get(connection, f"client.api/get/{entity.xpm_client_id}")
+        client_el = root.find(".//Client")
+        if client_el is None:
+            client_el = root
+
+        updated_fields = []
+
+        # --- Entity Info ---
+        abn = _xml_text(client_el, "BusinessNumber")
+        acn = _xml_text(client_el, "CompanyNumber")
+        tax_number = _xml_text(client_el, "TaxNumber")
+        email = _xml_text(client_el, "Email")
+        phone = _xml_text(client_el, "Phone")
+        structure = _xml_text(client_el, "BusinessStructure")
+        gst_registered = _xml_text(client_el, "GSTRegistered", "").lower() == "yes"
+
+        # Address — XPM uses Address element with sub-elements
+        address_el = client_el.find("Address")
+        addr_line1 = addr_line2 = city = region = postcode = country = ""
+        if address_el is not None:
+            addr_line1 = _xml_text(address_el, "Address") or _xml_text(address_el, "Line1")
+            addr_line2 = _xml_text(address_el, "Line2")
+            city = _xml_text(address_el, "City")
+            region = _xml_text(address_el, "Region")
+            postcode = _xml_text(address_el, "PostCode")
+            country = _xml_text(address_el, "Country")
+
+        # Update entity fields (only overwrite if XPM has data)
+        if abn and abn != entity.abn:
+            entity.abn = abn; updated_fields.append("ABN")
+        if acn and acn != entity.acn:
+            entity.acn = acn; updated_fields.append("ACN")
+        if tax_number and tax_number != entity.tfn:
+            entity.tfn = tax_number; updated_fields.append("TFN")
+        if email and email != entity.contact_email:
+            entity.contact_email = email; updated_fields.append("Email")
+        if phone and phone != entity.contact_phone:
+            entity.contact_phone = phone; updated_fields.append("Phone")
+        if gst_registered != entity.is_gst_registered:
+            entity.is_gst_registered = gst_registered; updated_fields.append("GST Status")
+        if structure:
+            entity_type = STRUCTURE_MAP.get(structure, "")
+            if entity_type and entity_type != entity.entity_type:
+                entity.entity_type = entity_type; updated_fields.append("Entity Type")
+        if addr_line1 and addr_line1 != entity.address_line_1:
+            entity.address_line_1 = addr_line1; updated_fields.append("Address Line 1")
+        if addr_line2 and addr_line2 != entity.address_line_2:
+            entity.address_line_2 = addr_line2; updated_fields.append("Address Line 2")
+        if city and city != entity.suburb:
+            entity.suburb = city; updated_fields.append("Suburb")
+        if region and region != entity.state:
+            entity.state = region; updated_fields.append("State")
+        if postcode and postcode != entity.postcode:
+            entity.postcode = postcode; updated_fields.append("Postcode")
+        if country and country != entity.country:
+            entity.country = country; updated_fields.append("Country")
+
+        entity.save()
+
+        # --- Sync Contacts as Relationships (ClientAssociate) ---
+        contacts_synced = 0
+        contacts_el = client_el.find("Contacts")
+        if contacts_el is not None:
+            for contact_el in contacts_el.findall("Contact"):
+                c_uuid = _xml_text(contact_el, "UUID")
+                c_name = _xml_text(contact_el, "Name")
+                c_email = _xml_text(contact_el, "Email")
+                c_phone = _xml_text(contact_el, "Phone")
+                c_mobile = _xml_text(contact_el, "Mobile")
+                c_position = _xml_text(contact_el, "Position")
+                if not c_name:
+                    continue
+
+                # Determine relationship type from position
+                pos_lower = (c_position or "").lower()
+                if "spouse" in pos_lower or "wife" in pos_lower or "husband" in pos_lower:
+                    rel_type = "spouse"
+                elif "child" in pos_lower or "son" in pos_lower or "daughter" in pos_lower:
+                    rel_type = "child"
+                elif "director" in pos_lower:
+                    rel_type = "director"
+                elif "shareholder" in pos_lower:
+                    rel_type = "shareholder"
+                elif "trustee" in pos_lower:
+                    rel_type = "trustee"
+                elif "beneficiary" in pos_lower:
+                    rel_type = "beneficiary"
+                elif "partner" in pos_lower:
+                    rel_type = "partner_biz"
+                elif "secretary" in pos_lower:
+                    rel_type = "trustee"
+                else:
+                    rel_type = "other"
+
+                # Find or create associate
+                assoc = None
+                if c_uuid:
+                    assoc = ClientAssociate.objects.filter(
+                        entity=entity, xpm_contact_uuid=c_uuid
+                    ).first()
+                if not assoc:
+                    assoc = ClientAssociate.objects.filter(
+                        entity=entity, name__iexact=c_name
+                    ).first()
+                if assoc:
+                    changed = False
+                    if c_uuid and not assoc.xpm_contact_uuid:
+                        assoc.xpm_contact_uuid = c_uuid; changed = True
+                    if c_email and not assoc.email:
+                        assoc.email = c_email; changed = True
+                    if (c_phone or c_mobile) and not assoc.phone:
+                        assoc.phone = c_phone or c_mobile; changed = True
+                    if c_position and not assoc.occupation:
+                        assoc.occupation = c_position; changed = True
+                    if changed:
+                        assoc.save()
+                else:
+                    ClientAssociate.objects.create(
+                        entity=entity,
+                        name=c_name,
+                        relationship_type=rel_type,
+                        email=c_email,
+                        phone=c_phone or c_mobile,
+                        occupation=c_position,
+                        xpm_contact_uuid=c_uuid,
+                    )
+                contacts_synced += 1
+
+        # --- Sync Relationships ---
+        relationships_synced = 0
+        relationships_el = client_el.find("Relationships")
+        if relationships_el is not None:
+            for rel_el in relationships_el.findall("Relationship"):
+                rel_type_xpm = _xml_text(rel_el, "Type")
+                related_name_el = rel_el.find("RelatedClient")
+                related_name = ""
+                if related_name_el is not None:
+                    name_el = related_name_el.find("Name")
+                    if name_el is not None and name_el.text:
+                        related_name = name_el.text.strip()
+                if not related_name:
+                    continue
+
+                rel_type = RELATIONSHIP_MAP.get(rel_type_xpm, "related_entity")
+                assoc = ClientAssociate.objects.filter(
+                    entity=entity, name__iexact=related_name
+                ).first()
+                if assoc:
+                    if rel_type and assoc.relationship_type == "other":
+                        assoc.relationship_type = rel_type
+                        assoc.save()
+                else:
+                    ClientAssociate.objects.create(
+                        entity=entity,
+                        name=related_name,
+                        relationship_type=rel_type,
+                    )
+                relationships_synced += 1
+
+        # --- Sync Officers from Contacts with officer-like positions ---
+        officers_synced = 0
+        if contacts_el is not None:
+            for contact_el in contacts_el.findall("Contact"):
+                c_name = _xml_text(contact_el, "Name")
+                c_position = _xml_text(contact_el, "Position")
+                if not c_name or not c_position:
+                    continue
+                pos_lower = c_position.lower()
+                officer_role = None
+                if "director" in pos_lower:
+                    officer_role = "director"
+                elif "partner" in pos_lower:
+                    officer_role = "partner"
+                elif "trustee" in pos_lower:
+                    officer_role = "trustee"
+                elif "secretary" in pos_lower:
+                    officer_role = "secretary"
+                elif "public officer" in pos_lower:
+                    officer_role = "public_officer"
+                if officer_role:
+                    existing = EntityOfficer.objects.filter(
+                        entity=entity, full_name__iexact=c_name
+                    ).first()
+                    if not existing:
+                        EntityOfficer.objects.create(
+                            entity=entity,
+                            full_name=c_name,
+                            role=officer_role,
+                            title=c_position,
+                        )
+                        officers_synced += 1
+
+        # Build summary
+        summary_parts = []
+        if updated_fields:
+            summary_parts.append(f"Updated: {', '.join(updated_fields)}")
+        if contacts_synced:
+            summary_parts.append(f"{contacts_synced} contacts synced")
+        if relationships_synced:
+            summary_parts.append(f"{relationships_synced} relationships synced")
+        if officers_synced:
+            summary_parts.append(f"{officers_synced} officers added")
+        if not summary_parts:
+            summary_parts.append("Entity is already up to date")
+
+        _log_action(
+            request, "xrm_pull",
+            f"XRM pull completed for {entity.entity_name}: "
+            f"{len(updated_fields)} fields, {contacts_synced} contacts, "
+            f"{relationships_synced} relationships, {officers_synced} officers",
+            entity,
+        )
+
+        return JsonResponse({
+            "status": "success",
+            "message": f"XRM pull completed for {entity.entity_name}. "
+                       + ". ".join(summary_parts) + "."
+        })
+
+    except Exception as e:
+        import traceback
+        logger.error(f"XRM pull failed for {entity.entity_name}: {e}\n{traceback.format_exc()}")
+        return JsonResponse({
+            "status": "error",
+            "message": f"XRM pull failed: {str(e)}"
+        })
 
 
 @login_required
