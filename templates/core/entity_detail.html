@@ -104,9 +104,6 @@
         <!-- Action buttons row -->
         <div class="d-flex gap-2 mb-3">
             {% if user.can_edit %}
-            <a href="{% url 'integrations:connection_manage' entity_pk=entity.pk %}" class="btn btn-outline-info btn-sm">
-                <i class="bi bi-cloud-arrow-down"></i> Connections
-            </a>
             <a href="{% url 'core:entity_officers' pk=entity.pk %}" class="btn btn-outline-secondary btn-sm">
                 <i class="bi bi-people"></i> Officers & Signatories
             </a>

@@ -5,6 +5,7 @@ from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.db.models import Q, Count, Sum
 from django.http import HttpResponse, JsonResponse
+from django.views.decorators.http import require_POST
 from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
 
@@ -3356,3 +3357,18 @@ def _tb_download_word(fy, entity, sections, current_year, prior_year,
     )
     response['Content-Disposition'] = f'attachment; filename="{filename}"'
     return response
+
+
+@login_required
+@require_POST
+def delete_document(request, pk):
+    """Delete a generated document."""
+    from .models import GeneratedDocument
+    doc = get_object_or_404(GeneratedDocument, pk=pk)
+    fy_pk = doc.financial_year.pk
+    # Delete the file from storage
+    if doc.file:
+        doc.file.delete(save=False)
+    doc.delete()
+    messages.success(request, "Document deleted.")
+    return redirect("core:financial_year_detail", pk=fy_pk)

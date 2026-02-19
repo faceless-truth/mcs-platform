@@ -58,14 +58,6 @@
         <a href="{% url 'core:trial_balance_view' pk=fy.pk %}" class="btn btn-outline-dark btn-sm" target="_blank">
             <i class="bi bi-file-earmark-text"></i> Preview Trial Balance
         </a>
-        <div class="btn-group">
-            <a href="{% url 'core:generate_document' pk=fy.pk %}?format=docx" class="btn btn-dark btn-sm">
-                <i class="bi bi-file-earmark-word"></i> Word
-            </a>
-            <a href="{% url 'core:generate_document' pk=fy.pk %}?format=pdf" class="btn btn-outline-dark btn-sm">
-                <i class="bi bi-file-earmark-pdf"></i> PDF
-            </a>
-        </div>
         {% if open_risk_count > 0 %}
         <span class="badge bg-danger fs-6" title="Documents will include AUDIT RISK watermark until all risk flags are resolved">
             <i class="bi bi-exclamation-triangle-fill"></i> AUDIT RISK
@@ -817,9 +809,17 @@
                 {{ doc.file_format|upper }} &mdash; Generated {{ doc.generated_at|date:"d M Y H:i" }}
                 by {{ doc.generated_by.get_full_name|default:"System" }}
             </div>
-            <a href="{{ doc.file.url }}" class="btn btn-sm btn-outline-primary" download>
-                <i class="bi bi-download"></i> Download
-            </a>
+            <div class="d-flex gap-2">
+                <a href="{{ doc.file.url }}" class="btn btn-sm btn-outline-primary" download>
+                    <i class="bi bi-download"></i> Download
+                </a>
+                <form method="post" action="{% url 'core:delete_document' pk=doc.pk %}" class="d-inline" onsubmit="return confirm('Delete this document?')">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-sm btn-outline-danger">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </form>
+            </div>
         </div>
         {% empty %}
         <div class="text-center py-4 text-muted">
