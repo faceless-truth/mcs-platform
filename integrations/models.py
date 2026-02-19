@@ -254,3 +254,104 @@ class XPMSyncLog(models.Model):
         if self.completed_at and self.started_at:
             return self.completed_at - self.started_at
         return None
+
+
+class XeroGlobalConnection(models.Model):
+    """
+    A practice-level OAuth2 connection to Xero using accounting scopes.
+    One connection gives access to all client organisations (tenants)
+    the advisor account has access to. Tokens are stored here and
+    shared across all entity-level imports.
+    """
+
+    class Status(models.TextChoices):
+        ACTIVE = "active", "Active"
+        EXPIRED = "expired", "Token Expired"
+        DISCONNECTED = "disconnected", "Disconnected"
+        ERROR = "error", "Error"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.ACTIVE
+    )
+
+    # OAuth2 tokens
+    access_token = models.TextField(blank=True, default="")
+    refresh_token = models.TextField(blank=True, default="")
+    token_expires_at = models.DateTimeField(null=True, blank=True)
+
+    # Audit
+    connected_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="xero_global_connections",
+    )
+    connected_at = models.DateTimeField(auto_now_add=True)
+    last_tenant_refresh = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True, default="")
+
+    class Meta:
+        ordering = ["-connected_at"]
+
+    def __str__(self):
+        return f"Xero Global ({self.get_status_display()}) - {self.tenants.count()} tenants"
+
+    @property
+    def is_token_expired(self):
+        if not self.token_expires_at:
+            return True
+        return timezone.now() >= self.token_expires_at
+
+    @property
+    def needs_refresh(self):
+        if not self.token_expires_at:
+            return True
+        return timezone.now() >= (self.token_expires_at - timezone.timedelta(minutes=5))
+
+
+class XeroTenant(models.Model):
+    """
+    A cached Xero tenant (organisation) accessible via the global connection.
+    Each tenant represents one client's Xero file that the advisor has access to.
+    Tenants can be linked to StatementHub entities for trial balance imports.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    connection = models.ForeignKey(
+        XeroGlobalConnection,
+        on_delete=models.CASCADE,
+        related_name="tenants",
+    )
+    tenant_id = models.CharField(
+        max_length=255,
+        help_text="Xero tenant/organisation UUID",
+    )
+    tenant_name = models.CharField(
+        max_length=255,
+        help_text="Organisation name in Xero",
+    )
+
+    # Link to StatementHub entity (optional — set when user maps tenant to entity)
+    entity = models.ForeignKey(
+        "core.Entity",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="xero_tenants",
+    )
+
+    # Metadata
+    tenant_type = models.CharField(
+        max_length=50, blank=True, default="",
+        help_text="ORGANISATION or PRACTICE",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["tenant_name"]
+        unique_together = [("connection", "tenant_id")]
+
+    def __str__(self):
+        linked = f" → {self.entity.entity_name}" if self.entity else ""
+        return f"{self.tenant_name}{linked}"

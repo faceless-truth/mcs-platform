@@ -4,6 +4,9 @@ Integrations views.
 Handles OAuth2 connection flows for Xero, MYOB, and QuickBooks,
 trial balance fetching with staged import, and the mapping
 review/approval workflow.
+
+Includes the Global Xero Connection which provides practice-level
+access to all client Xero organisations via a single advisor login.
 """
 import json
 import logging
@@ -11,6 +14,7 @@ import uuid
 from datetime import timedelta
 from decimal import Decimal
 
+import requests as http_requests
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -27,14 +31,14 @@ from core.models import (
     FinancialYear,
     TrialBalanceLine,
 )
-from .models import AccountingConnection, ImportLog
+from .models import AccountingConnection, ImportLog, XeroGlobalConnection, XeroTenant
 from .providers import get_provider, get_configured_providers, PROVIDERS
 
 logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Connection management
+# Connection management (per-entity, legacy)
 # ---------------------------------------------------------------------------
 
 @login_required
@@ -224,7 +228,7 @@ def disconnect(request, connection_pk):
 
 
 # ---------------------------------------------------------------------------
-# Token refresh helper
+# Token refresh helpers
 # ---------------------------------------------------------------------------
 
 def _ensure_valid_token(connection):
@@ -255,6 +259,44 @@ def _ensure_valid_token(connection):
         return False
 
 
+def _ensure_global_xero_token(connection):
+    """Refresh the global Xero connection token if needed. Returns True if valid."""
+    if not connection.needs_refresh:
+        return True
+
+    client_id = getattr(settings, "XERO_CLIENT_ID", "")
+    client_secret = getattr(settings, "XERO_CLIENT_SECRET", "")
+
+    try:
+        resp = http_requests.post(
+            "https://login.xero.com/identity/connect/token",
+            data={
+                "grant_type": "refresh_token",
+                "refresh_token": connection.refresh_token,
+                "client_id": client_id,
+                "client_secret": client_secret,
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        connection.access_token = data["access_token"]
+        connection.refresh_token = data.get("refresh_token", connection.refresh_token)
+        connection.token_expires_at = timezone.now() + timedelta(
+            seconds=data.get("expires_in", 1800)
+        )
+        connection.status = "active"
+        connection.last_error = ""
+        connection.save()
+        return True
+    except Exception as e:
+        logger.error(f"Global Xero token refresh failed: {e}")
+        connection.status = "expired"
+        connection.last_error = str(e)
+        connection.save()
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Trial Balance Import (staged with learning)
 # ---------------------------------------------------------------------------
@@ -263,8 +305,9 @@ def _ensure_valid_token(connection):
 def import_from_cloud(request, fy_pk):
     """
     Pull trial balance from connected accounting platform.
-    Shows a review/approval page with pre-populated mappings from
-    the learning system before committing the import.
+    Now supports the Global Xero Connection: if no per-entity connection
+    exists but a global Xero connection is active, redirect to tenant
+    selection for this entity.
     """
     fy = get_object_or_404(FinancialYear, pk=fy_pk)
     entity = fy.entity
@@ -273,58 +316,133 @@ def import_from_cloud(request, fy_pk):
         messages.error(request, "Cannot import into a finalised financial year.")
         return redirect("core:financial_year_detail", pk=fy_pk)
 
+    # Check for per-entity connection first
     connections = entity.accounting_connections.filter(status="active")
-    if not connections.exists():
-        messages.warning(
-            request,
-            "No accounting platform connected. "
-            "Connect Xero, MYOB, or QuickBooks first."
-        )
-        return redirect("integrations:connection_manage", entity_pk=entity.pk)
+    if connections.exists():
+        connection = connections.first()
+        if not _ensure_valid_token(connection):
+            messages.error(
+                request,
+                f"Connection to {connection.get_provider_display()} has expired. "
+                "Please reconnect."
+            )
+            return redirect("integrations:connection_manage", entity_pk=entity.pk)
 
-    connection = connections.first()
+        provider = get_provider(connection.provider)
+        return _do_cloud_import(request, fy, entity, provider, connection.access_token, connection.tenant_id, connection)
 
-    if not _ensure_valid_token(connection):
-        messages.error(
-            request,
-            f"Connection to {connection.get_provider_display()} has expired. "
-            "Please reconnect."
-        )
-        return redirect("integrations:connection_manage", entity_pk=entity.pk)
+    # Check for global Xero connection
+    global_conn = XeroGlobalConnection.objects.filter(status="active").first()
+    if global_conn:
+        if not _ensure_global_xero_token(global_conn):
+            messages.error(request, "Xero connection has expired. Please reconnect from the Xero Connection page.")
+            return redirect("integrations:xero_global_dashboard")
 
-    provider = get_provider(connection.provider)
+        # Check if entity has a linked tenant
+        linked_tenant = XeroTenant.objects.filter(
+            connection=global_conn, entity=entity
+        ).first()
 
+        if linked_tenant:
+            # Direct import using linked tenant
+            provider = get_provider("xero")
+            return _do_cloud_import(request, fy, entity, provider, global_conn.access_token, linked_tenant.tenant_id, None)
+
+        # No linked tenant — show tenant selection
+        return redirect("integrations:xero_select_tenant_import", fy_pk=fy_pk)
+
+    # No connection at all
+    messages.warning(
+        request,
+        "No accounting platform connected. "
+        "Connect via the Xero Connection page or set up a per-entity connection."
+    )
+    return redirect("integrations:xero_global_dashboard")
+
+
+def _do_cloud_import(request, fy, entity, provider, access_token, tenant_id, connection_obj):
+    """Execute the trial balance import and redirect to review page."""
     try:
         as_at_date = fy.end_date
-        raw_lines = provider.fetch_trial_balance(
-            connection.access_token, connection.tenant_id, as_at_date
-        )
+        raw_lines = provider.fetch_trial_balance(access_token, tenant_id, as_at_date)
 
         if not raw_lines:
-            messages.warning(request, "No trial balance data returned from the provider.")
-            return redirect("core:financial_year_detail", pk=fy_pk)
+            messages.warning(request, "No trial balance data returned from Xero.")
+            return redirect("core:financial_year_detail", pk=fy.pk)
 
         staged_lines = _apply_learned_mappings(entity, raw_lines)
 
         request.session["staged_import"] = {
-            "fy_pk": str(fy_pk),
-            "connection_pk": str(connection.pk),
+            "fy_pk": str(fy.pk),
+            "connection_pk": str(connection_obj.pk) if connection_obj else "",
             "as_at_date": as_at_date.isoformat(),
             "provider_name": provider.display_name,
             "lines": staged_lines,
         }
 
-        connection.last_sync_at = timezone.now()
-        connection.save(update_fields=["last_sync_at"])
+        if connection_obj:
+            connection_obj.last_sync_at = timezone.now()
+            connection_obj.save(update_fields=["last_sync_at"])
 
-        return redirect("integrations:review_import", fy_pk=fy_pk)
+        return redirect("integrations:review_import", fy_pk=fy.pk)
 
     except Exception as e:
         logger.error(f"Cloud import failed: {e}")
-        connection.last_error = str(e)
-        connection.save(update_fields=["last_error"])
+        if connection_obj:
+            connection_obj.last_error = str(e)
+            connection_obj.save(update_fields=["last_error"])
         messages.error(request, f"Import failed: {str(e)}")
-        return redirect("core:financial_year_detail", pk=fy_pk)
+        return redirect("core:financial_year_detail", pk=fy.pk)
+
+
+@login_required
+def xero_select_tenant_import(request, fy_pk):
+    """
+    Show tenant selection for Xero trial balance import.
+    User picks which Xero organisation to pull data from.
+    """
+    fy = get_object_or_404(FinancialYear, pk=fy_pk)
+    entity = fy.entity
+
+    global_conn = XeroGlobalConnection.objects.filter(status="active").first()
+    if not global_conn:
+        messages.error(request, "No active Xero connection. Please connect first.")
+        return redirect("integrations:xero_global_dashboard")
+
+    tenants = global_conn.tenants.select_related("entity").all()
+    linked_tenant = tenants.filter(entity=entity).first()
+
+    if request.method == "POST":
+        tenant_id = request.POST.get("tenant_id", "")
+        link_tenant = request.POST.get("link_tenant") == "1"
+
+        if not tenant_id:
+            messages.error(request, "Please select an organisation.")
+            return redirect("integrations:xero_select_tenant_import", fy_pk=fy_pk)
+
+        # Optionally link tenant to entity
+        if link_tenant:
+            tenant_obj = tenants.filter(tenant_id=tenant_id).first()
+            if tenant_obj:
+                # Unlink any previous tenant for this entity
+                tenants.filter(entity=entity).update(entity=None)
+                tenant_obj.entity = entity
+                tenant_obj.save(update_fields=["entity"])
+
+        # Ensure token is valid
+        if not _ensure_global_xero_token(global_conn):
+            messages.error(request, "Xero token expired. Please reconnect.")
+            return redirect("integrations:xero_global_dashboard")
+
+        provider = get_provider("xero")
+        return _do_cloud_import(request, fy, entity, provider, global_conn.access_token, tenant_id, None)
+
+    context = {
+        "fy": fy,
+        "tenants": tenants,
+        "linked_tenant": linked_tenant,
+    }
+    return render(request, "integrations/xero_select_tenant_import.html", context)
 
 
 @login_required
@@ -511,6 +629,219 @@ def _apply_learned_mappings(entity, raw_lines):
 
 
 # ---------------------------------------------------------------------------
+# Global Xero Connection (Advisor-level)
+# ---------------------------------------------------------------------------
+
+@login_required
+def xero_global_dashboard(request):
+    """Dashboard showing the global Xero connection status and tenant list."""
+    connection = XeroGlobalConnection.objects.filter(status="active").first()
+    if not connection:
+        connection = XeroGlobalConnection.objects.first()
+
+    tenants = []
+    tenant_count = 0
+    if connection and connection.status == "active":
+        tenants = connection.tenants.select_related("entity").all()
+        tenant_count = tenants.count()
+
+    xero_configured = bool(
+        getattr(settings, "XERO_CLIENT_ID", "") and
+        getattr(settings, "XERO_CLIENT_SECRET", "")
+    )
+
+    context = {
+        "connection": connection,
+        "tenants": tenants,
+        "tenant_count": tenant_count,
+        "xero_configured": xero_configured,
+    }
+    return render(request, "integrations/xero_global_dashboard.html", context)
+
+
+@login_required
+def xero_global_connect(request):
+    """Initiate OAuth2 connection to Xero with accounting scopes."""
+    state = str(uuid.uuid4())
+    request.session["xero_global_oauth_state"] = state
+
+    client_id = getattr(settings, "XERO_CLIENT_ID", "")
+    redirect_uri = request.build_absolute_uri(
+        reverse("integrations:xero_global_callback")
+    )
+
+    scopes = "openid profile email accounting.reports.read accounting.settings.read accounting.transactions.read offline_access"
+
+    params = {
+        "response_type": "code",
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "scope": scopes,
+        "state": state,
+        "access_type": "offline",
+    }
+    query_string = "&".join(f"{k}={v}" for k, v in params.items())
+    auth_url = f"https://login.xero.com/identity/connect/authorize?{query_string}"
+
+    return redirect(auth_url)
+
+
+@login_required
+def xero_global_callback(request):
+    """Handle OAuth2 callback for the global Xero connection."""
+    code = request.GET.get("code")
+    state = request.GET.get("state")
+    error = request.GET.get("error")
+
+    expected_state = request.session.get("xero_global_oauth_state")
+
+    if error:
+        messages.error(request, f"Xero connection failed: {error}")
+        return redirect("integrations:xero_global_dashboard")
+
+    if not code or state != expected_state:
+        messages.error(request, "Xero connection failed: invalid state.")
+        return redirect("integrations:xero_global_dashboard")
+
+    client_id = getattr(settings, "XERO_CLIENT_ID", "")
+    client_secret = getattr(settings, "XERO_CLIENT_SECRET", "")
+    redirect_uri = request.build_absolute_uri(
+        reverse("integrations:xero_global_callback")
+    )
+
+    try:
+        # Exchange code for tokens
+        resp = http_requests.post(
+            "https://login.xero.com/identity/connect/token",
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": redirect_uri,
+                "client_id": client_id,
+                "client_secret": client_secret,
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        tokens = resp.json()
+
+        # Get all tenants
+        tenant_resp = http_requests.get(
+            "https://api.xero.com/connections",
+            headers={"Authorization": f"Bearer {tokens['access_token']}"},
+            timeout=15,
+        )
+        tenant_resp.raise_for_status()
+        tenants = tenant_resp.json()
+
+        # Deactivate existing global connections
+        XeroGlobalConnection.objects.filter(status="active").update(status="disconnected")
+
+        # Create new global connection
+        conn = XeroGlobalConnection.objects.create(
+            status="active",
+            access_token=tokens["access_token"],
+            refresh_token=tokens.get("refresh_token", ""),
+            token_expires_at=timezone.now() + timedelta(
+                seconds=tokens.get("expires_in", 1800)
+            ),
+            connected_by=request.user,
+            last_tenant_refresh=timezone.now(),
+        )
+
+        # Store all tenants
+        for t in tenants:
+            XeroTenant.objects.create(
+                connection=conn,
+                tenant_id=t.get("tenantId", ""),
+                tenant_name=t.get("tenantName", "Unknown"),
+                tenant_type=t.get("tenantType", ""),
+            )
+
+        messages.success(
+            request,
+            f"Connected to Xero! {len(tenants)} organisation(s) accessible."
+        )
+
+    except Exception as e:
+        logger.error(f"Xero global OAuth callback error: {e}")
+        messages.error(request, f"Xero connection failed: {str(e)}")
+
+    request.session.pop("xero_global_oauth_state", None)
+    return redirect("integrations:xero_global_dashboard")
+
+
+@login_required
+@require_POST
+def xero_global_refresh_tenants(request):
+    """Refresh the list of tenants from the global Xero connection."""
+    conn = XeroGlobalConnection.objects.filter(status="active").first()
+    if not conn:
+        messages.error(request, "No active Xero connection.")
+        return redirect("integrations:xero_global_dashboard")
+
+    if not _ensure_global_xero_token(conn):
+        messages.error(request, "Xero token expired. Please reconnect.")
+        return redirect("integrations:xero_global_dashboard")
+
+    try:
+        resp = http_requests.get(
+            "https://api.xero.com/connections",
+            headers={"Authorization": f"Bearer {conn.access_token}"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        tenants = resp.json()
+
+        # Preserve entity links — build a map of tenant_id → entity
+        existing_links = {
+            t.tenant_id: t.entity
+            for t in conn.tenants.select_related("entity").all()
+            if t.entity
+        }
+
+        # Delete old tenants and recreate
+        conn.tenants.all().delete()
+
+        for t in tenants:
+            tid = t.get("tenantId", "")
+            xt = XeroTenant.objects.create(
+                connection=conn,
+                tenant_id=tid,
+                tenant_name=t.get("tenantName", "Unknown"),
+                tenant_type=t.get("tenantType", ""),
+            )
+            # Restore entity link if it existed
+            if tid in existing_links:
+                xt.entity = existing_links[tid]
+                xt.save(update_fields=["entity"])
+
+        conn.last_tenant_refresh = timezone.now()
+        conn.save(update_fields=["last_tenant_refresh"])
+
+        messages.success(request, f"Refreshed tenant list: {len(tenants)} organisation(s) found.")
+
+    except Exception as e:
+        logger.error(f"Xero tenant refresh failed: {e}")
+        messages.error(request, f"Failed to refresh tenants: {str(e)}")
+
+    return redirect("integrations:xero_global_dashboard")
+
+
+@login_required
+@require_POST
+def xero_global_disconnect(request):
+    """Disconnect the global Xero connection."""
+    XeroGlobalConnection.objects.filter(status="active").update(
+        status="disconnected",
+        access_token="",
+        refresh_token="",
+    )
+    messages.success(request, "Disconnected from Xero.")
+    return redirect("integrations:xero_global_dashboard")
+
+
+# ---------------------------------------------------------------------------
 # Xero Practice Manager (XPM) Integration
 # ---------------------------------------------------------------------------
 
@@ -542,9 +873,7 @@ def xpm_dashboard(request):
 @login_required
 def xpm_connect(request):
     """Initiate OAuth2 connection to Xero for Practice Manager access."""
-    import uuid as uuid_mod
-
-    state = str(uuid_mod.uuid4())
+    state = str(uuid.uuid4())
     request.session["xpm_oauth_state"] = state
 
     client_id = getattr(settings, "XERO_CLIENT_ID", "")
@@ -595,9 +924,8 @@ def xpm_callback(request):
     )
 
     try:
-        import requests as req
         # Exchange code for tokens
-        resp = req.post(
+        resp = http_requests.post(
             "https://login.xero.com/identity/connect/token",
             data={
                 "grant_type": "authorization_code",
@@ -612,7 +940,7 @@ def xpm_callback(request):
         tokens = resp.json()
 
         # Get tenants
-        tenant_resp = req.get(
+        tenant_resp = http_requests.get(
             "https://api.xero.com/connections",
             headers={"Authorization": f"Bearer {tokens['access_token']}"},
             timeout=15,

@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}Select Xero Organisation - {{ fy.entity.entity_name }} - StatementHub{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-8 mx-auto">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
+                <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=fy.entity.pk %}">{{ fy.entity.entity_name }}</a></li>
+                <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">FY{{ fy.end_date|date:"Y" }}</a></li>
+                <li class="breadcrumb-item active">Select Xero Organisation</li>
+            </ol>
+        </nav>
+
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-cloud-arrow-down"></i> Import Trial Balance from Xero</h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted">
+                    Select the Xero organisation to import the trial balance for
+                    <strong>{{ fy.entity.entity_name }}</strong> (FY{{ fy.end_date|date:"Y" }}).
+                </p>
+
+                {% if linked_tenant %}
+                <div class="alert alert-success">
+                    <i class="bi bi-link-45deg"></i>
+                    This entity is already linked to <strong>{{ linked_tenant.tenant_name }}</strong>.
+                    <form method="post" class="d-inline">
+                        {% csrf_token %}
+                        <input type="hidden" name="tenant_id" value="{{ linked_tenant.tenant_id }}">
+                        <button type="submit" class="btn btn-success btn-sm ms-2">
+                            <i class="bi bi-cloud-arrow-down"></i> Import from {{ linked_tenant.tenant_name }}
+                        </button>
+                    </form>
+                </div>
+                <hr>
+                <p class="text-muted small">Or choose a different organisation:</p>
+                {% endif %}
+
+                <form method="post">
+                    {% csrf_token %}
+
+                    <div class="mb-3">
+                        <input type="text" id="tenantSearch" class="form-control" placeholder="Search organisations...">
+                    </div>
+
+                    <div class="list-group mb-3" id="tenantList" style="max-height: 400px; overflow-y: auto;">
+                        {% for tenant in tenants %}
+                        <label class="list-group-item list-group-item-action tenant-item d-flex align-items-center">
+                            <input type="radio" name="tenant_id" value="{{ tenant.tenant_id }}"
+                                   class="form-check-input me-3"
+                                   {% if linked_tenant and tenant.tenant_id == linked_tenant.tenant_id %}checked{% endif %}>
+                            <div class="flex-grow-1">
+                                <strong>{{ tenant.tenant_name }}</strong>
+                                {% if tenant.entity %}
+                                <br><small class="text-muted">
+                                    <i class="bi bi-link-45deg"></i> Linked to: {{ tenant.entity.entity_name }}
+                                </small>
+                                {% endif %}
+                            </div>
+                            {% if tenant.entity and tenant.entity.pk == fy.entity.pk %}
+                            <span class="badge bg-success">This Entity</span>
+                            {% endif %}
+                        </label>
+                        {% endfor %}
+                    </div>
+
+                    <div class="form-check mb-3">
+                        <input type="checkbox" name="link_tenant" value="1" class="form-check-input" id="linkTenant"
+                               {% if not linked_tenant %}checked{% endif %}>
+                        <label class="form-check-label" for="linkTenant">
+                            Remember this selection — link the chosen organisation to <strong>{{ fy.entity.entity_name }}</strong>
+                        </label>
+                    </div>
+
+                    <div class="d-flex justify-content-between">
+                        <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-secondary">
+                            <i class="bi bi-arrow-left"></i> Cancel
+                        </a>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-cloud-arrow-down"></i> Pull Trial Balance
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('tenantSearch').addEventListener('input', function() {
+        const q = this.value.toLowerCase();
+        document.querySelectorAll('.tenant-item').forEach(function(item) {
+            item.style.display = item.textContent.toLowerCase().includes(q) ? '' : 'none';
+        });
+    });
+});
+</script>
+{% endblock %}

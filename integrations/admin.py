@@ -1,5 +1,9 @@
 from django.contrib import admin
-from .models import AccountingConnection, ImportLog
+from .models import (
+    AccountingConnection, ImportLog,
+    XPMConnection, XPMSyncLog,
+    XeroGlobalConnection, XeroTenant,
+)
 
 
 @admin.register(AccountingConnection)
@@ -21,3 +25,28 @@ class ImportLogAdmin(admin.ModelAdmin):
     ]
     list_filter = ["connection__provider"]
     readonly_fields = ["id", "imported_at"]
+
+
+@admin.register(XeroGlobalConnection)
+class XeroGlobalConnectionAdmin(admin.ModelAdmin):
+    list_display = [
+        "status", "connected_by", "connected_at",
+        "last_tenant_refresh", "tenant_count",
+    ]
+    list_filter = ["status"]
+    readonly_fields = ["id", "connected_at"]
+
+    def tenant_count(self, obj):
+        return obj.tenants.count()
+    tenant_count.short_description = "Tenants"
+
+
+@admin.register(XeroTenant)
+class XeroTenantAdmin(admin.ModelAdmin):
+    list_display = [
+        "tenant_name", "tenant_id", "entity", "tenant_type", "updated_at",
+    ]
+    search_fields = ["tenant_name", "tenant_id"]
+    list_filter = ["tenant_type"]
+    raw_id_fields = ["entity"]
+    readonly_fields = ["id", "created_at", "updated_at"]

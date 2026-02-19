@@ -5,7 +5,7 @@ from . import views
 app_name = "integrations"
 
 urlpatterns = [
-    # Connection management
+    # Connection management (per-entity, legacy)
     path(
         "entities/<uuid:entity_pk>/connections/",
         views.connection_manage,
@@ -35,6 +35,11 @@ urlpatterns = [
         name="import_from_cloud",
     ),
     path(
+        "years/<uuid:fy_pk>/select-xero-tenant/",
+        views.xero_select_tenant_import,
+        name="xero_select_tenant_import",
+    ),
+    path(
         "years/<uuid:fy_pk>/review-import/",
         views.review_import,
         name="review_import",
@@ -44,6 +49,13 @@ urlpatterns = [
         views.commit_import,
         name="commit_import",
     ),
+
+    # Global Xero Connection (Advisor-level)
+    path("xero/", views.xero_global_dashboard, name="xero_global_dashboard"),
+    path("xero/connect/", views.xero_global_connect, name="xero_global_connect"),
+    path("xero/callback/", views.xero_global_callback, name="xero_global_callback"),
+    path("xero/refresh-tenants/", views.xero_global_refresh_tenants, name="xero_global_refresh_tenants"),
+    path("xero/disconnect/", views.xero_global_disconnect, name="xero_global_disconnect"),
 
     # Xero Practice Manager (XPM) Integration
     path("xpm/", views.xpm_dashboard, name="xpm_dashboard"),
