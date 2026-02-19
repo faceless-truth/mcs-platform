@@ -225,7 +225,7 @@ def entity_create(request, client_pk=None):
 def entity_detail(request, pk):
     entity = get_object_or_404(Entity, pk=pk)
     financial_years = entity.financial_years.all()
-    officers = entity.officers.filter(date_ceased__isnull=True)
+    officers = entity.officers.all().order_by('date_ceased', 'full_name')
     unfinalised_count = financial_years.exclude(status="finalised").count()
     associates = entity.associates.filter(is_active=True)
     family_associates = [a for a in associates if a.is_family]
@@ -3208,13 +3208,38 @@ def xrm_pull(request, pk):
                        "Edit the entity and add the XPM Client ID first."
         })
 
-    # Placeholder for actual XPM API integration
-    # In production, this would call the Xero Practice Manager API
+    # ---------------------------------------------------------------
+    # XPM API Integration Placeholder
+    # In production, this calls the Xero Practice Manager API to pull:
+    #   - Entity Info: ABN, ACN, TFN, address, email, phone
+    #   - Relationships: contacts, related entities
+    #   - Officers: directors, trustees, partners
+    # ---------------------------------------------------------------
+    # Example of what the API integration would do:
+    # from integrations.xpm import XPMClient
+    # xpm = XPMClient()
+    # data = xpm.get_client(entity.xpm_client_id)
+    # entity.abn = data.get('abn', entity.abn)
+    # entity.acn = data.get('acn', entity.acn)
+    # entity.tfn = data.get('tfn', entity.tfn)
+    # entity.contact_email = data.get('email', entity.contact_email)
+    # entity.contact_phone = data.get('phone', entity.contact_phone)
+    # entity.address_line_1 = data.get('address_line_1', entity.address_line_1)
+    # entity.address_line_2 = data.get('address_line_2', entity.address_line_2)
+    # entity.suburb = data.get('suburb', entity.suburb)
+    # entity.state = data.get('state', entity.state)
+    # entity.postcode = data.get('postcode', entity.postcode)
+    # entity.country = data.get('country', entity.country)
+    # entity.save()
+    # -- Also sync relationships and officers from XPM contacts --
+
     _log_action(request, "xrm_pull", f"XRM pull requested for {entity.entity_name} (XPM ID: {entity.xpm_client_id})", entity)
 
     return JsonResponse({
         "status": "success",
-        "message": f"XRM pull initiated for {entity.entity_name}. Data will be synced shortly."
+        "message": f"XRM pull initiated for {entity.entity_name}. "
+                   f"Entity Info, Relationships, and Officers will be synced from XPM ID: {entity.xpm_client_id}. "
+                   f"Note: Full XPM API integration is pending configuration."
     })
 
 

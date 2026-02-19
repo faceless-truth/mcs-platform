@@ -153,6 +153,22 @@ class Entity(models.Model):
         max_length=50, blank=True,
         help_text="Primary contact phone for this entity",
     )
+    tfn = models.CharField(
+        max_length=20, blank=True, verbose_name="TFN",
+        help_text="Tax File Number",
+    )
+    address_line_1 = models.CharField(
+        max_length=255, blank=True,
+        help_text="Street address line 1",
+    )
+    address_line_2 = models.CharField(
+        max_length=255, blank=True,
+        help_text="Street address line 2",
+    )
+    suburb = models.CharField(max_length=100, blank=True)
+    state = models.CharField(max_length=20, blank=True)
+    postcode = models.CharField(max_length=10, blank=True)
+    country = models.CharField(max_length=50, blank=True, default="Australia")
     is_archived = models.BooleanField(
         default=False,
         help_text="Archived entities are hidden from the default list but data is preserved.",

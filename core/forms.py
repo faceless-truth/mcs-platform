@@ -25,11 +25,13 @@ class EntityForm(forms.ModelForm):
     class Meta:
         model = Entity
         fields = (
-            "entity_name", "trading_as", "entity_type", "abn", "acn",
+            "entity_name", "trading_as", "entity_type", "abn", "acn", "tfn",
             "registration_date", "financial_year_end",
             "reporting_framework", "company_size", "show_cents",
-            "contact_email", "contact_phone", "assigned_accountant",
-            "xpm_client_id",
+            "is_gst_registered",
+            "contact_email", "contact_phone",
+            "address_line_1", "address_line_2", "suburb", "state", "postcode", "country",
+            "assigned_accountant", "xpm_client_id",
         )
         widgets = {
             "registration_date": forms.DateInput(attrs={"type": "date"}),
