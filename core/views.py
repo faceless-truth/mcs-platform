@@ -706,9 +706,77 @@ def _process_trial_balance_upload(fy, file):
 
 @login_required
 def trial_balance_view(request, pk):
+    """Preview trial balance with comparative columns, grouped by section."""
+    from collections import OrderedDict
     fy = get_object_or_404(FinancialYear, pk=pk)
-    tb_lines = fy.trial_balance_lines.select_related("mapped_line_item").all()
-    return render(request, "core/trial_balance_view.html", {"fy": fy, "tb_lines": tb_lines})
+    tb_lines = fy.trial_balance_lines.select_related("mapped_line_item").order_by("account_code")
+
+    SECTION_ORDER = [
+        'Revenue', 'Income', 'Cost of Sales', 'Expenses',
+        'Current Assets', 'Non-Current Assets',
+        'Current Liabilities', 'Non-Current Liabilities',
+        'Equity', 'Income Tax',
+    ]
+    SECTION_DISPLAY = {
+        'Revenue': 'Income', 'Income': 'Income',
+        'Cost of Sales': 'Cost of Sales', 'Expenses': 'Expenses',
+        'Current Assets': 'Current Assets', 'Non-Current Assets': 'Non Current Assets',
+        'Current Liabilities': 'Current Liabilities', 'Non-Current Liabilities': 'Non Current Liabilities',
+        'Equity': 'Equity', 'Income Tax': 'Equity',
+    }
+
+    sections = OrderedDict()
+    grand_total_dr = Decimal('0')
+    grand_total_cr = Decimal('0')
+    grand_total_prior_dr = Decimal('0')
+    grand_total_prior_cr = Decimal('0')
+
+    for line in tb_lines:
+        if line.mapped_line_item:
+            raw_section = line.mapped_line_item.statement_section
+            display_section = SECTION_DISPLAY.get(raw_section, raw_section)
+        else:
+            display_section = 'Unmapped'
+        if display_section not in sections:
+            sections[display_section] = []
+        sections[display_section].append(line)
+        grand_total_dr += line.debit or Decimal('0')
+        grand_total_cr += line.credit or Decimal('0')
+        grand_total_prior_dr += line.prior_debit or Decimal('0')
+        grand_total_prior_cr += line.prior_credit or Decimal('0')
+
+    # Sort sections by defined order
+    ordered_sections = OrderedDict()
+    seen = set()
+    for s in SECTION_ORDER:
+        ds = SECTION_DISPLAY.get(s, s)
+        if ds not in seen and ds in sections:
+            ordered_sections[ds] = sections[ds]
+            seen.add(ds)
+    for key in sections:
+        if key not in ordered_sections:
+            ordered_sections[key] = sections[key]
+
+    # Year labels
+    current_year_label = str(fy.year_label)
+    year_digits = ''.join(c for c in fy.year_label if c.isdigit())
+    if year_digits:
+        prior_year_label = f"FY{int(year_digits) - 1}" if fy.year_label.startswith('FY') else str(int(year_digits) - 1)
+    elif fy.prior_year:
+        prior_year_label = str(fy.prior_year.year_label)
+    else:
+        prior_year_label = 'Prior'
+
+    return render(request, "core/trial_balance_view.html", {
+        "fy": fy,
+        "sections": ordered_sections,
+        "current_year_label": current_year_label,
+        "prior_year_label": prior_year_label,
+        "grand_total_dr": grand_total_dr,
+        "grand_total_cr": grand_total_cr,
+        "grand_total_prior_dr": grand_total_prior_dr,
+        "grand_total_prior_cr": grand_total_prior_cr,
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -3004,3 +3072,287 @@ def xrm_pull(request, pk):
         "status": "success",
         "message": f"XRM pull initiated for {entity.entity_name}. Data will be synced shortly."
     })
+
+
+@login_required
+def trial_balance_download(request, pk):
+    """
+    Download comparative trial balance as Word (.docx) or PDF.
+    Uses ?format=docx or ?format=pdf query parameter.
+    """
+    from io import BytesIO
+    from collections import OrderedDict
+    from decimal import Decimal
+
+    fmt = request.GET.get("format", "pdf").lower()
+    fy = get_object_or_404(FinancialYear, pk=pk)
+    entity = fy.entity
+    tb_lines = TrialBalanceLine.objects.filter(
+        financial_year=fy
+    ).select_related('mapped_line_item').order_by('account_code')
+
+    # Section ordering
+    SECTION_ORDER = [
+        'Revenue', 'Income', 'Cost of Sales', 'Expenses',
+        'Current Assets', 'Non-Current Assets',
+        'Current Liabilities', 'Non-Current Liabilities',
+        'Equity', 'Income Tax',
+    ]
+    SECTION_DISPLAY = {
+        'Revenue': 'Income', 'Income': 'Income',
+        'Cost of Sales': 'Cost of Sales', 'Expenses': 'Expenses',
+        'Current Assets': 'Current Assets', 'Non-Current Assets': 'Non Current Assets',
+        'Current Liabilities': 'Current Liabilities', 'Non-Current Liabilities': 'Non Current Liabilities',
+        'Equity': 'Equity', 'Income Tax': 'Equity',
+    }
+
+    sections = OrderedDict()
+    grand_dr = Decimal('0')
+    grand_cr = Decimal('0')
+    grand_prior_dr = Decimal('0')
+    grand_prior_cr = Decimal('0')
+
+    for line in tb_lines:
+        if line.mapped_line_item:
+            raw_section = line.mapped_line_item.statement_section
+            display_section = SECTION_DISPLAY.get(raw_section, raw_section)
+        else:
+            display_section = 'Unmapped'
+        sections.setdefault(display_section, []).append(line)
+        grand_dr += line.debit or Decimal('0')
+        grand_cr += line.credit or Decimal('0')
+        grand_prior_dr += line.prior_debit or Decimal('0')
+        grand_prior_cr += line.prior_credit or Decimal('0')
+
+    ordered = OrderedDict()
+    seen = set()
+    for s in SECTION_ORDER:
+        ds = SECTION_DISPLAY.get(s, s)
+        if ds not in seen and ds in sections:
+            ordered[ds] = sections[ds]
+            seen.add(ds)
+    for key in sections:
+        if key not in ordered:
+            ordered[key] = sections[key]
+
+    # Year labels
+    current_year = str(fy.year_label)
+    year_digits = ''.join(c for c in fy.year_label if c.isdigit())
+    if year_digits:
+        prior_year = f"FY{int(year_digits) - 1}" if fy.year_label.startswith('FY') else str(int(year_digits) - 1)
+    elif fy.prior_year:
+        prior_year = str(fy.prior_year.year_label)
+    else:
+        prior_year = 'Prior'
+
+    # ABN formatting
+    abn = entity.abn or ''
+    abn_display = ''
+    if abn:
+        abn_clean = abn.replace(' ', '')
+        if len(abn_clean) == 11:
+            abn_display = f'ABN {abn_clean[:2]} {abn_clean[2:5]} {abn_clean[5:8]} {abn_clean[8:11]}'
+        else:
+            abn_display = f'ABN {abn}'
+
+    safe_name = entity.entity_name.replace(' ', '_')
+
+    if fmt == "docx":
+        return _tb_download_word(
+            fy, entity, ordered, current_year, prior_year,
+            abn_display, grand_dr, grand_cr, grand_prior_dr, grand_prior_cr, safe_name
+        )
+    else:
+        # Reuse existing trial_balance_pdf
+        return trial_balance_pdf(request, pk)
+
+
+def _tb_download_word(fy, entity, sections, current_year, prior_year,
+                      abn_display, grand_dr, grand_cr, grand_prior_dr, grand_prior_cr, safe_name):
+    """Generate a Word document for the comparative trial balance."""
+    from io import BytesIO
+    from decimal import Decimal
+    from docx import Document
+    from docx.shared import Pt, Inches, RGBColor, Cm
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.table import WD_TABLE_ALIGNMENT
+    from docx.oxml.ns import qn
+    from docx.oxml import parse_xml
+    import os
+    from django.conf import settings
+
+    doc = Document()
+
+    # Page setup
+    section = doc.sections[0]
+    section.page_width = Cm(21.0)
+    section.page_height = Cm(29.7)
+    section.top_margin = Cm(1.5)
+    section.bottom_margin = Cm(2.0)
+    section.left_margin = Cm(1.5)
+    section.right_margin = Cm(1.5)
+
+    # Logo
+    logo_path = os.path.join(settings.BASE_DIR, 'static', 'img', 'mcs_logo.png')
+    if os.path.exists(logo_path):
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p.add_run().add_picture(logo_path, width=Cm(2.5))
+
+    # Entity name
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = p.add_run(entity.entity_name.upper())
+    run.bold = True
+    run.font.size = Pt(14)
+    run.font.name = 'Times New Roman'
+
+    # ABN
+    if abn_display:
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = p.add_run(abn_display)
+        run.font.size = Pt(10)
+        run.font.name = 'Times New Roman'
+
+    # Title
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = p.add_run(f"Comparative Trial Balance as at {fy.end_date.strftime('%d %B %Y')}")
+    run.bold = True
+    run.font.size = Pt(11)
+    run.font.name = 'Times New Roman'
+    p.space_after = Pt(12)
+
+    def fmt_val(val):
+        if val and val != Decimal('0'):
+            return f"{val:,.2f}"
+        return ''
+
+    # Column header table
+    header_table = doc.add_table(rows=2, cols=6)
+    header_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    header_table.autofit = True
+
+    # Header row 1
+    cells = header_table.rows[0].cells
+    cells[0].text = ''
+    cells[1].text = ''
+    cells[2].text = current_year
+    cells[3].text = current_year
+    cells[4].text = prior_year
+    cells[5].text = prior_year
+
+    # Header row 2
+    cells = header_table.rows[1].cells
+    cells[0].text = ''
+    cells[1].text = ''
+    cells[2].text = '$ Dr'
+    cells[3].text = '$ Cr'
+    cells[4].text = '$ Dr'
+    cells[5].text = '$ Cr'
+
+    # Style header rows
+    for row_idx in range(2):
+        for col_idx in range(6):
+            cell = header_table.rows[row_idx].cells[col_idx]
+            for paragraph in cell.paragraphs:
+                for run in paragraph.runs:
+                    run.bold = True
+                    run.font.size = Pt(9)
+                    run.font.name = 'Times New Roman'
+                if col_idx >= 2:
+                    paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+
+    # Section tables
+    for section_name, lines in sections.items():
+        # Section heading
+        p = doc.add_paragraph()
+        run = p.add_run(section_name)
+        run.bold = True
+        run.font.size = Pt(11)
+        run.font.name = 'Times New Roman'
+        p.space_before = Pt(8)
+        p.space_after = Pt(4)
+
+        table = doc.add_table(rows=len(lines), cols=6)
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
+        table.autofit = True
+
+        for i, line in enumerate(lines):
+            dr = line.debit or Decimal('0')
+            cr = line.credit or Decimal('0')
+            prior_dr = line.prior_debit or Decimal('0')
+            prior_cr = line.prior_credit or Decimal('0')
+
+            cells = table.rows[i].cells
+            cells[0].text = line.account_code
+            cells[1].text = line.account_name
+            cells[2].text = fmt_val(dr)
+            cells[3].text = fmt_val(cr)
+            cells[4].text = fmt_val(prior_dr)
+            cells[5].text = fmt_val(prior_cr)
+
+            for col_idx in range(6):
+                for paragraph in cells[col_idx].paragraphs:
+                    for run in paragraph.runs:
+                        run.font.size = Pt(9)
+                        run.font.name = 'Times New Roman'
+                        if col_idx == 0:
+                            run.bold = True
+                    if col_idx >= 2:
+                        paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+
+    # Grand totals
+    p = doc.add_paragraph()
+    p.space_before = Pt(8)
+    totals_table = doc.add_table(rows=1, cols=6)
+    totals_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    cells = totals_table.rows[0].cells
+    cells[0].text = ''
+    cells[1].text = 'TOTALS'
+    cells[2].text = f"{grand_dr:,.2f}"
+    cells[3].text = f"{grand_cr:,.2f}"
+    cells[4].text = f"{grand_prior_dr:,.2f}"
+    cells[5].text = f"{grand_prior_cr:,.2f}"
+    for col_idx in range(6):
+        for paragraph in cells[col_idx].paragraphs:
+            for run in paragraph.runs:
+                run.bold = True
+                run.font.size = Pt(9)
+                run.font.name = 'Times New Roman'
+            if col_idx >= 2:
+                paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+
+    # Net profit
+    net_profit_current = grand_cr - grand_dr
+    net_profit_prior = grand_prior_cr - grand_prior_dr
+    profit_table = doc.add_table(rows=1, cols=6)
+    profit_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    cells = profit_table.rows[0].cells
+    cells[0].text = ''
+    cells[1].text = 'Net Profit'
+    cells[2].text = ''
+    cells[3].text = f"{abs(net_profit_current):,.2f}"
+    cells[4].text = ''
+    cells[5].text = f"{abs(net_profit_prior):,.2f}"
+    for col_idx in range(6):
+        for paragraph in cells[col_idx].paragraphs:
+            for run in paragraph.runs:
+                run.bold = True
+                run.font.size = Pt(9)
+                run.font.name = 'Times New Roman'
+            if col_idx >= 2:
+                paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+
+    buffer = BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+
+    filename = f"Comparative_TB_{safe_name}_{fy.year_label}.docx"
+    response = HttpResponse(
+        buffer,
+        content_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    )
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    return response
