@@ -353,7 +353,14 @@ def financial_year_detail(request, pk):
 
     # Year labels
     current_year = str(fy.year_label)
-    prior_year = str(int(fy.year_label) - 1) if fy.year_label.isdigit() else 'Prior'
+    # Extract year number from label like "FY2026" or "2026"
+    year_digits = ''.join(c for c in fy.year_label if c.isdigit())
+    if year_digits:
+        prior_year = f"FY{int(year_digits) - 1}" if fy.year_label.startswith('FY') else str(int(year_digits) - 1)
+    elif fy.prior_year:
+        prior_year = str(fy.prior_year.year_label)
+    else:
+        prior_year = 'Prior'
 
     # Audit Risk flags
     risk_flags = RiskFlag.objects.filter(financial_year=fy).order_by('-severity', '-created_at')
@@ -512,8 +519,39 @@ def roll_forward(request, pk):
             status=FinancialYear.Status.DRAFT,
         )
 
-        # Carry forward closing balances as opening balances
+        # Determine which sections are balance sheet
+        BS_SECTIONS = {"assets", "liabilities", "equity", "capital_accounts"}
+        BS_STATEMENTS = {"balance_sheet", "equity"}
+
+        # Build lookup of account_code -> section from ChartOfAccount
+        coa_sections = dict(
+            ChartOfAccount.objects.filter(
+                entity_type=entity.entity_type, is_active=True
+            ).values_list("account_code", "section")
+        )
+
+        carried = 0
         for line in current_fy.trial_balance_lines.filter(is_adjustment=False):
+            # Determine if this is a balance sheet account
+            is_bs = False
+            if line.mapped_line_item:
+                is_bs = line.mapped_line_item.financial_statement in BS_STATEMENTS
+            elif line.account_code in coa_sections:
+                is_bs = coa_sections[line.account_code] in BS_SECTIONS
+            else:
+                # Fallback: check if account code starts with 2/3 (common for BS)
+                # or if the section keyword is in the account name
+                code_prefix = line.account_code.split(".")[0] if line.account_code else ""
+                if code_prefix.isdigit():
+                    is_bs = int(code_prefix) >= 2000
+
+            if not is_bs:
+                continue  # Skip P&L accounts (revenue, expenses, COGS)
+
+            # Only carry forward if there's actually a balance
+            if line.closing_balance == 0:
+                continue
+
             TrialBalanceLine.objects.create(
                 financial_year=new_fy,
                 account_code=line.account_code,
@@ -521,13 +559,16 @@ def roll_forward(request, pk):
                 opening_balance=line.closing_balance,
                 debit=Decimal("0"),
                 credit=Decimal("0"),
-                closing_balance=line.closing_balance,
+                closing_balance=line.closing_balance,  # = opening, waiting for movement
+                prior_debit=line.debit,
+                prior_credit=line.credit,
                 mapped_line_item=line.mapped_line_item,
                 is_adjustment=False,
             )
+            carried += 1
 
-        _log_action(request, "import", f"Rolled forward to {new_label}", new_fy)
-        messages.success(request, f"Rolled forward to {new_label}. Opening balances carried from {current_fy.year_label}.")
+        _log_action(request, "import", f"Rolled forward to {new_label} with {carried} balance sheet items", new_fy)
+        messages.success(request, f"Rolled forward to {new_label}. {carried} balance sheet items carried with opening balances and comparatives.")
         return redirect("core:financial_year_detail", pk=new_fy.pk)
 
     return render(request, "core/roll_forward_confirm.html", {"fy": current_fy})
@@ -1347,7 +1388,14 @@ def trial_balance_pdf(request, pk):
 
     # Year labels
     current_year = str(fy.year_label)
-    prior_year = str(int(fy.year_label) - 1) if fy.year_label.isdigit() else 'Prior'
+    # Extract year number from label like "FY2026" or "2026"
+    year_digits = ''.join(c for c in fy.year_label if c.isdigit())
+    if year_digits:
+        prior_year = f"FY{int(year_digits) - 1}" if fy.year_label.startswith('FY') else str(int(year_digits) - 1)
+    elif fy.prior_year:
+        prior_year = str(fy.prior_year.year_label)
+    else:
+        prior_year = 'Prior'
 
     # ABN
     abn = entity.abn if hasattr(entity, 'abn') and entity.abn else ''
