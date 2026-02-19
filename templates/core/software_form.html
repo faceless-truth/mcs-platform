@@ -17,77 +17,79 @@
                 <h5 class="mb-0"><i class="bi bi-pc-display"></i> {{ title }}</h5>
             </div>
             <div class="card-body">
-                <form method="post">
+                {% if not form.instance.pk %}
+                <!-- Quick-add buttons for new software only -->
+                <div class="mb-4">
+                    <label class="form-label fw-semibold mb-2">Select Software</label>
+                    <div class="d-flex flex-wrap gap-2">
+                        <button type="button" class="btn btn-outline-primary software-quick-btn px-4 py-3" data-software="xero" data-cloud="true" data-advisor="true">
+                            <i class="bi bi-cloud-check fs-4 d-block mb-1"></i>
+                            <strong>Xero</strong>
+                        </button>
+                        <button type="button" class="btn btn-outline-purple software-quick-btn px-4 py-3" data-software="myob" data-cloud="true" data-advisor="true" style="border-color: #6f42c1; color: #6f42c1;">
+                            <i class="bi bi-cloud-check fs-4 d-block mb-1"></i>
+                            <strong>MYOB</strong>
+                        </button>
+                        <button type="button" class="btn btn-outline-success software-quick-btn px-4 py-3" data-software="quickbooks" data-cloud="true" data-advisor="true">
+                            <i class="bi bi-cloud-check fs-4 d-block mb-1"></i>
+                            <strong>QuickBooks</strong>
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary software-quick-btn px-4 py-3" data-software="reckon" data-cloud="false" data-advisor="false">
+                            <i class="bi bi-pc-display fs-4 d-block mb-1"></i>
+                            <strong>Reckon</strong>
+                        </button>
+                        <button type="button" class="btn btn-outline-dark software-quick-btn px-4 py-3" data-software="sage" data-cloud="false" data-advisor="false">
+                            <i class="bi bi-pc-display fs-4 d-block mb-1"></i>
+                            <strong>Sage</strong>
+                        </button>
+                        <button type="button" class="btn btn-outline-warning software-quick-btn px-4 py-3" data-software="excel" data-cloud="false" data-advisor="false">
+                            <i class="bi bi-file-earmark-spreadsheet fs-4 d-block mb-1"></i>
+                            <strong>Excel</strong>
+                        </button>
+                        <button type="button" class="btn btn-outline-info software-quick-btn px-4 py-3" data-software="other" data-cloud="false" data-advisor="false">
+                            <i class="bi bi-three-dots fs-4 d-block mb-1"></i>
+                            <strong>Other</strong>
+                        </button>
+                    </div>
+                </div>
+                {% endif %}
+
+                <form method="post" id="softwareForm" {% if not form.instance.pk %}style="display:none;"{% endif %}>
                     {% csrf_token %}
 
-                    <div class="row mb-3">
-                        <div class="col-md-4">
-                            <label class="form-label fw-semibold">Software *</label>
-                            {{ form.software_type }}
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label">Version / Edition</label>
-                            {{ form.software_version }}
-                            <small class="text-muted">e.g. "Standard", "AccountRight Plus"</small>
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label">Subscription Level</label>
-                            {{ form.subscription_level }}
-                            <small class="text-muted">e.g. "Starter", "Premium"</small>
-                        </div>
-                    </div>
-
-                    <div class="row mb-3">
-                        <div class="col-md-6">
-                            <label class="form-label">Entity</label>
-                            {{ form.entity }}
-                            <small class="text-muted">Leave blank if this applies to the whole client</small>
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label">Organisation Name</label>
-                            {{ form.organisation_name }}
-                            <small class="text-muted">Name within the software</small>
-                        </div>
-                    </div>
-
-                    <div class="row mb-3">
-                        <div class="col-md-6">
-                            <label class="form-label">Client Login Email</label>
-                            {{ form.login_email }}
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label">MC&S Advisor Login Email</label>
-                            {{ form.advisor_login_email }}
-                        </div>
-                    </div>
-
-                    <div class="row mb-3">
-                        <div class="col-md-4">
-                            <div class="form-check mt-4">
-                                {{ form.is_cloud }}
-                                <label class="form-check-label" for="{{ form.is_cloud.id_for_label }}">Cloud-based</label>
-                            </div>
-                        </div>
-                        <div class="col-md-4">
-                            <div class="form-check mt-4">
-                                {{ form.has_advisor_access }}
-                                <label class="form-check-label" for="{{ form.has_advisor_access.id_for_label }}">MC&S has advisor access</label>
-                            </div>
-                        </div>
-                        <div class="col-md-4">
-                            <div class="form-check mt-4">
-                                {{ form.is_primary }}
-                                <label class="form-check-label" for="{{ form.is_primary.id_for_label }}">Primary software</label>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="mb-3">
-                        <label class="form-label">Notes</label>
+                    <!-- Hidden fields auto-set by quick buttons -->
+                    <div style="display:none;">
+                        {{ form.software_type }}
+                        {{ form.is_cloud }}
+                        {{ form.has_advisor_access }}
+                        {{ form.is_primary }}
+                        {{ form.software_version }}
+                        {{ form.subscription_level }}
                         {{ form.notes }}
                     </div>
 
-                    <div class="d-flex justify-content-between">
+                    <!-- Selected software badge -->
+                    <div class="mb-3" id="selectedSoftwareBadge">
+                        <span class="badge bg-primary fs-6 px-3 py-2" id="selectedSoftwareLabel"></span>
+                        {% if not form.instance.pk %}
+                        <button type="button" class="btn btn-sm btn-link text-muted" id="changeSoftwareBtn">Change</button>
+                        {% endif %}
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Organisation Name</label>
+                            {{ form.organisation_name }}
+                            <small class="text-muted">Entity's name within the software</small>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Client Login Email</label>
+                            {{ form.login_email }}
+                            <small class="text-muted">Optional — client's login for this software</small>
+                        </div>
+                    </div>
+
+                    <div class="d-flex justify-content-between mt-4">
                         <a href="{% url 'core:entity_detail' pk=entity.pk %}#software" class="btn btn-outline-secondary">Cancel</a>
                         <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Save Software</button>
                     </div>
@@ -96,4 +98,70 @@
         </div>
     </div>
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const softwareNames = {
+        'xero': 'Xero',
+        'myob': 'MYOB',
+        'quickbooks': 'QuickBooks',
+        'reckon': 'Reckon',
+        'sage': 'Sage',
+        'excel': 'Excel / Spreadsheet',
+        'other': 'Other'
+    };
+
+    const form = document.getElementById('softwareForm');
+    const quickBtns = document.querySelectorAll('.software-quick-btn');
+    const selectedLabel = document.getElementById('selectedSoftwareLabel');
+    const changeBtn = document.getElementById('changeSoftwareBtn');
+    const quickBtnContainer = document.querySelector('.mb-4');
+
+    // For edit mode, show the selected software label
+    {% if form.instance.pk %}
+    const currentType = document.getElementById('{{ form.software_type.id_for_label }}');
+    if (currentType) {
+        selectedLabel.textContent = currentType.options[currentType.selectedIndex]?.text || '';
+    }
+    {% endif %}
+
+    quickBtns.forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            const sw = this.dataset.software;
+            const isCloud = this.dataset.cloud === 'true';
+            const isAdvisor = this.dataset.advisor === 'true';
+
+            // Set hidden form fields
+            const typeField = document.getElementById('{{ form.software_type.id_for_label }}');
+            if (typeField) typeField.value = sw;
+
+            const cloudField = document.getElementById('{{ form.is_cloud.id_for_label }}');
+            if (cloudField) cloudField.checked = isCloud;
+
+            const advisorField = document.getElementById('{{ form.has_advisor_access.id_for_label }}');
+            if (advisorField) advisorField.checked = isAdvisor;
+
+            const primaryField = document.getElementById('{{ form.is_primary.id_for_label }}');
+            if (primaryField) primaryField.checked = true;
+
+            // Show form, hide quick buttons
+            form.style.display = '';
+            quickBtnContainer.style.display = 'none';
+            selectedLabel.textContent = softwareNames[sw] || sw;
+
+            // Highlight selected button
+            quickBtns.forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
+        });
+    });
+
+    // Change button to go back to quick selection
+    if (changeBtn) {
+        changeBtn.addEventListener('click', function() {
+            form.style.display = 'none';
+            quickBtnContainer.style.display = '';
+        });
+    }
+});
+</script>
 {% endblock %}
