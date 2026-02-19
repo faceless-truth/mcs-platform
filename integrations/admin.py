@@ -3,6 +3,8 @@ from .models import (
     AccountingConnection, ImportLog,
     XPMConnection, XPMSyncLog,
     XeroGlobalConnection, XeroTenant,
+    QBGlobalConnection, QBTenant,
+    MYOBGlobalConnection, MYOBCompanyFile,
 )
 
 
@@ -48,5 +50,52 @@ class XeroTenantAdmin(admin.ModelAdmin):
     ]
     search_fields = ["tenant_name", "tenant_id"]
     list_filter = ["tenant_type"]
+    raw_id_fields = ["entity"]
+    readonly_fields = ["id", "created_at", "updated_at"]
+
+
+@admin.register(QBGlobalConnection)
+class QBGlobalConnectionAdmin(admin.ModelAdmin):
+    list_display = [
+        "status", "connected_by", "connected_at", "tenant_count",
+    ]
+    list_filter = ["status"]
+    readonly_fields = ["id", "connected_at"]
+
+    def tenant_count(self, obj):
+        return obj.tenants.count()
+    tenant_count.short_description = "Companies"
+
+
+@admin.register(QBTenant)
+class QBTenantAdmin(admin.ModelAdmin):
+    list_display = [
+        "company_name", "realm_id", "entity", "updated_at",
+    ]
+    search_fields = ["company_name", "realm_id"]
+    raw_id_fields = ["entity"]
+    readonly_fields = ["id", "created_at", "updated_at"]
+
+
+@admin.register(MYOBGlobalConnection)
+class MYOBGlobalConnectionAdmin(admin.ModelAdmin):
+    list_display = [
+        "status", "connected_by", "connected_at",
+        "last_file_refresh", "file_count",
+    ]
+    list_filter = ["status"]
+    readonly_fields = ["id", "connected_at"]
+
+    def file_count(self, obj):
+        return obj.company_files.count()
+    file_count.short_description = "Company Files"
+
+
+@admin.register(MYOBCompanyFile)
+class MYOBCompanyFileAdmin(admin.ModelAdmin):
+    list_display = [
+        "file_name", "file_id", "entity", "updated_at",
+    ]
+    search_fields = ["file_name", "file_id"]
     raw_id_fields = ["entity"]
     readonly_fields = ["id", "created_at", "updated_at"]

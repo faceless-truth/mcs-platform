@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Select Provider - {{ fy.entity.entity_name }} - StatementHub{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-8 mx-auto">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
+                <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=fy.entity.pk %}">{{ fy.entity.entity_name }}</a></li>
+                <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">FY{{ fy.end_date|date:"Y" }}</a></li>
+                <li class="breadcrumb-item active">Select Provider</li>
+            </ol>
+        </nav>
+
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-cloud-arrow-down"></i> Import Trial Balance</h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted mb-4">
+                    Multiple accounting platforms are connected. Select which one to import the trial balance from
+                    for <strong>{{ fy.entity.entity_name }}</strong> (FY{{ fy.end_date|date:"Y" }}).
+                </p>
+
+                <div class="row g-3">
+                    {% for p in providers %}
+                    <div class="col-md-4">
+                        <a href="{{ p.url }}" class="card text-decoration-none h-100 border-2 {% if p.linked_name %}border-success{% endif %}">
+                            <div class="card-body text-center py-4">
+                                <i class="{{ p.icon }} fs-1 mb-3 d-block text-primary"></i>
+                                <h5 class="card-title">{{ p.display }}</h5>
+                                <p class="text-muted small mb-2">{{ p.count }} organisation(s)</p>
+                                {% if p.linked_name %}
+                                <span class="badge bg-success">
+                                    <i class="bi bi-link-45deg"></i> Linked: {{ p.linked_name }}
+                                </span>
+                                {% else %}
+                                <span class="badge bg-secondary">Not linked</span>
+                                {% endif %}
+                            </div>
+                        </a>
+                    </div>
+                    {% endfor %}
+                </div>
+
+                <div class="mt-4">
+                    <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-secondary">
+                        <i class="bi bi-arrow-left"></i> Cancel
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

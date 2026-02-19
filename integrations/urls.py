@@ -5,6 +5,9 @@ from . import views
 app_name = "integrations"
 
 urlpatterns = [
+    # Connections Hub (unified view of all platforms)
+    path("connections/", views.connections_hub, name="connections_hub"),
+
     # Connection management (per-entity, legacy)
     path(
         "entities/<uuid:entity_pk>/connections/",
@@ -35,9 +38,24 @@ urlpatterns = [
         name="import_from_cloud",
     ),
     path(
+        "years/<uuid:fy_pk>/select-provider/",
+        views.select_provider_import,
+        name="select_provider_import",
+    ),
+    path(
         "years/<uuid:fy_pk>/select-xero-tenant/",
         views.xero_select_tenant_import,
         name="xero_select_tenant_import",
+    ),
+    path(
+        "years/<uuid:fy_pk>/select-qb-company/",
+        views.qb_select_tenant_import,
+        name="qb_select_tenant_import",
+    ),
+    path(
+        "years/<uuid:fy_pk>/select-myob-file/",
+        views.myob_select_file_import,
+        name="myob_select_file_import",
     ),
     path(
         "years/<uuid:fy_pk>/review-import/",
@@ -57,6 +75,20 @@ urlpatterns = [
     path("xero/refresh-tenants/", views.xero_global_refresh_tenants, name="xero_global_refresh_tenants"),
     path("xero/stop-rapid/", views.xero_stop_rapid, name="xero_stop_rapid"),
     path("xero/disconnect/", views.xero_global_disconnect, name="xero_global_disconnect"),
+
+    # Global QuickBooks Connection (Advisor-level)
+    path("qb/", views.qb_global_dashboard, name="qb_global_dashboard"),
+    path("qb/connect/", views.qb_global_connect, name="qb_global_connect"),
+    path("qb/callback/", views.qb_global_callback, name="qb_global_callback"),
+    path("qb/stop-rapid/", views.qb_stop_rapid, name="qb_stop_rapid"),
+    path("qb/disconnect/", views.qb_global_disconnect, name="qb_global_disconnect"),
+
+    # Global MYOB Connection (Advisor-level)
+    path("myob/", views.myob_global_dashboard, name="myob_global_dashboard"),
+    path("myob/connect/", views.myob_global_connect, name="myob_global_connect"),
+    path("myob/callback/", views.myob_global_callback, name="myob_global_callback"),
+    path("myob/refresh-files/", views.myob_global_refresh_files, name="myob_global_refresh_files"),
+    path("myob/disconnect/", views.myob_global_disconnect, name="myob_global_disconnect"),
 
     # Xero Practice Manager (XPM) Integration
     path("xpm/", views.xpm_dashboard, name="xpm_dashboard"),

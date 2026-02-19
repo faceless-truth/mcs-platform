@@ -355,3 +355,221 @@ class XeroTenant(models.Model):
     def __str__(self):
         linked = f" → {self.entity.entity_name}" if self.entity else ""
         return f"{self.tenant_name}{linked}"
+
+
+class QBGlobalConnection(models.Model):
+    """
+    A practice-level OAuth2 connection to QuickBooks Online.
+    Unlike Xero, each QBO company requires a separate OAuth flow (each
+    company has its own realmId). This model stores the latest tokens
+    and acts as the parent for all QBTenant records.
+    """
+
+    class Status(models.TextChoices):
+        ACTIVE = "active", "Active"
+        EXPIRED = "expired", "Token Expired"
+        DISCONNECTED = "disconnected", "Disconnected"
+        ERROR = "error", "Error"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.ACTIVE
+    )
+
+    # OAuth2 tokens (updated with each new company connection)
+    access_token = models.TextField(blank=True, default="")
+    refresh_token = models.TextField(blank=True, default="")
+    token_expires_at = models.DateTimeField(null=True, blank=True)
+
+    # Audit
+    connected_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="qb_global_connections",
+    )
+    connected_at = models.DateTimeField(auto_now_add=True)
+    last_error = models.TextField(blank=True, default="")
+
+    class Meta:
+        ordering = ["-connected_at"]
+
+    def __str__(self):
+        return f"QB Global ({self.get_status_display()}) - {self.tenants.count()} companies"
+
+    @property
+    def is_token_expired(self):
+        if not self.token_expires_at:
+            return True
+        return timezone.now() >= self.token_expires_at
+
+    @property
+    def needs_refresh(self):
+        if not self.token_expires_at:
+            return True
+        return timezone.now() >= (self.token_expires_at - timezone.timedelta(minutes=5))
+
+
+class QBTenant(models.Model):
+    """
+    A QuickBooks Online company (realm) accessible via the global connection.
+    Each company has its own realmId and its own set of tokens.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    connection = models.ForeignKey(
+        QBGlobalConnection,
+        on_delete=models.CASCADE,
+        related_name="tenants",
+    )
+    realm_id = models.CharField(
+        max_length=255,
+        help_text="QuickBooks Online company/realm ID",
+    )
+    company_name = models.CharField(
+        max_length=255,
+        help_text="Company name in QuickBooks",
+    )
+
+    # Each QBO company has its own tokens
+    access_token = models.TextField(blank=True, default="")
+    refresh_token = models.TextField(blank=True, default="")
+    token_expires_at = models.DateTimeField(null=True, blank=True)
+
+    # Link to StatementHub entity
+    entity = models.ForeignKey(
+        "core.Entity",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="qb_tenants",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["company_name"]
+        unique_together = [("connection", "realm_id")]
+
+    def __str__(self):
+        linked = f" → {self.entity.entity_name}" if self.entity else ""
+        return f"{self.company_name} ({self.realm_id}){linked}"
+
+    @property
+    def is_token_expired(self):
+        if not self.token_expires_at:
+            return True
+        return timezone.now() >= self.token_expires_at
+
+    @property
+    def needs_refresh(self):
+        if not self.token_expires_at:
+            return True
+        return timezone.now() >= (self.token_expires_at - timezone.timedelta(minutes=5))
+
+
+class MYOBGlobalConnection(models.Model):
+    """
+    A practice-level OAuth2 connection to MYOB Business.
+    Stores the OAuth tokens for accessing MYOB company files.
+    """
+
+    class Status(models.TextChoices):
+        ACTIVE = "active", "Active"
+        EXPIRED = "expired", "Token Expired"
+        DISCONNECTED = "disconnected", "Disconnected"
+        ERROR = "error", "Error"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.ACTIVE
+    )
+
+    # OAuth2 tokens
+    access_token = models.TextField(blank=True, default="")
+    refresh_token = models.TextField(blank=True, default="")
+    token_expires_at = models.DateTimeField(null=True, blank=True)
+
+    # Audit
+    connected_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="myob_global_connections",
+    )
+    connected_at = models.DateTimeField(auto_now_add=True)
+    last_file_refresh = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True, default="")
+
+    class Meta:
+        ordering = ["-connected_at"]
+
+    def __str__(self):
+        return f"MYOB Global ({self.get_status_display()}) - {self.company_files.count()} files"
+
+    @property
+    def is_token_expired(self):
+        if not self.token_expires_at:
+            return True
+        return timezone.now() >= self.token_expires_at
+
+    @property
+    def needs_refresh(self):
+        if not self.token_expires_at:
+            return True
+        return timezone.now() >= (self.token_expires_at - timezone.timedelta(minutes=2))
+
+
+class MYOBCompanyFile(models.Model):
+    """
+    A MYOB company file accessible via the global connection.
+    Each company file has its own URI and may require separate credentials.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    connection = models.ForeignKey(
+        MYOBGlobalConnection,
+        on_delete=models.CASCADE,
+        related_name="company_files",
+    )
+    file_uri = models.CharField(
+        max_length=500,
+        help_text="MYOB company file URI",
+    )
+    file_name = models.CharField(
+        max_length=255,
+        help_text="Company file name in MYOB",
+    )
+    file_id = models.CharField(
+        max_length=255, blank=True, default="",
+        help_text="MYOB company file ID",
+    )
+
+    # Company file credentials (stored encrypted in production)
+    cf_username = models.CharField(
+        max_length=255, blank=True, default="Administrator",
+        help_text="Company file username",
+    )
+    cf_password = models.CharField(
+        max_length=255, blank=True, default="",
+        help_text="Company file password",
+    )
+
+    # Link to StatementHub entity
+    entity = models.ForeignKey(
+        "core.Entity",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="myob_company_files",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["file_name"]
+        unique_together = [("connection", "file_uri")]
+
+    def __str__(self):
+        linked = f" → {self.entity.entity_name}" if self.entity else ""
+        return f"{self.file_name}{linked}"

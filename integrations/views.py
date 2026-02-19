@@ -31,7 +31,12 @@ from core.models import (
     FinancialYear,
     TrialBalanceLine,
 )
-from .models import AccountingConnection, ImportLog, XeroGlobalConnection, XeroTenant
+from .models import (
+    AccountingConnection, ImportLog,
+    XeroGlobalConnection, XeroTenant,
+    QBGlobalConnection, QBTenant,
+    MYOBGlobalConnection, MYOBCompanyFile,
+)
 from .providers import get_provider, get_configured_providers, PROVIDERS
 
 logger = logging.getLogger(__name__)
@@ -305,9 +310,8 @@ def _ensure_global_xero_token(connection):
 def import_from_cloud(request, fy_pk):
     """
     Pull trial balance from connected accounting platform.
-    Now supports the Global Xero Connection: if no per-entity connection
-    exists but a global Xero connection is active, redirect to tenant
-    selection for this entity.
+    Checks all global connections (Xero, QB, MYOB) and per-entity connections.
+    If multiple providers are available, shows a unified selection page.
     """
     fy = get_object_or_404(FinancialYear, pk=fy_pk)
     entity = fy.entity
@@ -331,33 +335,84 @@ def import_from_cloud(request, fy_pk):
         provider = get_provider(connection.provider)
         return _do_cloud_import(request, fy, entity, provider, connection.access_token, connection.tenant_id, connection)
 
-    # Check for global Xero connection
-    global_conn = XeroGlobalConnection.objects.filter(status="active").first()
-    if global_conn:
-        if not _ensure_global_xero_token(global_conn):
-            messages.error(request, "Xero connection has expired. Please reconnect from the Xero Connection page.")
-            return redirect("integrations:xero_global_dashboard")
+    # Collect all available global connections
+    available_providers = []
 
-        # Check if entity has a linked tenant
-        linked_tenant = XeroTenant.objects.filter(
-            connection=global_conn, entity=entity
-        ).first()
+    # Check Xero global
+    xero_conn = XeroGlobalConnection.objects.filter(status="active").first()
+    if xero_conn:
+        linked_xero = XeroTenant.objects.filter(connection=xero_conn, entity=entity).first()
+        available_providers.append({
+            "name": "xero",
+            "display": "Xero",
+            "icon": "bi-cloud",
+            "linked": linked_xero,
+            "linked_name": linked_xero.tenant_name if linked_xero else None,
+            "tenant_count": xero_conn.tenants.count(),
+        })
 
-        if linked_tenant:
-            # Direct import using linked tenant
-            provider = get_provider("xero")
-            return _do_cloud_import(request, fy, entity, provider, global_conn.access_token, linked_tenant.tenant_id, None)
+    # Check QB global
+    qb_conn = QBGlobalConnection.objects.filter(status="active").first()
+    if qb_conn:
+        linked_qb = QBTenant.objects.filter(connection=qb_conn, entity=entity).first()
+        available_providers.append({
+            "name": "quickbooks",
+            "display": "QuickBooks Online",
+            "icon": "bi-cloud",
+            "linked": linked_qb,
+            "linked_name": linked_qb.company_name if linked_qb else None,
+            "tenant_count": qb_conn.tenants.count(),
+        })
 
-        # No linked tenant — show tenant selection
-        return redirect("integrations:xero_select_tenant_import", fy_pk=fy_pk)
+    # Check MYOB global
+    myob_conn = MYOBGlobalConnection.objects.filter(status="active").first()
+    if myob_conn:
+        linked_myob = MYOBCompanyFile.objects.filter(connection=myob_conn, entity=entity).first()
+        available_providers.append({
+            "name": "myob",
+            "display": "MYOB",
+            "icon": "bi-cloud",
+            "linked": linked_myob,
+            "linked_name": linked_myob.file_name if linked_myob else None,
+            "tenant_count": myob_conn.company_files.count(),
+        })
 
-    # No connection at all
-    messages.warning(
-        request,
-        "No accounting platform connected. "
-        "Connect via the Xero Connection page or set up a per-entity connection."
-    )
-    return redirect("integrations:xero_global_dashboard")
+    if not available_providers:
+        messages.warning(
+            request,
+            "No accounting platform connected. "
+            "Connect via Admin → Xero / QuickBooks / MYOB Connection."
+        )
+        return redirect("integrations:connections_hub")
+
+    # If only one provider with a linked tenant, go straight to import
+    if len(available_providers) == 1 and available_providers[0]["linked"]:
+        p = available_providers[0]
+        if p["name"] == "xero":
+            if _ensure_global_xero_token(xero_conn):
+                provider = get_provider("xero")
+                return _do_cloud_import(request, fy, entity, provider, xero_conn.access_token, p["linked"].tenant_id, None)
+        elif p["name"] == "quickbooks":
+            if _ensure_qb_tenant_token(p["linked"]):
+                provider = get_provider("quickbooks")
+                return _do_cloud_import(request, fy, entity, provider, p["linked"].access_token, p["linked"].realm_id, None)
+        elif p["name"] == "myob":
+            if _ensure_myob_token(myob_conn):
+                provider = get_provider("myob")
+                return _do_cloud_import(request, fy, entity, provider, myob_conn.access_token, p["linked"].file_uri, None)
+
+    # If only one provider, skip provider selection and go to tenant selection
+    if len(available_providers) == 1:
+        p = available_providers[0]
+        if p["name"] == "xero":
+            return redirect("integrations:xero_select_tenant_import", fy_pk=fy_pk)
+        elif p["name"] == "quickbooks":
+            return redirect("integrations:qb_select_tenant_import", fy_pk=fy_pk)
+        elif p["name"] == "myob":
+            return redirect("integrations:myob_select_file_import", fy_pk=fy_pk)
+
+    # Multiple providers — show selection page
+    return redirect("integrations:select_provider_import", fy_pk=fy_pk)
 
 
 def _do_cloud_import(request, fy, entity, provider, access_token, tenant_id, connection_obj):
@@ -367,7 +422,7 @@ def _do_cloud_import(request, fy, entity, provider, access_token, tenant_id, con
         raw_lines = provider.fetch_trial_balance(access_token, tenant_id, as_at_date)
 
         if not raw_lines:
-            messages.warning(request, "No trial balance data returned from Xero.")
+            messages.warning(request, f"No trial balance data returned from {provider.display_name}.")
             return redirect("core:financial_year_detail", pk=fy.pk)
 
         staged_lines = _apply_learned_mappings(entity, raw_lines)
@@ -1170,3 +1225,714 @@ def xpm_sync_now(request):
         messages.error(request, f"XPM sync failed: {str(e)}")
 
     return redirect("integrations:xpm_dashboard")
+
+
+# ---------------------------------------------------------------------------
+# Token refresh helpers for QB and MYOB
+# ---------------------------------------------------------------------------
+
+def _ensure_qb_tenant_token(qb_tenant):
+    """Refresh a QBTenant's access token if needed. Returns True if valid."""
+    if not qb_tenant.needs_refresh:
+        return True
+
+    import base64
+    client_id = getattr(settings, "QBO_CLIENT_ID", "")
+    client_secret = getattr(settings, "QBO_CLIENT_SECRET", "")
+    auth_header = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+
+    try:
+        resp = http_requests.post(
+            "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
+            headers={
+                "Authorization": f"Basic {auth_header}",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            data={
+                "grant_type": "refresh_token",
+                "refresh_token": qb_tenant.refresh_token,
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        qb_tenant.access_token = data["access_token"]
+        qb_tenant.refresh_token = data.get("refresh_token", qb_tenant.refresh_token)
+        qb_tenant.token_expires_at = timezone.now() + timedelta(
+            seconds=data.get("expires_in", 3600)
+        )
+        qb_tenant.save()
+        return True
+    except Exception as e:
+        logger.error(f"QB tenant token refresh failed for {qb_tenant}: {e}")
+        return False
+
+
+def _ensure_myob_token(connection):
+    """Refresh the global MYOB connection token if needed. Returns True if valid."""
+    if not connection.needs_refresh:
+        return True
+
+    client_id = getattr(settings, "MYOB_CLIENT_ID", "")
+    client_secret = getattr(settings, "MYOB_CLIENT_SECRET", "")
+
+    try:
+        resp = http_requests.post(
+            "https://secure.myob.com/oauth2/v1/authorize",
+            data={
+                "grant_type": "refresh_token",
+                "refresh_token": connection.refresh_token,
+                "client_id": client_id,
+                "client_secret": client_secret,
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        connection.access_token = data["access_token"]
+        connection.refresh_token = data.get("refresh_token", connection.refresh_token)
+        connection.token_expires_at = timezone.now() + timedelta(
+            seconds=data.get("expires_in", 1200)
+        )
+        connection.status = "active"
+        connection.last_error = ""
+        connection.save()
+        return True
+    except Exception as e:
+        logger.error(f"MYOB token refresh failed: {e}")
+        connection.status = "expired"
+        connection.last_error = str(e)
+        connection.save()
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Connections Hub — unified view of all platform connections
+# ---------------------------------------------------------------------------
+
+@login_required
+def connections_hub(request):
+    """Unified dashboard showing all accounting platform connections."""
+    xero_conn = XeroGlobalConnection.objects.filter(status="active").first()
+    qb_conn = QBGlobalConnection.objects.filter(status="active").first()
+    myob_conn = MYOBGlobalConnection.objects.filter(status="active").first()
+
+    xero_configured = bool(getattr(settings, "XERO_CLIENT_ID", "") and getattr(settings, "XERO_CLIENT_SECRET", ""))
+    qb_configured = bool(getattr(settings, "QBO_CLIENT_ID", "") and getattr(settings, "QBO_CLIENT_SECRET", ""))
+    myob_configured = bool(getattr(settings, "MYOB_CLIENT_ID", "") and getattr(settings, "MYOB_CLIENT_SECRET", ""))
+
+    context = {
+        "xero_conn": xero_conn,
+        "xero_tenant_count": xero_conn.tenants.count() if xero_conn else 0,
+        "qb_conn": qb_conn,
+        "qb_tenant_count": qb_conn.tenants.count() if qb_conn else 0,
+        "myob_conn": myob_conn,
+        "myob_file_count": myob_conn.company_files.count() if myob_conn else 0,
+        "xero_configured": xero_configured,
+        "qb_configured": qb_configured,
+        "myob_configured": myob_configured,
+    }
+    return render(request, "integrations/connections_hub.html", context)
+
+
+# ---------------------------------------------------------------------------
+# Provider selection for import (when multiple providers are connected)
+# ---------------------------------------------------------------------------
+
+@login_required
+def select_provider_import(request, fy_pk):
+    """Show provider selection when multiple platforms are connected."""
+    fy = get_object_or_404(FinancialYear, pk=fy_pk)
+    entity = fy.entity
+
+    providers = []
+    xero_conn = XeroGlobalConnection.objects.filter(status="active").first()
+    if xero_conn:
+        linked = XeroTenant.objects.filter(connection=xero_conn, entity=entity).first()
+        providers.append({
+            "name": "xero", "display": "Xero", "icon": "bi-cloud",
+            "linked_name": linked.tenant_name if linked else None,
+            "count": xero_conn.tenants.count(),
+            "url": reverse("integrations:xero_select_tenant_import", args=[fy_pk]),
+        })
+
+    qb_conn = QBGlobalConnection.objects.filter(status="active").first()
+    if qb_conn:
+        linked = QBTenant.objects.filter(connection=qb_conn, entity=entity).first()
+        providers.append({
+            "name": "quickbooks", "display": "QuickBooks Online", "icon": "bi-cloud",
+            "linked_name": linked.company_name if linked else None,
+            "count": qb_conn.tenants.count(),
+            "url": reverse("integrations:qb_select_tenant_import", args=[fy_pk]),
+        })
+
+    myob_conn = MYOBGlobalConnection.objects.filter(status="active").first()
+    if myob_conn:
+        linked = MYOBCompanyFile.objects.filter(connection=myob_conn, entity=entity).first()
+        providers.append({
+            "name": "myob", "display": "MYOB", "icon": "bi-cloud",
+            "linked_name": linked.file_name if linked else None,
+            "count": myob_conn.company_files.count(),
+            "url": reverse("integrations:myob_select_file_import", args=[fy_pk]),
+        })
+
+    context = {
+        "fy": fy,
+        "providers": providers,
+    }
+    return render(request, "integrations/select_provider_import.html", context)
+
+
+# ---------------------------------------------------------------------------
+# Global QuickBooks Connection (Advisor-level)
+# ---------------------------------------------------------------------------
+
+@login_required
+def qb_global_dashboard(request):
+    """Dashboard showing the global QuickBooks connection status and company list."""
+    connection = QBGlobalConnection.objects.filter(status="active").first()
+    if not connection:
+        connection = QBGlobalConnection.objects.first()
+
+    tenants = []
+    tenant_count = 0
+    if connection and connection.status == "active":
+        tenants = connection.tenants.select_related("entity").all()
+        tenant_count = tenants.count()
+
+    qb_configured = bool(
+        getattr(settings, "QBO_CLIENT_ID", "") and
+        getattr(settings, "QBO_CLIENT_SECRET", "")
+    )
+
+    context = {
+        "connection": connection,
+        "tenants": tenants,
+        "tenant_count": tenant_count,
+        "qb_configured": qb_configured,
+    }
+    return render(request, "integrations/qb_global_dashboard.html", context)
+
+
+@login_required
+def qb_global_connect(request):
+    """Initiate OAuth2 connection to QuickBooks Online.
+    
+    Each QBO company requires its own OAuth flow. The realmId (company ID)
+    comes back in the callback URL. Rapid mode auto-redirects back.
+    """
+    state = str(uuid.uuid4())
+    request.session["qb_global_oauth_state"] = state
+
+    if request.GET.get("rapid") == "1":
+        request.session["qb_rapid_connect"] = True
+    elif "qb_rapid_connect" not in request.session:
+        request.session["qb_rapid_connect"] = False
+
+    client_id = getattr(settings, "QBO_CLIENT_ID", "")
+    redirect_uri = request.build_absolute_uri(
+        reverse("integrations:qb_global_callback")
+    )
+
+    params = {
+        "response_type": "code",
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "scope": "com.intuit.quickbooks.accounting",
+        "state": state,
+    }
+    query_string = "&".join(f"{k}={v}" for k, v in params.items())
+    auth_url = f"https://appcenter.intuit.com/connect/oauth2?{query_string}"
+
+    return redirect(auth_url)
+
+
+@login_required
+def qb_global_callback(request):
+    """Handle OAuth2 callback for QuickBooks Online.
+    
+    QBO returns the realmId as a query parameter, which identifies the company.
+    Each company gets its own token set stored in QBTenant.
+    """
+    code = request.GET.get("code")
+    state = request.GET.get("state")
+    error = request.GET.get("error")
+    realm_id = request.GET.get("realmId", "")
+    rapid_mode = request.session.get("qb_rapid_connect", False)
+
+    expected_state = request.session.get("qb_global_oauth_state")
+
+    if error:
+        messages.error(request, f"QuickBooks connection failed: {error}")
+        request.session.pop("qb_rapid_connect", None)
+        return redirect("integrations:qb_global_dashboard")
+
+    if not code or state != expected_state:
+        messages.error(request, "QuickBooks connection failed: invalid state.")
+        request.session.pop("qb_rapid_connect", None)
+        return redirect("integrations:qb_global_dashboard")
+
+    if not realm_id:
+        messages.error(request, "QuickBooks connection failed: no company ID returned.")
+        request.session.pop("qb_rapid_connect", None)
+        return redirect("integrations:qb_global_dashboard")
+
+    import base64
+    client_id = getattr(settings, "QBO_CLIENT_ID", "")
+    client_secret = getattr(settings, "QBO_CLIENT_SECRET", "")
+    auth_header = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+    redirect_uri = request.build_absolute_uri(
+        reverse("integrations:qb_global_callback")
+    )
+
+    try:
+        # Exchange code for tokens
+        resp = http_requests.post(
+            "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
+            headers={
+                "Authorization": f"Basic {auth_header}",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": redirect_uri,
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        tokens = resp.json()
+
+        # Get company name from QBO API
+        company_name = f"QBO Company {realm_id}"
+        try:
+            info_resp = http_requests.get(
+                f"https://quickbooks.api.intuit.com/v3/company/{realm_id}/companyinfo/{realm_id}",
+                headers={
+                    "Authorization": f"Bearer {tokens['access_token']}",
+                    "Accept": "application/json",
+                },
+                params={"minorversion": "65"},
+                timeout=15,
+            )
+            if info_resp.status_code == 200:
+                info_data = info_resp.json()
+                company_name = info_data.get("CompanyInfo", {}).get("CompanyName", company_name)
+        except Exception:
+            pass  # Use default name
+
+        # Get or create the global connection
+        conn = QBGlobalConnection.objects.filter(status="active").first()
+        if not conn:
+            conn = QBGlobalConnection.objects.create(
+                status="active",
+                access_token=tokens["access_token"],
+                refresh_token=tokens.get("refresh_token", ""),
+                token_expires_at=timezone.now() + timedelta(seconds=tokens.get("expires_in", 3600)),
+                connected_by=request.user,
+            )
+
+        # Create or update the tenant
+        tenant, created = QBTenant.objects.update_or_create(
+            connection=conn,
+            realm_id=realm_id,
+            defaults={
+                "company_name": company_name,
+                "access_token": tokens["access_token"],
+                "refresh_token": tokens.get("refresh_token", ""),
+                "token_expires_at": timezone.now() + timedelta(seconds=tokens.get("expires_in", 3600)),
+            },
+        )
+
+        # Update the global connection tokens too
+        conn.access_token = tokens["access_token"]
+        conn.refresh_token = tokens.get("refresh_token", conn.refresh_token)
+        conn.token_expires_at = timezone.now() + timedelta(seconds=tokens.get("expires_in", 3600))
+        conn.save()
+
+        if created:
+            messages.success(request, f"Connected to {company_name}! Total: {conn.tenants.count()} companies.")
+        else:
+            messages.info(request, f"Refreshed connection to {company_name}. Total: {conn.tenants.count()} companies.")
+
+    except Exception as e:
+        logger.error(f"QB global OAuth callback error: {e}")
+        messages.error(request, f"QuickBooks connection failed: {str(e)}")
+        request.session.pop("qb_rapid_connect", None)
+        request.session.pop("qb_global_oauth_state", None)
+        return redirect("integrations:qb_global_dashboard")
+
+    request.session.pop("qb_global_oauth_state", None)
+
+    if rapid_mode:
+        return redirect(reverse("integrations:qb_global_connect") + "?rapid=1")
+
+    return redirect("integrations:qb_global_dashboard")
+
+
+@login_required
+def qb_stop_rapid(request):
+    """Stop rapid-connect mode for QuickBooks."""
+    request.session.pop("qb_rapid_connect", None)
+    conn = QBGlobalConnection.objects.filter(status="active").first()
+    total = conn.tenants.count() if conn else 0
+    messages.success(request, f"Rapid connect stopped. {total} QuickBooks company(ies) connected.")
+    return redirect("integrations:qb_global_dashboard")
+
+
+@login_required
+@require_POST
+def qb_global_disconnect(request):
+    """Disconnect the global QuickBooks connection."""
+    QBGlobalConnection.objects.filter(status="active").update(
+        status="disconnected",
+        access_token="",
+        refresh_token="",
+    )
+    messages.success(request, "Disconnected from QuickBooks Online.")
+    return redirect("integrations:qb_global_dashboard")
+
+
+@login_required
+def qb_select_tenant_import(request, fy_pk):
+    """Select which QBO company to import trial balance from."""
+    fy = get_object_or_404(FinancialYear, pk=fy_pk)
+    entity = fy.entity
+
+    conn = QBGlobalConnection.objects.filter(status="active").first()
+    if not conn:
+        messages.error(request, "No active QuickBooks connection. Please connect first.")
+        return redirect("integrations:qb_global_dashboard")
+
+    tenants = conn.tenants.select_related("entity").all()
+    linked_tenant = tenants.filter(entity=entity).first()
+
+    if request.method == "POST":
+        realm_id = request.POST.get("tenant_id", "")
+        link_tenant = request.POST.get("link_tenant") == "1"
+
+        if not realm_id:
+            messages.error(request, "Please select a company.")
+            return redirect("integrations:qb_select_tenant_import", fy_pk=fy_pk)
+
+        tenant_obj = tenants.filter(realm_id=realm_id).first()
+        if not tenant_obj:
+            messages.error(request, "Company not found.")
+            return redirect("integrations:qb_select_tenant_import", fy_pk=fy_pk)
+
+        if link_tenant:
+            tenants.filter(entity=entity).update(entity=None)
+            tenant_obj.entity = entity
+            tenant_obj.save(update_fields=["entity"])
+
+        if not _ensure_qb_tenant_token(tenant_obj):
+            messages.error(request, "QuickBooks token expired. Please reconnect this company.")
+            return redirect("integrations:qb_global_dashboard")
+
+        provider = get_provider("quickbooks")
+        return _do_cloud_import(request, fy, entity, provider, tenant_obj.access_token, tenant_obj.realm_id, None)
+
+    context = {
+        "fy": fy,
+        "tenants": tenants,
+        "linked_tenant": linked_tenant,
+        "provider_name": "QuickBooks Online",
+    }
+    return render(request, "integrations/qb_select_tenant_import.html", context)
+
+
+# ---------------------------------------------------------------------------
+# Global MYOB Connection (Advisor-level)
+# ---------------------------------------------------------------------------
+
+@login_required
+def myob_global_dashboard(request):
+    """Dashboard showing the global MYOB connection status and company file list."""
+    connection = MYOBGlobalConnection.objects.filter(status="active").first()
+    if not connection:
+        connection = MYOBGlobalConnection.objects.first()
+
+    files = []
+    file_count = 0
+    if connection and connection.status == "active":
+        files = connection.company_files.select_related("entity").all()
+        file_count = files.count()
+
+    myob_configured = bool(
+        getattr(settings, "MYOB_CLIENT_ID", "") and
+        getattr(settings, "MYOB_CLIENT_SECRET", "")
+    )
+
+    context = {
+        "connection": connection,
+        "files": files,
+        "file_count": file_count,
+        "myob_configured": myob_configured,
+    }
+    return render(request, "integrations/myob_global_dashboard.html", context)
+
+
+@login_required
+def myob_global_connect(request):
+    """Initiate OAuth2 connection to MYOB."""
+    state = str(uuid.uuid4())
+    request.session["myob_global_oauth_state"] = state
+
+    client_id = getattr(settings, "MYOB_CLIENT_ID", "")
+    redirect_uri = request.build_absolute_uri(
+        reverse("integrations:myob_global_callback")
+    )
+
+    params = {
+        "response_type": "code",
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "scope": "CompanyFile",
+        "state": state,
+    }
+    query_string = "&".join(f"{k}={v}" for k, v in params.items())
+    auth_url = f"https://secure.myob.com/oauth2/v1/authorize?{query_string}"
+
+    return redirect(auth_url)
+
+
+@login_required
+def myob_global_callback(request):
+    """Handle OAuth2 callback for MYOB.
+    
+    After getting tokens, fetches all company files accessible to the user.
+    """
+    code = request.GET.get("code")
+    state = request.GET.get("state")
+    error = request.GET.get("error")
+
+    expected_state = request.session.get("myob_global_oauth_state")
+
+    if error:
+        messages.error(request, f"MYOB connection failed: {error}")
+        return redirect("integrations:myob_global_dashboard")
+
+    if not code or state != expected_state:
+        messages.error(request, "MYOB connection failed: invalid state.")
+        return redirect("integrations:myob_global_dashboard")
+
+    client_id = getattr(settings, "MYOB_CLIENT_ID", "")
+    client_secret = getattr(settings, "MYOB_CLIENT_SECRET", "")
+    redirect_uri = request.build_absolute_uri(
+        reverse("integrations:myob_global_callback")
+    )
+
+    try:
+        # Exchange code for tokens
+        resp = http_requests.post(
+            "https://secure.myob.com/oauth2/v1/authorize",
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": redirect_uri,
+                "client_id": client_id,
+                "client_secret": client_secret,
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        tokens = resp.json()
+
+        # Get all company files
+        files_resp = http_requests.get(
+            "https://api.myob.com/accountright/",
+            headers={
+                "Authorization": f"Bearer {tokens['access_token']}",
+                "x-myobapi-key": client_id,
+                "x-myobapi-version": "v2",
+            },
+            timeout=15,
+        )
+        files_resp.raise_for_status()
+        company_files = files_resp.json()
+
+        # Get or create global connection
+        conn = MYOBGlobalConnection.objects.filter(status="active").first()
+        if conn:
+            conn.access_token = tokens["access_token"]
+            conn.refresh_token = tokens.get("refresh_token", conn.refresh_token)
+            conn.token_expires_at = timezone.now() + timedelta(
+                seconds=tokens.get("expires_in", 1200)
+            )
+            conn.last_file_refresh = timezone.now()
+            conn.save()
+        else:
+            MYOBGlobalConnection.objects.filter(status="active").update(status="disconnected")
+            conn = MYOBGlobalConnection.objects.create(
+                status="active",
+                access_token=tokens["access_token"],
+                refresh_token=tokens.get("refresh_token", ""),
+                token_expires_at=timezone.now() + timedelta(
+                    seconds=tokens.get("expires_in", 1200)
+                ),
+                connected_by=request.user,
+                last_file_refresh=timezone.now(),
+            )
+
+        # Preserve entity links
+        existing_links = {
+            f.file_uri: f.entity
+            for f in conn.company_files.select_related("entity").all()
+            if f.entity
+        }
+
+        # Sync company files
+        existing_uris = set(conn.company_files.values_list("file_uri", flat=True))
+        new_count = 0
+        for cf in company_files:
+            uri = cf.get("Uri", "")
+            name = cf.get("Name", "Unknown")
+            file_id = cf.get("Id", "")
+
+            if uri not in existing_uris:
+                mf = MYOBCompanyFile.objects.create(
+                    connection=conn,
+                    file_uri=uri,
+                    file_name=name,
+                    file_id=file_id,
+                )
+                if uri in existing_links:
+                    mf.entity = existing_links[uri]
+                    mf.save(update_fields=["entity"])
+                new_count += 1
+            else:
+                conn.company_files.filter(file_uri=uri).update(file_name=name, file_id=file_id)
+
+        total = conn.company_files.count()
+        messages.success(
+            request,
+            f"Connected to MYOB! {total} company file(s) found ({new_count} new)."
+        )
+
+    except Exception as e:
+        logger.error(f"MYOB global OAuth callback error: {e}")
+        messages.error(request, f"MYOB connection failed: {str(e)}")
+
+    request.session.pop("myob_global_oauth_state", None)
+    return redirect("integrations:myob_global_dashboard")
+
+
+@login_required
+@require_POST
+def myob_global_refresh_files(request):
+    """Refresh the list of company files from MYOB."""
+    conn = MYOBGlobalConnection.objects.filter(status="active").first()
+    if not conn:
+        messages.error(request, "No active MYOB connection.")
+        return redirect("integrations:myob_global_dashboard")
+
+    if not _ensure_myob_token(conn):
+        messages.error(request, "MYOB token expired. Please reconnect.")
+        return redirect("integrations:myob_global_dashboard")
+
+    client_id = getattr(settings, "MYOB_CLIENT_ID", "")
+
+    try:
+        resp = http_requests.get(
+            "https://api.myob.com/accountright/",
+            headers={
+                "Authorization": f"Bearer {conn.access_token}",
+                "x-myobapi-key": client_id,
+                "x-myobapi-version": "v2",
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        company_files = resp.json()
+
+        existing_links = {
+            f.file_uri: f.entity
+            for f in conn.company_files.select_related("entity").all()
+            if f.entity
+        }
+
+        conn.company_files.all().delete()
+
+        for cf in company_files:
+            uri = cf.get("Uri", "")
+            mf = MYOBCompanyFile.objects.create(
+                connection=conn,
+                file_uri=uri,
+                file_name=cf.get("Name", "Unknown"),
+                file_id=cf.get("Id", ""),
+            )
+            if uri in existing_links:
+                mf.entity = existing_links[uri]
+                mf.save(update_fields=["entity"])
+
+        conn.last_file_refresh = timezone.now()
+        conn.save(update_fields=["last_file_refresh"])
+
+        messages.success(request, f"Refreshed: {len(company_files)} company file(s) found.")
+
+    except Exception as e:
+        logger.error(f"MYOB file refresh failed: {e}")
+        messages.error(request, f"Failed to refresh: {str(e)}")
+
+    return redirect("integrations:myob_global_dashboard")
+
+
+@login_required
+@require_POST
+def myob_global_disconnect(request):
+    """Disconnect the global MYOB connection."""
+    MYOBGlobalConnection.objects.filter(status="active").update(
+        status="disconnected",
+        access_token="",
+        refresh_token="",
+    )
+    messages.success(request, "Disconnected from MYOB.")
+    return redirect("integrations:myob_global_dashboard")
+
+
+@login_required
+def myob_select_file_import(request, fy_pk):
+    """Select which MYOB company file to import trial balance from."""
+    fy = get_object_or_404(FinancialYear, pk=fy_pk)
+    entity = fy.entity
+
+    conn = MYOBGlobalConnection.objects.filter(status="active").first()
+    if not conn:
+        messages.error(request, "No active MYOB connection. Please connect first.")
+        return redirect("integrations:myob_global_dashboard")
+
+    files = conn.company_files.select_related("entity").all()
+    linked_file = files.filter(entity=entity).first()
+
+    if request.method == "POST":
+        file_uri = request.POST.get("tenant_id", "")
+        link_file = request.POST.get("link_tenant") == "1"
+
+        if not file_uri:
+            messages.error(request, "Please select a company file.")
+            return redirect("integrations:myob_select_file_import", fy_pk=fy_pk)
+
+        file_obj = files.filter(file_uri=file_uri).first()
+        if not file_obj:
+            messages.error(request, "Company file not found.")
+            return redirect("integrations:myob_select_file_import", fy_pk=fy_pk)
+
+        if link_file:
+            files.filter(entity=entity).update(entity=None)
+            file_obj.entity = entity
+            file_obj.save(update_fields=["entity"])
+
+        if not _ensure_myob_token(conn):
+            messages.error(request, "MYOB token expired. Please reconnect.")
+            return redirect("integrations:myob_global_dashboard")
+
+        provider = get_provider("myob")
+        return _do_cloud_import(request, fy, entity, provider, conn.access_token, file_obj.file_uri, None)
+
+    context = {
+        "fy": fy,
+        "tenants": [{"tenant_id": f.file_uri, "tenant_name": f.file_name, "entity": f.entity} for f in files],
+        "linked_tenant": {"tenant_id": linked_file.file_uri, "tenant_name": linked_file.file_name} if linked_file else None,
+        "provider_name": "MYOB",
+    }
+    return render(request, "integrations/myob_select_file_import.html", context)
