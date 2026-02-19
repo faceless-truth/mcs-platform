@@ -26,6 +26,9 @@
         <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-secondary btn-sm">
             <i class="bi bi-arrow-left"></i> Back to {{ fy.year_label }}
         </a>
+        <a href="{% url 'core:gst_activity_statement_download' pk=fy.pk %}?format=pdf" class="btn btn-outline-danger btn-sm">
+            <i class="bi bi-file-earmark-pdf"></i> Download PDF
+        </a>
         <a href="{% url 'core:gst_activity_statement_download' pk=fy.pk %}" class="btn btn-success btn-sm">
             <i class="bi bi-file-earmark-excel"></i> Download Excel
         </a>

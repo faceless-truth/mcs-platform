@@ -66,32 +66,124 @@
     </div>
 </div>
 
-<!-- Status Change & Roll Forward -->
+<!-- Status, Finalise, Download & Roll Forward -->
 <div class="row g-3 mb-4">
-    <div class="col-md-6">
+    <div class="col-12">
         <div class="card">
             <div class="card-body py-2">
-                <form method="post" action="{% url 'core:financial_year_status' pk=fy.pk %}" class="d-flex align-items-center gap-2">
-                    {% csrf_token %}
-                    <label class="form-label mb-0 text-nowrap"><strong>Change Status:</strong></label>
-                    <select name="status" class="form-select form-select-sm" style="max-width: 200px;">
-                        <option value="draft" {% if fy.status == 'draft' %}selected{% endif %}>Draft</option>
-                        <option value="in_review" {% if fy.status == 'in_review' %}selected{% endif %}>In Review</option>
-                        <option value="reviewed" {% if fy.status == 'reviewed' %}selected{% endif %}>Reviewed</option>
-                        <option value="finalised" {% if fy.status == 'finalised' %}selected{% endif %}>Finalised</option>
-                    </select>
-                    <button type="submit" class="btn btn-sm btn-primary">Update</button>
-                </form>
+                <div class="d-flex flex-wrap align-items-center gap-3">
+                    <!-- Status Change -->
+                    <form method="post" action="{% url 'core:financial_year_status' pk=fy.pk %}" class="d-flex align-items-center gap-2" id="statusForm">
+                        {% csrf_token %}
+                        <label class="form-label mb-0 text-nowrap"><strong>Status:</strong></label>
+                        <select name="status" class="form-select form-select-sm" style="max-width: 180px;">
+                            <option value="draft" {% if fy.status == 'draft' %}selected{% endif %}>Draft</option>
+                            <option value="in_review" {% if fy.status == 'in_review' %}selected{% endif %}>In Review</option>
+                            <option value="reviewed" {% if fy.status == 'reviewed' %}selected{% endif %}>Reviewed</option>
+                        </select>
+                        <button type="submit" class="btn btn-sm btn-primary">Update</button>
+                    </form>
+
+                    <div class="vr d-none d-md-block"></div>
+
+                    <!-- Finalise Button -->
+                    {% if fy.status != 'finalised' %}
+                    <form method="post" action="{% url 'core:financial_year_status' pk=fy.pk %}" id="finaliseForm">
+                        {% csrf_token %}
+                        <input type="hidden" name="status" value="finalised">
+                        <button type="button" class="btn btn-sm btn-success" id="finaliseBtn"
+                            {% if open_risk_count > 0 %}onclick="showAuditRiskWarning()"{% else %}onclick="confirmFinalise()"{% endif %}>
+                            <i class="bi bi-check-circle"></i> Finalise
+                        </button>
+                    </form>
+                    {% else %}
+                    <span class="badge bg-success fs-6 py-2 px-3">
+                        <i class="bi bi-check-circle-fill"></i> Finalised
+                        {% if fy.finalised_at %} &mdash; {{ fy.finalised_at|date:"d M Y" }}{% endif %}
+                    </span>
+                    {% endif %}
+
+                    <div class="vr d-none d-md-block"></div>
+
+                    <!-- Financial Statement Download Buttons -->
+                    {% if fy.status == 'finalised' %}
+                    <button type="button" class="btn btn-sm btn-dark" onclick="showPeriodModal('docx')">
+                        <i class="bi bi-file-earmark-word"></i> Download Word
+                    </button>
+                    <button type="button" class="btn btn-sm btn-danger" onclick="showPeriodModal('pdf')">
+                        <i class="bi bi-file-earmark-pdf"></i> Download PDF
+                    </button>
+                    {% else %}
+                    <button type="button" class="btn btn-sm btn-dark" disabled title="Finalise this financial year to download statements">
+                        <i class="bi bi-file-earmark-word"></i> Download Word
+                    </button>
+                    <button type="button" class="btn btn-sm btn-danger" disabled title="Finalise this financial year to download statements">
+                        <i class="bi bi-file-earmark-pdf"></i> Download PDF
+                    </button>
+                    {% endif %}
+
+                    <div class="vr d-none d-md-block"></div>
+
+                    <!-- Roll Forward -->
+                    {% if fy.status == 'finalised' %}
+                    <a href="{% url 'core:roll_forward' pk=fy.pk %}" class="btn btn-sm btn-outline-primary">
+                        <i class="bi bi-arrow-right-circle"></i> Roll Forward
+                    </a>
+                    {% else %}
+                    <button type="button" class="btn btn-sm btn-outline-primary" disabled title="Finalise this financial year before rolling forward">
+                        <i class="bi bi-arrow-right-circle"></i> Roll Forward
+                    </button>
+                    {% endif %}
+                </div>
             </div>
         </div>
     </div>
-    <div class="col-md-6">
-        <div class="card">
-            <div class="card-body py-2 d-flex align-items-center justify-content-between">
-                <span><strong>Roll Forward:</strong> Create next financial year from closing balances</span>
-                <a href="{% url 'core:roll_forward' pk=fy.pk %}" class="btn btn-sm btn-outline-primary">
-                    <i class="bi bi-arrow-right-circle"></i> Roll Forward
-                </a>
+</div>
+
+<!-- Audit Risk Warning Modal -->
+<div class="modal fade" id="auditRiskWarningModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title"><i class="bi bi-exclamation-triangle-fill"></i> Cannot Finalise</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>This financial year has <strong>{{ open_risk_count }} open audit risk flag{{ open_risk_count|pluralize }}</strong> that must be resolved before finalisation.</p>
+                <p>Each risk flag requires a minimum <strong>5-word resolution description</strong> explaining how the risk was addressed.</p>
+                <p>Go to the <strong>Audit Risk</strong> tab to review and resolve all outstanding flags.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Period Selection Modal -->
+<div class="modal fade" id="periodModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-calendar-range"></i> Select Reporting Period</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Select the period for the financial statements:</p>
+                <div class="list-group" id="periodOptions">
+                    <a href="#" class="list-group-item list-group-item-action period-option active" data-period="full">
+                        <div class="d-flex justify-content-between">
+                            <strong>Full Financial Year</strong>
+                            <span class="text-muted">{{ fy.start_date|date:"d M Y" }} &mdash; {{ fy.end_date|date:"d M Y" }}</span>
+                        </div>
+                    </a>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="downloadStatementsBtn" onclick="downloadStatements()">
+                    <i class="bi bi-download"></i> Download
+                </button>
             </div>
         </div>
     </div>
@@ -1251,5 +1343,48 @@
         if (bsDropdown) bsDropdown.hide();
     });
 })();
+</script>
+
+<script>
+// ===== Finalise & Download Workflow =====
+let selectedFormat = 'docx';
+
+function showAuditRiskWarning() {
+    new bootstrap.Modal(document.getElementById('auditRiskWarningModal')).show();
+}
+
+function confirmFinalise() {
+    if (confirm('Are you sure you want to finalise this financial year? This will lock the data and enable financial statement downloads.')) {
+        document.getElementById('finaliseForm').submit();
+    }
+}
+
+function showPeriodModal(fmt) {
+    selectedFormat = fmt;
+    const btn = document.getElementById('downloadStatementsBtn');
+    if (fmt === 'pdf') {
+        btn.className = 'btn btn-danger';
+        btn.innerHTML = '<i class="bi bi-file-earmark-pdf"></i> Download PDF';
+    } else {
+        btn.className = 'btn btn-dark';
+        btn.innerHTML = '<i class="bi bi-file-earmark-word"></i> Download Word';
+    }
+    new bootstrap.Modal(document.getElementById('periodModal')).show();
+}
+
+function downloadStatements() {
+    const url = "{% url 'core:generate_document' pk=fy.pk %}" + '?format=' + selectedFormat;
+    window.location.href = url;
+    bootstrap.Modal.getInstance(document.getElementById('periodModal')).hide();
+}
+
+// Period option selection
+document.querySelectorAll('.period-option').forEach(opt => {
+    opt.addEventListener('click', function(e) {
+        e.preventDefault();
+        document.querySelectorAll('.period-option').forEach(o => o.classList.remove('active'));
+        this.classList.add('active');
+    });
+});
 </script>
 {% endblock %}

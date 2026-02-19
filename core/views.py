@@ -511,6 +511,14 @@ def roll_forward(request, pk):
         messages.error(request, "You do not have permission.")
         return redirect("core:financial_year_detail", pk=pk)
 
+    # Cannot roll forward unless the current FY is finalised
+    if current_fy.status != "finalised":
+        messages.error(
+            request,
+            "Cannot roll forward: this financial year must be finalised before rolling forward."
+        )
+        return redirect("core:financial_year_detail", pk=pk)
+
     if request.method == "POST":
         # Calculate new dates (add 1 year)
         from dateutil.relativedelta import relativedelta
@@ -2237,8 +2245,10 @@ def gst_activity_statement(request, pk):
 
 @login_required
 def gst_activity_statement_download(request, pk):
-    """Download GST Activity Statement as Excel."""
+    """Download GST Activity Statement as Excel or PDF."""
     import io
+
+    fmt = request.GET.get("format", "excel").lower()
 
     fy = get_object_or_404(
         FinancialYear.objects.select_related("entity", "entity__client"),
@@ -2329,6 +2339,15 @@ def gst_activity_statement_download(request, pk):
     g20 = (g19 / Decimal("11")).quantize(Decimal("0.01")) if g19 else Decimal("0")
     label_1a = g9
     label_1b = g20
+
+    # PDF format
+    if fmt == "pdf":
+        return _gst_download_pdf(
+            fy, entity, detail_rows,
+            g1, g2, g3, g4, g5, g6, g7, g8, g9,
+            g10, g11, g12, g13, g14, g15, g16, g17, g18, g19, g20,
+            label_1a, label_1b,
+        )
 
     # Create Excel workbook
     wb = openpyxl.Workbook()
@@ -2430,6 +2449,108 @@ def gst_activity_statement_download(request, pk):
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
     return response
 
+
+
+def _gst_download_pdf(fy, entity, detail_rows,
+                      g1, g2, g3, g4, g5, g6, g7, g8, g9,
+                      g10, g11, g12, g13, g14, g15, g16, g17, g18, g19, g20,
+                      label_1a, label_1b):
+    """Generate GST Activity Statement as PDF using WeasyPrint."""
+    import io
+    import weasyprint
+
+    abn = entity.abn or 'N/A'
+    period = f"{fy.start_date.strftime('%d/%m/%Y')} to {fy.end_date.strftime('%d/%m/%Y')}"
+    net_gst = label_1a - label_1b
+    net_label = "Net GST Payable to ATO" if net_gst > 0 else "Net GST Refundable from ATO"
+
+    def fmt(v):
+        return f"${v:,.2f}"
+
+    # Build detail rows HTML
+    detail_html = ""
+    for row in detail_rows:
+        detail_html += f"""<tr>
+            <td>{row['code']}</td><td>{row['name']}</td>
+            <td>{row['tax_code']}</td><td class="r">${row['amount']:,.2f}</td>
+            <td>{row['bas_label']}</td>
+        </tr>"""
+
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+    @page {{ size: A4; margin: 15mm; }}
+    body {{ font-family: 'Times New Roman', serif; font-size: 10pt; color: #333; }}
+    h1 {{ font-size: 14pt; text-align: center; margin-bottom: 2mm; }}
+    h2 {{ font-size: 11pt; margin-top: 6mm; margin-bottom: 3mm; border-bottom: 1px solid #333; padding-bottom: 2mm; }}
+    .sub {{ text-align: center; font-size: 10pt; color: #666; margin-bottom: 4mm; }}
+    table {{ width: 100%; border-collapse: collapse; margin-bottom: 4mm; }}
+    th, td {{ padding: 3px 6px; font-size: 9pt; border-bottom: 1px solid #ddd; }}
+    th {{ background: #f5f5f5; text-align: left; font-weight: bold; }}
+    .r {{ text-align: right; }}
+    .bold {{ font-weight: bold; }}
+    .highlight {{ background: #e8f4fd; }}
+    .summary {{ background: #f8f9fa; }}
+    .total-row {{ border-top: 2px solid #333; font-weight: bold; }}
+</style></head><body>
+
+<h1>GST Activity Statement</h1>
+<p class="sub">{entity.entity_name} &mdash; ABN: {abn}</p>
+<p class="sub">Period: {period}</p>
+
+<h2>GST on Sales</h2>
+<table>
+    <tr><th>Label</th><th>Description</th><th class="r">Amount</th></tr>
+    <tr><td class="bold">G1</td><td>Total sales (including any GST)</td><td class="r">{fmt(g1)}</td></tr>
+    <tr><td>G2</td><td>Export sales</td><td class="r">{fmt(g2)}</td></tr>
+    <tr><td>G3</td><td>Other GST-free sales</td><td class="r">{fmt(g3)}</td></tr>
+    <tr><td>G4</td><td>Input taxed sales</td><td class="r">{fmt(g4)}</td></tr>
+    <tr class="summary"><td class="bold">G5</td><td>G2 + G3 + G4</td><td class="r bold">{fmt(g5)}</td></tr>
+    <tr><td class="bold">G6</td><td>Total sales subject to GST (G1 &minus; G5)</td><td class="r bold">{fmt(g6)}</td></tr>
+    <tr><td>G7</td><td>Adjustments</td><td class="r">{fmt(g7)}</td></tr>
+    <tr class="summary"><td class="bold">G8</td><td>Total sales subject to GST after adj. (G6 + G7)</td><td class="r bold">{fmt(g8)}</td></tr>
+    <tr class="highlight"><td class="bold">G9</td><td>GST on sales (G8 &divide; 11)</td><td class="r bold">{fmt(g9)}</td></tr>
+</table>
+
+<h2>GST on Purchases</h2>
+<table>
+    <tr><th>Label</th><th>Description</th><th class="r">Amount</th></tr>
+    <tr><td class="bold">G10</td><td>Capital purchases (including any GST)</td><td class="r">{fmt(g10)}</td></tr>
+    <tr><td class="bold">G11</td><td>Non-capital purchases (including any GST)</td><td class="r">{fmt(g11)}</td></tr>
+    <tr class="summary"><td class="bold">G12</td><td>G10 + G11</td><td class="r bold">{fmt(g12)}</td></tr>
+    <tr><td>G13</td><td>Purchases for making input taxed sales</td><td class="r">{fmt(g13)}</td></tr>
+    <tr><td>G14</td><td>Purchases without GST in the price</td><td class="r">{fmt(g14)}</td></tr>
+    <tr><td>G15</td><td>Estimated purchases for private use</td><td class="r">{fmt(g15)}</td></tr>
+    <tr class="summary"><td class="bold">G16</td><td>G13 + G14 + G15</td><td class="r bold">{fmt(g16)}</td></tr>
+    <tr><td class="bold">G17</td><td>Total purchases subject to GST (G12 &minus; G16)</td><td class="r bold">{fmt(g17)}</td></tr>
+    <tr><td>G18</td><td>Adjustments</td><td class="r">{fmt(g18)}</td></tr>
+    <tr class="summary"><td class="bold">G19</td><td>Total purchases subject to GST after adj. (G17 + G18)</td><td class="r bold">{fmt(g19)}</td></tr>
+    <tr class="highlight"><td class="bold">G20</td><td>GST on purchases (G19 &divide; 11)</td><td class="r bold">{fmt(g20)}</td></tr>
+</table>
+
+<h2>Activity Statement Summary</h2>
+<table style="max-width: 400px;">
+    <tr><td class="bold">1A</td><td>GST on sales</td><td class="r bold">{fmt(label_1a)}</td></tr>
+    <tr><td class="bold">1B</td><td>GST on purchases (credit)</td><td class="r bold">{fmt(label_1b)}</td></tr>
+    <tr class="total-row"><td colspan="2">{net_label}</td><td class="r">{fmt(abs(net_gst))}</td></tr>
+</table>
+
+<h2>Detail Breakdown</h2>
+<table>
+    <tr><th>Code</th><th>Account Name</th><th>Tax Code</th><th class="r">Amount</th><th>BAS Label</th></tr>
+    {detail_html}
+</table>
+
+</body></html>"""
+
+    pdf_bytes = weasyprint.HTML(string=html).write_pdf()
+
+    entity_name = entity.entity_name.replace(' ', '_')
+    filename = f"GST_Activity_Statement_{entity_name}_{fy.start_date.strftime('%Y%m%d')}_{fy.end_date.strftime('%Y%m%d')}.pdf"
+
+    response = HttpResponse(pdf_bytes, content_type='application/pdf')
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    return response
 
 
 # ---------------------------------------------------------------------------
