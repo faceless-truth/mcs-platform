@@ -3191,6 +3191,87 @@ def coa_search_api(request):
 # ============================================================
 
 @login_required
+def xrm_search(request, pk):
+    """
+    Search XPM for clients matching this entity's name.
+    Returns a list of potential matches for the user to confirm.
+    """
+    entity = get_object_or_404(Entity, pk=pk)
+
+    if request.method != "POST":
+        return JsonResponse({"status": "error", "message": "POST required"}, status=405)
+
+    if not request.user.can_edit:
+        return JsonResponse({"status": "error", "message": "Permission denied"}, status=403)
+
+    from integrations.models import XPMConnection
+    from integrations.xpm_sync import _ensure_valid_token, _xpm_get, _xml_text
+
+    connection = XPMConnection.objects.filter(status="active").first()
+    if not connection:
+        return JsonResponse({
+            "status": "error",
+            "message": "No active XPM connection. Go to Integrations > XPM to connect first."
+        })
+
+    if not _ensure_valid_token(connection):
+        return JsonResponse({
+            "status": "error",
+            "message": "XPM token has expired. Please reconnect via Integrations > XPM."
+        })
+
+    try:
+        # Search XPM by entity name
+        search_name = entity.entity_name or entity.trading_name or ""
+        root = _xpm_get(connection, "client.api/search", params={"query": search_name})
+
+        matches = []
+        # XPM returns <Clients><Client>...</Client></Clients> or <Response><Clients>...
+        clients_el = root.find(".//Clients")
+        if clients_el is None:
+            clients_el = root
+
+        for client_el in clients_el.findall("Client"):
+            c_uuid = _xml_text(client_el, "UUID")
+            c_name = _xml_text(client_el, "Name")
+            c_email = _xml_text(client_el, "Email")
+            c_phone = _xml_text(client_el, "Phone")
+            c_structure = _xml_text(client_el, "BusinessStructure")
+            c_abn = _xml_text(client_el, "BusinessNumber")
+            if c_uuid and c_name:
+                matches.append({
+                    "uuid": c_uuid,
+                    "name": c_name,
+                    "email": c_email,
+                    "phone": c_phone,
+                    "structure": c_structure,
+                    "abn": c_abn,
+                })
+
+        if not matches:
+            return JsonResponse({
+                "status": "no_results",
+                "message": f"No clients found in XPM matching '{search_name}'.",
+                "matches": [],
+            })
+
+        return JsonResponse({
+            "status": "success",
+            "message": f"Found {len(matches)} match(es) in XPM.",
+            "matches": matches,
+            "search_term": search_name,
+        })
+
+    except Exception as e:
+        import traceback
+        logger.error(f"XRM search failed: {e}\n{traceback.format_exc()}")
+        return JsonResponse({
+            "status": "error",
+            "message": f"XPM search failed: {str(e)}"
+        })
+
+
+@login_required
 def xrm_pull(request, pk):
     """Pull entity data from Xero Practice Manager for a single entity."""
     entity = get_object_or_404(Entity, pk=pk)
@@ -3201,11 +3282,24 @@ def xrm_pull(request, pk):
     if not request.user.can_edit:
         return JsonResponse({"status": "error", "message": "Permission denied"}, status=403)
 
+    # Accept xpm_client_id from POST body (set during confirmation)
+    import json as json_mod
+    try:
+        body = json_mod.loads(request.body)
+    except (json_mod.JSONDecodeError, ValueError):
+        body = {}
+
+    xpm_id_from_body = body.get("xpm_client_id", "")
+    if xpm_id_from_body:
+        # User confirmed a match — save the XPM Client ID to the entity
+        entity.xpm_client_id = xpm_id_from_body
+        entity.save(update_fields=["xpm_client_id"])
+
     if not entity.xpm_client_id:
         return JsonResponse({
             "status": "error",
-            "message": "This entity does not have an XPM Client ID configured. "
-                       "Edit the entity and add the XPM Client ID first."
+            "message": "This entity does not have an XPM Client ID. "
+                       "Use the XRM button to search and link a client first."
         })
 
     # Get active XPM connection

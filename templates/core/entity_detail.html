@@ -25,7 +25,7 @@
             <i class="bi bi-pencil"></i> Edit Entity
         </a>
         <button type="button" class="btn btn-success btn-sm" id="xrmBtn"
-                onclick="xrmPull()" {% if not entity.xpm_client_id %}disabled title="Set XPM Client ID first"{% endif %}>
+                onclick="xrmSearch()">
             <i class="bi bi-cloud-arrow-down"></i> XRM
         </button>
         {% endif %}
@@ -163,8 +163,7 @@
                 <a href="{% url 'core:entity_edit' pk=entity.pk %}" class="btn btn-sm btn-outline-primary">
                     <i class="bi bi-pencil"></i> Edit
                 </a>
-                <button type="button" class="btn btn-sm btn-success" onclick="xrmPull()"
-                    {% if not entity.xpm_client_id %}disabled title="Set XPM Client ID first"{% endif %}>
+                <button type="button" class="btn btn-sm btn-success" onclick="xrmSearch()">
                     <i class="bi bi-cloud-arrow-down"></i> Pull from XRM
                 </button>
             </div>
@@ -550,18 +549,137 @@
 
 </div>
 
+<!-- XRM Confirmation Modal -->
+<div class="modal fade" id="xrmModal" tabindex="-1" aria-labelledby="xrmModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="xrmModalLabel">
+                    <i class="bi bi-cloud-arrow-down text-success"></i> XRM — Select Client from Xero Practice Manager
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="xrmLoading" class="text-center py-4">
+                    <div class="spinner-border text-primary" role="status"></div>
+                    <p class="mt-2 text-muted">Searching Xero Practice Manager...</p>
+                </div>
+                <div id="xrmNoResults" class="d-none text-center py-4">
+                    <i class="bi bi-search text-muted" style="font-size:2rem"></i>
+                    <p class="mt-2 text-muted" id="xrmNoResultsMsg">No matching clients found.</p>
+                </div>
+                <div id="xrmResults" class="d-none">
+                    <p class="text-muted mb-3">Select the correct client to link and pull data from:</p>
+                    <div class="list-group" id="xrmMatchList"></div>
+                </div>
+                <div id="xrmPulling" class="d-none text-center py-4">
+                    <div class="spinner-border text-success" role="status"></div>
+                    <p class="mt-2 text-muted">Pulling data from XPM...</p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
-function xrmPull() {
-    if (!confirm('Pull data from Xero Practice Manager for this entity? This will update Entity Info, Relationships, and Officers.')) return;
-    fetch("{% url 'core:xrm_pull' pk=entity.pk %}", {
+const csrfToken = '{{ csrf_token }}';
+const searchUrl = "{% url 'core:xrm_search' pk=entity.pk %}";
+const pullUrl = "{% url 'core:xrm_pull' pk=entity.pk %}";
+let xrmModalInstance = null;
+
+function xrmSearch() {
+    // Show modal with loading state
+    const modalEl = document.getElementById('xrmModal');
+    xrmModalInstance = new bootstrap.Modal(modalEl);
+    document.getElementById('xrmLoading').classList.remove('d-none');
+    document.getElementById('xrmNoResults').classList.add('d-none');
+    document.getElementById('xrmResults').classList.add('d-none');
+    document.getElementById('xrmPulling').classList.add('d-none');
+    xrmModalInstance.show();
+
+    // Search XPM
+    fetch(searchUrl, {
         method: 'POST',
         headers: {
-            'X-CSRFToken': '{{ csrf_token }}',
+            'X-CSRFToken': csrfToken,
             'Content-Type': 'application/json',
         },
     })
     .then(r => r.json())
     .then(data => {
+        document.getElementById('xrmLoading').classList.add('d-none');
+
+        if (data.status === 'error') {
+            document.getElementById('xrmNoResults').classList.remove('d-none');
+            document.getElementById('xrmNoResultsMsg').textContent = data.message;
+            return;
+        }
+
+        if (data.status === 'no_results' || !data.matches || data.matches.length === 0) {
+            document.getElementById('xrmNoResults').classList.remove('d-none');
+            document.getElementById('xrmNoResultsMsg').textContent =
+                data.message || 'No matching clients found in XPM.';
+            return;
+        }
+
+        // Show results
+        document.getElementById('xrmResults').classList.remove('d-none');
+        const list = document.getElementById('xrmMatchList');
+        list.innerHTML = '';
+
+        data.matches.forEach(function(match) {
+            const item = document.createElement('a');
+            item.href = '#';
+            item.className = 'list-group-item list-group-item-action';
+            item.innerHTML = `
+                <div class="d-flex justify-content-between align-items-start">
+                    <div>
+                        <h6 class="mb-1 fw-bold">${escHtml(match.name)}</h6>
+                        <small class="text-muted">
+                            ${match.structure ? '<span class="badge bg-secondary me-1">' + escHtml(match.structure) + '</span>' : ''}
+                            ${match.abn ? 'ABN: ' + escHtml(match.abn) + ' &middot; ' : ''}
+                            ${match.email ? escHtml(match.email) + ' &middot; ' : ''}
+                            ${match.phone ? escHtml(match.phone) : ''}
+                        </small>
+                    </div>
+                    <span class="badge bg-success">Select</span>
+                </div>
+            `;
+            item.addEventListener('click', function(e) {
+                e.preventDefault();
+                confirmAndPull(match.uuid, match.name);
+            });
+            list.appendChild(item);
+        });
+    })
+    .catch(err => {
+        document.getElementById('xrmLoading').classList.add('d-none');
+        document.getElementById('xrmNoResults').classList.remove('d-none');
+        document.getElementById('xrmNoResultsMsg').textContent = 'Search request failed: ' + err;
+    });
+}
+
+function confirmAndPull(xpmUuid, xpmName) {
+    if (!confirm('Is this the correct client?\n\n' + xpmName + '\n\nConfirm to pull all data from XPM.')) return;
+
+    // Show pulling state
+    document.getElementById('xrmResults').classList.add('d-none');
+    document.getElementById('xrmPulling').classList.remove('d-none');
+
+    fetch(pullUrl, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': csrfToken,
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ xpm_client_id: xpmUuid }),
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (xrmModalInstance) xrmModalInstance.hide();
         if (data.status === 'success') {
             alert(data.message);
             location.reload();
@@ -569,7 +687,17 @@ function xrmPull() {
             alert('Error: ' + data.message);
         }
     })
-    .catch(err => alert('Request failed: ' + err));
+    .catch(err => {
+        if (xrmModalInstance) xrmModalInstance.hide();
+        alert('Pull request failed: ' + err);
+    });
+}
+
+function escHtml(str) {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
 }
 
 // Preserve tab state on page reload

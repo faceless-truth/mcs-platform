@@ -132,5 +132,6 @@ urlpatterns = [
     path("api/coa-search/", views.coa_search_api, name="coa_search_api"),
 
     # XRM Pull (Xero Practice Manager) — now entity-level
+    path("entities/<uuid:pk>/xrm-search/", views.xrm_search, name="xrm_search"),
     path("entities/<uuid:pk>/xrm-pull/", views.xrm_pull, name="xrm_pull"),
 ]
