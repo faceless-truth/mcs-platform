@@ -68,15 +68,21 @@
                     {% endif %}
                 </table>
 
-                <div class="d-flex gap-2">
+                <div class="d-flex gap-2 flex-wrap">
+                    <a href="{% url 'integrations:xero_global_connect' %}?rapid=1" class="btn btn-success">
+                        <i class="bi bi-lightning-charge-fill"></i> Rapid Connect Organisations
+                    </a>
+                    <a href="{% url 'integrations:xero_stop_rapid' %}" class="btn btn-outline-warning">
+                        <i class="bi bi-stop-circle"></i> Stop Rapid Connect
+                    </a>
                     <form method="post" action="{% url 'integrations:xero_global_refresh_tenants' %}">
                         {% csrf_token %}
-                        <button type="submit" class="btn btn-primary">
+                        <button type="submit" class="btn btn-outline-primary">
                             <i class="bi bi-arrow-repeat"></i> Refresh Tenant List
                         </button>
                     </form>
-                    <a href="{% url 'integrations:xero_global_connect' %}" class="btn btn-outline-primary">
-                        <i class="bi bi-arrow-clockwise"></i> Reconnect
+                    <a href="{% url 'integrations:xero_global_connect' %}" class="btn btn-outline-secondary">
+                        <i class="bi bi-plus-circle"></i> Add Single Org
                     </a>
                     <form method="post" action="{% url 'integrations:xero_global_disconnect' %}" onsubmit="return confirm('Disconnect from Xero? This will remove access to all tenant data.');">
                         {% csrf_token %}
@@ -84,6 +90,14 @@
                             <i class="bi bi-x-circle"></i> Disconnect
                         </button>
                     </form>
+                </div>
+
+                <div class="alert alert-info mt-3 small">
+                    <i class="bi bi-info-circle"></i>
+                    <strong>Rapid Connect:</strong> Click "Rapid Connect Organisations" to start adding orgs quickly.
+                    You'll be redirected to Xero's consent page — select an org, click "Allow access", and you'll
+                    automatically be sent back to select the next one. When you're done, click "Cancel" on the Xero
+                    page or click "Stop Rapid Connect" here.
                 </div>
 
                 {% elif xero_configured %}

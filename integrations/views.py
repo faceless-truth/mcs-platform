@@ -661,9 +661,19 @@ def xero_global_dashboard(request):
 
 @login_required
 def xero_global_connect(request):
-    """Initiate OAuth2 connection to Xero with accounting scopes."""
+    """Initiate OAuth2 connection to Xero with accounting scopes.
+    
+    If ?rapid=1 is passed, the callback will auto-redirect back to the
+    consent page so the user can quickly add multiple organisations.
+    """
     state = str(uuid.uuid4())
     request.session["xero_global_oauth_state"] = state
+
+    # Track rapid-connect mode
+    if request.GET.get("rapid") == "1":
+        request.session["xero_rapid_connect"] = True
+    elif "xero_rapid_connect" not in request.session:
+        request.session["xero_rapid_connect"] = False
 
     client_id = getattr(settings, "XERO_CLIENT_ID", "")
     redirect_uri = request.build_absolute_uri(
@@ -688,19 +698,28 @@ def xero_global_connect(request):
 
 @login_required
 def xero_global_callback(request):
-    """Handle OAuth2 callback for the global Xero connection."""
+    """Handle OAuth2 callback for the global Xero connection.
+    
+    Accumulates tenants across multiple OAuth flows. If an active
+    connection already exists, updates its tokens and adds any new
+    tenants. In rapid-connect mode, auto-redirects back to the
+    consent page for the next organisation.
+    """
     code = request.GET.get("code")
     state = request.GET.get("state")
     error = request.GET.get("error")
+    rapid_mode = request.session.get("xero_rapid_connect", False)
 
     expected_state = request.session.get("xero_global_oauth_state")
 
     if error:
         messages.error(request, f"Xero connection failed: {error}")
+        request.session.pop("xero_rapid_connect", None)
         return redirect("integrations:xero_global_dashboard")
 
     if not code or state != expected_state:
         messages.error(request, "Xero connection failed: invalid state.")
+        request.session.pop("xero_rapid_connect", None)
         return redirect("integrations:xero_global_dashboard")
 
     client_id = getattr(settings, "XERO_CLIENT_ID", "")
@@ -725,7 +744,7 @@ def xero_global_callback(request):
         resp.raise_for_status()
         tokens = resp.json()
 
-        # Get all tenants
+        # Get all tenants from the /connections endpoint
         tenant_resp = http_requests.get(
             "https://api.xero.com/connections",
             headers={"Authorization": f"Bearer {tokens['access_token']}"},
@@ -734,40 +753,97 @@ def xero_global_callback(request):
         tenant_resp.raise_for_status()
         tenants = tenant_resp.json()
 
-        # Deactivate existing global connections
-        XeroGlobalConnection.objects.filter(status="active").update(status="disconnected")
+        # Check for existing active connection
+        conn = XeroGlobalConnection.objects.filter(status="active").first()
 
-        # Create new global connection
-        conn = XeroGlobalConnection.objects.create(
-            status="active",
-            access_token=tokens["access_token"],
-            refresh_token=tokens.get("refresh_token", ""),
-            token_expires_at=timezone.now() + timedelta(
+        if conn:
+            # Update tokens on existing connection
+            conn.access_token = tokens["access_token"]
+            conn.refresh_token = tokens.get("refresh_token", conn.refresh_token)
+            conn.token_expires_at = timezone.now() + timedelta(
                 seconds=tokens.get("expires_in", 1800)
-            ),
-            connected_by=request.user,
-            last_tenant_refresh=timezone.now(),
-        )
+            )
+            conn.last_tenant_refresh = timezone.now()
+            conn.save()
 
-        # Store all tenants
-        for t in tenants:
-            XeroTenant.objects.create(
-                connection=conn,
-                tenant_id=t.get("tenantId", ""),
-                tenant_name=t.get("tenantName", "Unknown"),
-                tenant_type=t.get("tenantType", ""),
+            # Preserve existing entity links
+            existing_links = {
+                t.tenant_id: t.entity
+                for t in conn.tenants.select_related("entity").all()
+                if t.entity
+            }
+
+            # Sync tenants: add new ones, keep existing
+            existing_tenant_ids = set(conn.tenants.values_list("tenant_id", flat=True))
+            new_count = 0
+            for t in tenants:
+                tid = t.get("tenantId", "")
+                if tid not in existing_tenant_ids:
+                    xt = XeroTenant.objects.create(
+                        connection=conn,
+                        tenant_id=tid,
+                        tenant_name=t.get("tenantName", "Unknown"),
+                        tenant_type=t.get("tenantType", ""),
+                    )
+                    new_count += 1
+                else:
+                    # Update name in case it changed
+                    conn.tenants.filter(tenant_id=tid).update(
+                        tenant_name=t.get("tenantName", "Unknown")
+                    )
+
+            total = conn.tenants.count()
+            if new_count > 0:
+                messages.success(
+                    request,
+                    f"Added {new_count} new organisation(s)! Total: {total} connected."
+                )
+            else:
+                messages.info(
+                    request,
+                    f"No new organisations added. Total: {total} connected."
+                )
+        else:
+            # First connection — create new
+            XeroGlobalConnection.objects.filter(status="active").update(status="disconnected")
+
+            conn = XeroGlobalConnection.objects.create(
+                status="active",
+                access_token=tokens["access_token"],
+                refresh_token=tokens.get("refresh_token", ""),
+                token_expires_at=timezone.now() + timedelta(
+                    seconds=tokens.get("expires_in", 1800)
+                ),
+                connected_by=request.user,
+                last_tenant_refresh=timezone.now(),
             )
 
-        messages.success(
-            request,
-            f"Connected to Xero! {len(tenants)} organisation(s) accessible."
-        )
+            for t in tenants:
+                XeroTenant.objects.create(
+                    connection=conn,
+                    tenant_id=t.get("tenantId", ""),
+                    tenant_name=t.get("tenantName", "Unknown"),
+                    tenant_type=t.get("tenantType", ""),
+                )
+
+            messages.success(
+                request,
+                f"Connected to Xero! {len(tenants)} organisation(s) accessible."
+            )
 
     except Exception as e:
         logger.error(f"Xero global OAuth callback error: {e}")
         messages.error(request, f"Xero connection failed: {str(e)}")
+        request.session.pop("xero_rapid_connect", None)
+        request.session.pop("xero_global_oauth_state", None)
+        return redirect("integrations:xero_global_dashboard")
 
     request.session.pop("xero_global_oauth_state", None)
+
+    # In rapid-connect mode, auto-redirect back to consent page
+    if rapid_mode:
+        return redirect(reverse("integrations:xero_global_connect") + "?rapid=1")
+
     return redirect("integrations:xero_global_dashboard")
 
 
@@ -825,6 +901,16 @@ def xero_global_refresh_tenants(request):
         logger.error(f"Xero tenant refresh failed: {e}")
         messages.error(request, f"Failed to refresh tenants: {str(e)}")
 
+    return redirect("integrations:xero_global_dashboard")
+
+
+@login_required
+def xero_stop_rapid(request):
+    """Stop rapid-connect mode and return to dashboard."""
+    request.session.pop("xero_rapid_connect", None)
+    conn = XeroGlobalConnection.objects.filter(status="active").first()
+    total = conn.tenants.count() if conn else 0
+    messages.success(request, f"Rapid connect stopped. {total} organisation(s) connected.")
     return redirect("integrations:xero_global_dashboard")
 
 

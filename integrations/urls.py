@@ -55,6 +55,7 @@ urlpatterns = [
     path("xero/connect/", views.xero_global_connect, name="xero_global_connect"),
     path("xero/callback/", views.xero_global_callback, name="xero_global_callback"),
     path("xero/refresh-tenants/", views.xero_global_refresh_tenants, name="xero_global_refresh_tenants"),
+    path("xero/stop-rapid/", views.xero_stop_rapid, name="xero_stop_rapid"),
     path("xero/disconnect/", views.xero_global_disconnect, name="xero_global_disconnect"),
 
     # Xero Practice Manager (XPM) Integration
