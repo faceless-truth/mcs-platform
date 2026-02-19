@@ -1154,22 +1154,42 @@ def generate_document(request, pk):
     base_filename = f"{entity_name}_Financial_Statements_{fy.year_label}"
 
     if fmt == "pdf":
-        # Convert DOCX buffer to PDF via LibreOffice
+        # Convert DOCX buffer to PDF via LibreOffice (soffice)
         import subprocess, tempfile, os
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
                 docx_path = os.path.join(tmpdir, f"{base_filename}.docx")
                 with open(docx_path, "wb") as f:
                     f.write(buffer.getvalue())
+
+                # Try multiple LibreOffice binary names
+                lo_bin = None
+                for candidate in ["soffice", "libreoffice", "/usr/bin/soffice", "/usr/bin/libreoffice"]:
+                    try:
+                        subprocess.run([candidate, "--version"], capture_output=True, timeout=5)
+                        lo_bin = candidate
+                        break
+                    except (FileNotFoundError, subprocess.TimeoutExpired):
+                        continue
+
+                if not lo_bin:
+                    raise RuntimeError(
+                        "LibreOffice is not installed. Install with: sudo apt-get install -y libreoffice-writer"
+                    )
+
                 result = subprocess.run(
-                    ["libreoffice", "--headless", "--convert-to", "pdf",
+                    [lo_bin, "--headless", "--norestore", "--convert-to", "pdf",
                      "--outdir", tmpdir, docx_path],
-                    capture_output=True, timeout=60,
+                    capture_output=True, timeout=120,
+                    env={**os.environ, "HOME": tmpdir},
                 )
                 pdf_path = os.path.join(tmpdir, f"{base_filename}.pdf")
                 if not os.path.exists(pdf_path):
+                    stderr = result.stderr.decode('utf-8', errors='replace')
+                    stdout = result.stdout.decode('utf-8', errors='replace')
                     raise RuntimeError(
-                        f"PDF conversion failed: {result.stderr.decode('utf-8', errors='replace')}"
+                        f"PDF conversion failed (exit code {result.returncode}).\n"
+                        f"stdout: {stdout[:500]}\nstderr: {stderr[:500]}"
                     )
                 with open(pdf_path, "rb") as f:
                     pdf_bytes = f.read()
@@ -1183,6 +1203,8 @@ def generate_document(request, pk):
             file_content = pdf_bytes
             file_format = "pdf"
         except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"PDF conversion failed: {e}")
             messages.error(request, f"PDF conversion failed: {e}. Falling back to DOCX.")
             filename = f"{base_filename}.docx"
             response = HttpResponse(
