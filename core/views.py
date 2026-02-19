@@ -877,11 +877,19 @@ def adjustment_create(request, pk):
         return redirect("core:financial_year_detail", pk=pk)
 
     # Get available accounts for the account picker
-    accounts = list(
-        ClientAccountMapping.objects.filter(entity=fy.entity)
-        .order_by("client_account_code")
-        .values("client_account_code", "client_account_name")
+    # Always use the master Chart of Accounts for the entity type
+    # so journals can be created even before a trial balance is imported
+    entity_type = fy.entity.entity_type
+    master_accounts = list(
+        ChartOfAccount.objects.filter(entity_type=entity_type, is_active=True)
+        .order_by("account_code")
+        .values("account_code", "account_name")
     )
+    # Rename fields to match what the template JS expects
+    accounts = [
+        {"client_account_code": a["account_code"], "client_account_name": a["account_name"]}
+        for a in master_accounts
+    ]
 
     if request.method == "POST":
         form = AdjustingJournalForm(request.POST)
