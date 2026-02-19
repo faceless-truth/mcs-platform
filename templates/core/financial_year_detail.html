@@ -752,40 +752,35 @@
     <div class="tab-pane fade p-3" id="tab-review">
         <div class="d-flex justify-content-between align-items-center mb-3">
             <h6 class="mb-0">
-                <i class="bi bi-clipboard-check"></i> Pending Review
-                {% if pending_review.count > 0 %}
-                <span class="badge bg-warning text-dark">{{ pending_review.count }} pending</span>
-                {% endif %}
-                {% if confirmed_review.count > 0 %}
-                <span class="badge bg-success">{{ confirmed_review.count }} confirmed</span>
-                {% endif %}
+                <i class="bi bi-clipboard-check"></i> Bank Statement Review
+                <span class="badge bg-warning text-dark" id="pendingBadge">{{ pending_review.count }} pending</span>
+                <span class="badge bg-success" id="confirmedBadge">{{ confirmed_review.count }} confirmed</span>
             </h6>
             <div class="d-flex gap-2">
                 {% if pending_review.count > 0 %}
                 <form method="post" action="{% url 'core:review_approve_all' pk=fy.pk %}" class="d-inline"
-                      onsubmit="return confirm('Approve all {{ pending_review.count }} pending transactions with their AI-suggested codes?');">
+                      onsubmit="return confirm('Approve all pending transactions with their AI-suggested codes? This will also push them to the trial balance.');">
                     {% csrf_token %}
                     <button type="submit" class="btn btn-outline-success btn-sm">
-                        <i class="bi bi-check-all"></i> Approve All with AI Suggestions
-                    </button>
-                </form>
-                {% endif %}
-                {% if confirmed_review.count > 0 %}
-                <form method="post" action="{% url 'core:review_push_to_tb' pk=fy.pk %}" class="d-inline"
-                      onsubmit="return confirm('Push {{ confirmed_review.count }} confirmed transactions to the trial balance?');">
-                    {% csrf_token %}
-                    <button type="submit" class="btn btn-primary btn-sm">
-                        <i class="bi bi-arrow-right-circle"></i> Push to Trial Balance
+                        <i class="bi bi-check-all"></i> Approve All &amp; Push to TB
                     </button>
                 </form>
                 {% endif %}
             </div>
         </div>
 
+        <!-- Live notification area -->
+        <div id="reviewNotification" class="alert alert-success alert-dismissible d-none mb-3" role="alert" style="font-size: 0.85rem;">
+            <i class="bi bi-check-circle-fill me-1"></i>
+            <span id="reviewNotificationText"></span>
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+
+        <div id="pendingSection">
         {% if pending_review %}
         <h6 class="text-muted mt-3 mb-2" style="font-size: 0.85rem;">PENDING REVIEW</h6>
         <div class="table-responsive">
-            <table class="table table-sm table-hover" style="font-size: 0.85rem;">
+            <table class="table table-sm table-hover" style="font-size: 0.85rem;" id="pendingTable">
                 <thead class="table-warning">
                     <tr>
                         <th style="width: 90px;">Date</th>
@@ -798,9 +793,9 @@
                         <th style="width: 80px;">Action</th>
                     </tr>
                 </thead>
-                <tbody>
+                <tbody id="pendingTableBody">
                     {% for txn in pending_review %}
-                    <tr>
+                    <tr id="pending-row-{{ txn.pk }}">
                         <td>{{ txn.date }}</td>
                         <td>{{ txn.description|truncatewords:8 }}</td>
                         <td class="text-end {% if txn.amount < 0 %}text-danger{% else %}text-success{% endif %}">
@@ -839,7 +834,7 @@
                                 <input type="hidden" name="confirmed_code" value="{{ txn.ai_suggested_code }}" class="review-code-input">
                                 <input type="hidden" name="confirmed_name" value="{{ txn.ai_suggested_name }}" class="review-name-input">
                                 <input type="hidden" name="confirmed_tax_type" value="{{ txn.ai_suggested_tax_type }}">
-                                <button type="submit" class="btn btn-sm btn-outline-success py-0 px-1" title="Approve">
+                                <button type="submit" class="btn btn-sm btn-outline-success py-0 px-1" title="Approve &amp; push to TB">
                                     <i class="bi bi-check-lg"></i>
                                 </button>
                             </form>
@@ -850,11 +845,13 @@
             </table>
         </div>
         {% endif %}
+        </div>
 
+        <div id="confirmedSection">
         {% if confirmed_review %}
-        <h6 class="text-muted mt-4 mb-2" style="font-size: 0.85rem;">CONFIRMED (Ready to Push to Trial Balance)</h6>
+        <h6 class="text-muted mt-4 mb-2" style="font-size: 0.85rem;">CONFIRMED &amp; PUSHED TO TRIAL BALANCE</h6>
         <div class="table-responsive">
-            <table class="table table-sm" style="font-size: 0.85rem;">
+            <table class="table table-sm" style="font-size: 0.85rem;" id="confirmedTable">
                 <thead class="table-success">
                     <tr>
                         <th style="width: 90px;">Date</th>
@@ -865,7 +862,7 @@
                         <th>Tax Type</th>
                     </tr>
                 </thead>
-                <tbody>
+                <tbody id="confirmedTableBody">
                     {% for txn in confirmed_review %}
                     <tr>
                         <td>{{ txn.date }}</td>
@@ -882,9 +879,10 @@
             </table>
         </div>
         {% endif %}
+        </div>
 
         {% if not pending_review and not confirmed_review %}
-        <div class="text-center py-5 text-muted">
+        <div class="text-center py-5 text-muted" id="reviewEmptyState">
             <i class="bi bi-clipboard-check" style="font-size: 3rem;"></i>
             <p class="mt-2 mb-1">No items pending review.</p>
             <p class="small">Upload bank statements or import trial balances to populate this tab.</p>
@@ -1089,6 +1087,19 @@
                             </div>
                         </div>
                         <small class="text-muted">Pre-filled from financial year dates. Transactions outside this period will be excluded.</small>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Opening Bank Balance</label>
+                        <div class="input-group">
+                            <span class="input-group-text">$</span>
+                            <input type="number" name="opening_balance" class="form-control" step="0.01" placeholder="0.00"
+                                   id="openingBalanceInput">
+                        </div>
+                        <small class="text-muted">
+                            Enter the opening bank balance as at the statement start date.
+                            This is used to cross-check against the trial balance and detect missing statements.
+                            If the trial balance already has a bank balance and it differs, you will be notified.
+                        </small>
                     </div>
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Bank Statement Files</label>
@@ -1341,6 +1352,114 @@
         const dropdownEl = btn.closest('.dropdown');
         const bsDropdown = bootstrap.Dropdown.getInstance(btn);
         if (bsDropdown) bsDropdown.hide();
+    });
+})();
+
+// ===== Review Tab: AJAX Approve (stay on page) =====
+(function() {
+    document.addEventListener('submit', function(e) {
+        const form = e.target.closest('.review-approve-form');
+        if (!form) return;
+        e.preventDefault();
+
+        const txnId = form.dataset.txnId;
+        const btn = form.querySelector('button[type="submit"]');
+        const originalHtml = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+        const formData = new FormData(form);
+
+        fetch(form.action, {
+            method: 'POST',
+            body: formData,
+            headers: { 'X-Requested-With': 'XMLHttpRequest' },
+        })
+        .then(resp => resp.json())
+        .then(data => {
+            if (data.status === 'success') {
+                // Animate and remove the pending row
+                const row = document.getElementById('pending-row-' + txnId);
+                if (row) {
+                    row.style.transition = 'opacity 0.3s, background-color 0.3s';
+                    row.style.backgroundColor = '#d4edda';
+                    row.style.opacity = '0.5';
+                    setTimeout(() => {
+                        row.remove();
+                        // Check if pending table is now empty
+                        const pendingBody = document.getElementById('pendingTableBody');
+                        if (pendingBody && pendingBody.children.length === 0) {
+                            const pendingSection = document.getElementById('pendingSection');
+                            if (pendingSection) pendingSection.innerHTML = '';
+                        }
+                    }, 400);
+                }
+
+                // Add row to confirmed table
+                let confirmedBody = document.getElementById('confirmedTableBody');
+                if (!confirmedBody) {
+                    // Create the confirmed section if it doesn't exist
+                    const confirmedSection = document.getElementById('confirmedSection');
+                    confirmedSection.innerHTML = `
+                        <h6 class="text-muted mt-4 mb-2" style="font-size: 0.85rem;">CONFIRMED &amp; PUSHED TO TRIAL BALANCE</h6>
+                        <div class="table-responsive">
+                            <table class="table table-sm" style="font-size: 0.85rem;" id="confirmedTable">
+                                <thead class="table-success">
+                                    <tr>
+                                        <th style="width: 90px;">Date</th>
+                                        <th>Description</th>
+                                        <th class="text-end" style="width: 110px;">Amount</th>
+                                        <th style="width: 80px;">Code</th>
+                                        <th>Account</th>
+                                        <th>Tax Type</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="confirmedTableBody"></tbody>
+                            </table>
+                        </div>`;
+                    confirmedBody = document.getElementById('confirmedTableBody');
+                }
+                const amt = parseFloat(data.amount);
+                const amtClass = amt < 0 ? 'text-danger' : 'text-success';
+                const amtFormatted = '$' + Math.abs(amt).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+                const newRow = document.createElement('tr');
+                newRow.style.backgroundColor = '#d4edda';
+                newRow.innerHTML = `
+                    <td>${data.date}</td>
+                    <td>${data.description ? data.description.split(' ').slice(0, 8).join(' ') : ''}</td>
+                    <td class="text-end ${amtClass}">${amt < 0 ? '-' : ''}${amtFormatted}</td>
+                    <td><code>${data.confirmed_code}</code></td>
+                    <td>${data.confirmed_name}</td>
+                    <td><small>${data.confirmed_tax_type || '-'}</small></td>`;
+                confirmedBody.appendChild(newRow);
+                setTimeout(() => { newRow.style.backgroundColor = ''; }, 1500);
+
+                // Update badges
+                const pendingBadge = document.getElementById('pendingBadge');
+                const confirmedBadge = document.getElementById('confirmedBadge');
+                if (pendingBadge) pendingBadge.textContent = data.pending_count + ' pending';
+                if (confirmedBadge) confirmedBadge.textContent = data.confirmed_count + ' confirmed';
+
+                // Show notification
+                if (data.tb_updated) {
+                    const notif = document.getElementById('reviewNotification');
+                    const notifText = document.getElementById('reviewNotificationText');
+                    notifText.textContent = `Approved: ${data.confirmed_code} - ${data.confirmed_name} ($${Math.abs(amt).toFixed(2)}) → pushed to Trial Balance`;
+                    notif.classList.remove('d-none');
+                    setTimeout(() => { notif.classList.add('d-none'); }, 4000);
+                }
+            } else {
+                alert('Error approving transaction. Please try again.');
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+            }
+        })
+        .catch(err => {
+            console.error('Approve error:', err);
+            alert('Error approving transaction. Please try again.');
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+        });
     });
 })();
 </script>

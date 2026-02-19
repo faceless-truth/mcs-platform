@@ -53,11 +53,6 @@ urlpatterns = [
         name="qb_select_tenant_import",
     ),
     path(
-        "years/<uuid:fy_pk>/select-myob-file/",
-        views.myob_select_file_import,
-        name="myob_select_file_import",
-    ),
-    path(
         "years/<uuid:fy_pk>/review-import/",
         views.review_import,
         name="review_import",
@@ -82,13 +77,6 @@ urlpatterns = [
     path("qb/callback/", views.qb_global_callback, name="qb_global_callback"),
     path("qb/stop-rapid/", views.qb_stop_rapid, name="qb_stop_rapid"),
     path("qb/disconnect/", views.qb_global_disconnect, name="qb_global_disconnect"),
-
-    # Global MYOB Connection (Advisor-level)
-    path("myob/", views.myob_global_dashboard, name="myob_global_dashboard"),
-    path("myob/connect/", views.myob_global_connect, name="myob_global_connect"),
-    path("myob/callback/", views.myob_global_callback, name="myob_global_callback"),
-    path("myob/refresh-files/", views.myob_global_refresh_files, name="myob_global_refresh_files"),
-    path("myob/disconnect/", views.myob_global_disconnect, name="myob_global_disconnect"),
 
     # Xero Practice Manager (XPM) Integration
     path("xpm/", views.xpm_dashboard, name="xpm_dashboard"),

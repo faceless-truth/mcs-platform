@@ -2894,7 +2894,10 @@ def review_push_to_tb(request, pk):
 
 @login_required
 def review_approve_transaction(request, pk):
-    """Approve a single pending transaction (AJAX)."""
+    """Approve a single pending transaction (AJAX).
+    Also auto-pushes the transaction to the trial balance so TB and GST/BAS
+    update live without needing a separate 'Push to TB' step.
+    """
     from review.models import PendingTransaction
     txn = get_object_or_404(PendingTransaction, pk=pk)
 
@@ -2907,8 +2910,75 @@ def review_approve_transaction(request, pk):
     txn.is_confirmed = True
     txn.save()
 
+    # Auto-push to trial balance immediately
+    tb_updated = False
+    if txn.job and txn.job.entity:
+        # Find the financial year for this entity that covers this transaction
+        from datetime import datetime as dt
+        entity = txn.job.entity
+        fys = FinancialYear.objects.filter(entity=entity, status__in=['draft', 'in_review', 'reviewed'])
+        target_fy = None
+        for fy_candidate in fys:
+            # Try to parse the transaction date
+            txn_date = None
+            for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d %b %Y"):
+                try:
+                    txn_date = dt.strptime(txn.date.strip(), fmt).date()
+                    break
+                except (ValueError, AttributeError):
+                    continue
+            if txn_date and fy_candidate.start_date <= txn_date <= fy_candidate.end_date:
+                target_fy = fy_candidate
+                break
+        if not target_fy and fys.exists():
+            target_fy = fys.order_by('-end_date').first()
+
+        if target_fy and txn.confirmed_code:
+            amount = txn.amount
+            code = txn.confirmed_code
+            name = txn.confirmed_name
+            tb_line, created = TrialBalanceLine.objects.get_or_create(
+                financial_year=target_fy,
+                account_code=code,
+                defaults={
+                    "account_name": name,
+                    "debit": max(Decimal("0"), amount),
+                    "credit": abs(min(Decimal("0"), amount)),
+                },
+            )
+            if not created:
+                if amount > 0:
+                    tb_line.debit += amount
+                else:
+                    tb_line.credit += abs(amount)
+                tb_line.save()
+            tb_updated = True
+
     if request.headers.get("X-Requested-With") == "XMLHttpRequest":
-        return JsonResponse({"status": "success", "id": str(txn.pk)})
+        # Return rich response for live UI updates
+        remaining_pending = 0
+        remaining_confirmed = 0
+        if txn.job and txn.job.entity:
+            from review.models import PendingTransaction as PT
+            remaining_pending = PT.objects.filter(
+                job__entity=txn.job.entity, is_confirmed=False
+            ).count()
+            remaining_confirmed = PT.objects.filter(
+                job__entity=txn.job.entity, is_confirmed=True
+            ).count()
+        return JsonResponse({
+            "status": "success",
+            "id": str(txn.pk),
+            "tb_updated": tb_updated,
+            "pending_count": remaining_pending,
+            "confirmed_count": remaining_confirmed,
+            "confirmed_code": txn.confirmed_code,
+            "confirmed_name": txn.confirmed_name,
+            "confirmed_tax_type": txn.confirmed_tax_type,
+            "amount": str(txn.amount),
+            "date": txn.date,
+            "description": txn.description,
+        })
 
     messages.success(request, f"Transaction approved: {txn.description[:50]}")
     return redirect(request.META.get("HTTP_REFERER", "/"))
@@ -2916,7 +2986,9 @@ def review_approve_transaction(request, pk):
 
 @login_required
 def review_approve_all(request, pk):
-    """Approve all pending transactions for a financial year's entity."""
+    """Approve all pending transactions for a financial year's entity.
+    Also auto-pushes all approved transactions to the trial balance.
+    """
     fy = get_object_or_404(FinancialYear, pk=pk)
     from review.models import PendingTransaction
 
@@ -2925,6 +2997,7 @@ def review_approve_all(request, pk):
         is_confirmed=False,
     )
     count = 0
+    tb_count = 0
     for txn in pending:
         if txn.ai_suggested_code:
             txn.confirmed_code = txn.ai_suggested_code
@@ -2934,7 +3007,29 @@ def review_approve_all(request, pk):
             txn.save()
             count += 1
 
-    messages.success(request, f"Approved {count} transactions with AI suggestions.")
+            # Auto-push to trial balance
+            amount = txn.amount
+            code = txn.confirmed_code
+            name = txn.confirmed_name
+            if code and amount != 0:
+                tb_line, created = TrialBalanceLine.objects.get_or_create(
+                    financial_year=fy,
+                    account_code=code,
+                    defaults={
+                        "account_name": name,
+                        "debit": max(Decimal("0"), amount),
+                        "credit": abs(min(Decimal("0"), amount)),
+                    },
+                )
+                if not created:
+                    if amount > 0:
+                        tb_line.debit += amount
+                    else:
+                        tb_line.credit += abs(amount)
+                    tb_line.save()
+                tb_count += 1
+
+    messages.success(request, f"Approved {count} transactions with AI suggestions. {tb_count} lines pushed to trial balance.")
     return redirect("core:financial_year_detail", pk=pk)
 
 

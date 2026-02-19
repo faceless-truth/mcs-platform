@@ -4,7 +4,6 @@ from .models import (
     XPMConnection, XPMSyncLog,
     XeroGlobalConnection, XeroTenant,
     QBGlobalConnection, QBTenant,
-    MYOBGlobalConnection, MYOBCompanyFile,
 )
 
 
@@ -76,26 +75,3 @@ class QBTenantAdmin(admin.ModelAdmin):
     raw_id_fields = ["entity"]
     readonly_fields = ["id", "created_at", "updated_at"]
 
-
-@admin.register(MYOBGlobalConnection)
-class MYOBGlobalConnectionAdmin(admin.ModelAdmin):
-    list_display = [
-        "status", "connected_by", "connected_at",
-        "last_file_refresh", "file_count",
-    ]
-    list_filter = ["status"]
-    readonly_fields = ["id", "connected_at"]
-
-    def file_count(self, obj):
-        return obj.company_files.count()
-    file_count.short_description = "Company Files"
-
-
-@admin.register(MYOBCompanyFile)
-class MYOBCompanyFileAdmin(admin.ModelAdmin):
-    list_display = [
-        "file_name", "file_id", "entity", "updated_at",
-    ]
-    search_fields = ["file_name", "file_id"]
-    raw_id_fields = ["entity"]
-    readonly_fields = ["id", "created_at", "updated_at"]

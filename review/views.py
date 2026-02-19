@@ -551,6 +551,8 @@ def upload_bank_statement(request):
     client_name = request.POST.get("client_name", "Unknown")
     period_start_str = request.POST.get("period_start", "")
     period_end_str = request.POST.get("period_end", "")
+    user_opening_balance_str = request.POST.get("opening_balance", "")
+    financial_year_id = request.POST.get("financial_year_id", "")
 
     if not uploaded_files:
         return JsonResponse({"status": "error", "message": "No files uploaded"}, status=400)
@@ -643,6 +645,16 @@ def upload_bank_statement(request):
         logger.info(f"Creating ReviewJob for {filename} with {len(transactions)} transactions (no classification)")
 
         # Create ReviewJob
+        # Determine opening balance: user-entered takes priority, then extracted from file
+        extracted_opening = Decimal(str(extracted.get("opening_balance", 0)))
+        if user_opening_balance_str:
+            try:
+                user_opening_balance = Decimal(user_opening_balance_str)
+            except Exception:
+                user_opening_balance = extracted_opening
+        else:
+            user_opening_balance = extracted_opening
+
         job = ReviewJob.objects.create(
             entity=entity,
             client_name=client_name,
@@ -659,7 +671,7 @@ def upload_bank_statement(request):
             account_number=extracted.get("account_number", ""),
             period_start=period_start_str or extracted.get("period_start", ""),
             period_end=period_end_str or extracted.get("period_end", ""),
-            opening_balance=Decimal(str(extracted.get("opening_balance", 0))),
+            opening_balance=user_opening_balance,
             closing_balance=Decimal(str(extracted.get("closing_balance", 0))),
         )
 
@@ -689,15 +701,59 @@ def upload_bank_statement(request):
         PendingTransaction.objects.bulk_create(pending_objs)
         logger.info(f"Created {len(pending_objs)} PendingTransactions for job {job.pk}")
 
+        # Cross-check opening balance against trial balance
+        balance_warning = None
+        if user_opening_balance and user_opening_balance != Decimal('0') and entity and financial_year_id:
+            try:
+                from core.models import FinancialYear, TrialBalanceLine
+                fy = FinancialYear.objects.get(pk=financial_year_id)
+                # Look for bank account lines in the trial balance (common codes: 1-xxxx for bank accounts)
+                bank_tb_lines = TrialBalanceLine.objects.filter(
+                    financial_year=fy,
+                    account_code__regex=r'^1-[0-9]',  # Bank accounts typically start with 1-
+                )
+                if bank_tb_lines.exists():
+                    tb_bank_total = sum(line.net_movement for line in bank_tb_lines)
+                    difference = abs(user_opening_balance - tb_bank_total)
+                    if difference > Decimal('0.01'):
+                        balance_warning = (
+                            f"BALANCE MISMATCH: Opening balance entered (${user_opening_balance:,.2f}) "
+                            f"differs from trial balance bank total (${tb_bank_total:,.2f}) "
+                            f"by ${difference:,.2f}. Please investigate — you may have missed a bank statement."
+                        )
+                        logger.warning(f"Balance mismatch for {client_name}: {balance_warning}")
+                        # Create a risk flag if the model exists
+                        try:
+                            from core.models import RiskFlag
+                            RiskFlag.objects.create(
+                                financial_year=fy,
+                                severity='MEDIUM',
+                                category='bank_reconciliation',
+                                title='Bank balance mismatch detected',
+                                description=balance_warning,
+                                status='open',
+                            )
+                        except Exception as e:
+                            logger.error(f"Could not create risk flag: {e}")
+                else:
+                    # No bank lines in TB yet — store the opening balance as the reference point
+                    logger.info(f"No bank lines in TB for {client_name}. Opening balance ${user_opening_balance:,.2f} will be the reference.")
+            except Exception as e:
+                logger.error(f"Balance cross-check error: {e}")
+
         # Log activity
+        activity_desc = (
+            f"{client_name} — {len(transactions)} transactions from {filename}, "
+            f"{job.confirmed_count} auto-confirmed"
+            f"{'  (GST registered)' if is_gst else ' (not GST registered)'}"
+        )
+        if balance_warning:
+            activity_desc += f" | WARNING: {balance_warning}"
+
         ReviewActivity.objects.create(
             activity_type="new_statement",
             title="Bank statement uploaded",
-            description=(
-                f"{client_name} — {len(transactions)} transactions from {filename}, "
-                f"{job.confirmed_count} auto-confirmed"
-                f"{'  (GST registered)' if is_gst else ' (not GST registered)'}"
-            ),
+            description=activity_desc,
         )
         # Dashboard activity log
         try:
@@ -725,20 +781,34 @@ def upload_bank_statement(request):
         django_messages.error(request, error_msg)
         return redirect("review:dashboard")
 
-    # Build redirect URL
-    if len(created_jobs) == 1:
-        from django.urls import reverse
+    # Build redirect URL — go back to the financial year page (review tab) so user stays in context
+    from django.urls import reverse
+    from django.contrib import messages as django_messages
+
+    # Collect any balance warnings from all jobs
+    all_balance_warnings = []
+    for j in created_jobs:
+        if hasattr(j, '_balance_warning') and j._balance_warning:
+            all_balance_warnings.append(j._balance_warning)
+
+    if financial_year_id:
+        redirect_url = reverse("core:financial_year_detail", kwargs={"pk": financial_year_id}) + "#tab-review"
+    elif len(created_jobs) == 1:
         redirect_url = reverse("review:review_detail", kwargs={"pk": created_jobs[0].pk})
     else:
-        from django.urls import reverse
-        from django.contrib import messages as django_messages
-        django_messages.success(
-            request,
-            f"Successfully processed {len(created_jobs)} bank statements "
-            f"({sum(j.total_transactions for j in created_jobs)} total transactions)."
-            + (f" Errors: {'; '.join(errors)}" if errors else "")
-        )
         redirect_url = reverse("review:dashboard")
+
+    success_msg = (
+        f"Successfully processed {len(created_jobs)} bank statement(s) "
+        f"({sum(j.total_transactions for j in created_jobs)} total transactions)."
+    )
+    if errors:
+        success_msg += f" Errors: {'; '.join(errors)}"
+    django_messages.success(request, success_msg)
+
+    # Show balance warning as a separate warning message
+    if balance_warning:
+        django_messages.warning(request, balance_warning)
 
     if is_ajax:
         return JsonResponse({
@@ -747,6 +817,7 @@ def upload_bank_statement(request):
             "jobs_created": len(created_jobs),
             "total_transactions": sum(j.total_transactions for j in created_jobs),
             "errors": errors,
+            "balance_warning": balance_warning,
         })
     return redirect(redirect_url)
 

@@ -285,13 +285,20 @@ document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('total-credit').textContent = '$' + totalCr.toFixed(2);
 
         const indicator = document.getElementById('balance-indicator');
+        const saveBtn = document.querySelector('button[type="submit"]');
         const diff = Math.abs(totalDr - totalCr);
         if (totalDr === 0 && totalCr === 0) {
             indicator.textContent = '';
+            saveBtn.disabled = true;
+            saveBtn.title = 'Enter at least one debit and credit line';
         } else if (diff < 0.01) {
             indicator.innerHTML = '<span class="text-success"><i class="bi bi-check-circle"></i> Balanced</span>';
+            saveBtn.disabled = false;
+            saveBtn.title = '';
         } else {
             indicator.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle"></i> Out of balance by $' + diff.toFixed(2) + '</span>';
+            saveBtn.disabled = true;
+            saveBtn.title = 'Journal must balance before saving — Dr $' + totalDr.toFixed(2) + ' ≠ Cr $' + totalCr.toFixed(2);
         }
     }
 
