@@ -3325,6 +3325,40 @@ def xrm_pull(request, pk):
                        "Please reconnect via Integrations > XPM."
         })
 
+    def _normalize_name(name):
+        """Normalize a name for comparison: handle 'SURNAME, First' vs 'First Surname',
+        strip extra whitespace, and lowercase."""
+        if not name:
+            return ""
+        name = name.strip()
+        # Handle 'SURNAME, FirstName' format
+        if "," in name:
+            parts = [p.strip() for p in name.split(",", 1)]
+            if len(parts) == 2:
+                name = f"{parts[1]} {parts[0]}"
+        # Collapse multiple spaces, lowercase
+        return " ".join(name.split()).lower()
+
+    def _officer_exists(entity, name):
+        """Check if an officer with a matching name already exists."""
+        norm = _normalize_name(name)
+        if not norm:
+            return True  # Skip empty names
+        for officer in EntityOfficer.objects.filter(entity=entity):
+            if _normalize_name(officer.full_name) == norm:
+                return True
+        return False
+
+    def _associate_exists(entity, name):
+        """Check if a relationship/associate with a matching name already exists."""
+        norm = _normalize_name(name)
+        if not norm:
+            return None
+        for assoc in ClientAssociate.objects.filter(entity=entity):
+            if _normalize_name(assoc.name) == norm:
+                return assoc
+        return None
+
     try:
         # Fetch detailed client data from XPM
         root = _xpm_get(connection, f"client.api/get/{entity.xpm_client_id}")
@@ -3421,16 +3455,14 @@ def xrm_pull(request, pk):
                 else:
                     rel_type = "other"
 
-                # Find or create associate
+                # Find or create associate (deduplicate by UUID, then normalized name)
                 assoc = None
                 if c_uuid:
                     assoc = ClientAssociate.objects.filter(
                         entity=entity, xpm_contact_uuid=c_uuid
                     ).first()
                 if not assoc:
-                    assoc = ClientAssociate.objects.filter(
-                        entity=entity, name__iexact=c_name
-                    ).first()
+                    assoc = _associate_exists(entity, c_name)
                 if assoc:
                     changed = False
                     if c_uuid and not assoc.xpm_contact_uuid:
@@ -3471,9 +3503,7 @@ def xrm_pull(request, pk):
                     continue
 
                 rel_type = RELATIONSHIP_MAP.get(rel_type_xpm, "related_entity")
-                assoc = ClientAssociate.objects.filter(
-                    entity=entity, name__iexact=related_name
-                ).first()
+                assoc = _associate_exists(entity, related_name)
                 if assoc:
                     if rel_type and assoc.relationship_type == "other":
                         assoc.relationship_type = rel_type
@@ -3507,10 +3537,7 @@ def xrm_pull(request, pk):
                 elif "public officer" in pos_lower:
                     officer_role = "public_officer"
                 if officer_role:
-                    existing = EntityOfficer.objects.filter(
-                        entity=entity, full_name__iexact=c_name
-                    ).first()
-                    if not existing:
+                    if not _officer_exists(entity, c_name):
                         EntityOfficer.objects.create(
                             entity=entity,
                             full_name=c_name,
