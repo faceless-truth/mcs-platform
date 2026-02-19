@@ -17,9 +17,9 @@
                 <h5 class="mb-0"><i class="bi bi-pc-display"></i> {{ title }}</h5>
             </div>
             <div class="card-body">
-                {% if not form.instance.pk %}
+                {% if is_new %}
                 <!-- Quick-add buttons for new software only -->
-                <div class="mb-4">
+                <div class="mb-4" id="quickBtnContainer">
                     <label class="form-label fw-semibold mb-2">Select Software</label>
                     <div class="d-flex flex-wrap gap-2">
                         <button type="button" class="btn btn-outline-primary software-quick-btn px-4 py-3" data-software="xero" data-cloud="true" data-advisor="true">
@@ -54,7 +54,7 @@
                 </div>
                 {% endif %}
 
-                <form method="post" id="softwareForm" {% if not form.instance.pk %}style="display:none;"{% endif %}>
+                <form method="post" id="softwareForm" {% if is_new %}style="display:none;"{% endif %}>
                     {% csrf_token %}
 
                     <!-- Hidden fields auto-set by quick buttons -->
@@ -71,7 +71,7 @@
                     <!-- Selected software badge -->
                     <div class="mb-3" id="selectedSoftwareBadge">
                         <span class="badge bg-primary fs-6 px-3 py-2" id="selectedSoftwareLabel"></span>
-                        {% if not form.instance.pk %}
+                        {% if is_new %}
                         <button type="button" class="btn btn-sm btn-link text-muted" id="changeSoftwareBtn">Change</button>
                         {% endif %}
                     </div>
@@ -115,10 +115,10 @@ document.addEventListener('DOMContentLoaded', function() {
     const quickBtns = document.querySelectorAll('.software-quick-btn');
     const selectedLabel = document.getElementById('selectedSoftwareLabel');
     const changeBtn = document.getElementById('changeSoftwareBtn');
-    const quickBtnContainer = document.querySelector('.mb-4');
+    const quickBtnContainer = document.getElementById('quickBtnContainer');
 
     // For edit mode, show the selected software label
-    {% if form.instance.pk %}
+    {% if not is_new %}
     const currentType = document.getElementById('{{ form.software_type.id_for_label }}');
     if (currentType) {
         selectedLabel.textContent = currentType.options[currentType.selectedIndex]?.text || '';
@@ -146,7 +146,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
             // Show form, hide quick buttons
             form.style.display = '';
-            quickBtnContainer.style.display = 'none';
+            if (quickBtnContainer) quickBtnContainer.style.display = 'none';
             selectedLabel.textContent = softwareNames[sw] || sw;
 
             // Highlight selected button
@@ -159,7 +159,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (changeBtn) {
         changeBtn.addEventListener('click', function() {
             form.style.display = 'none';
-            quickBtnContainer.style.display = '';
+            if (quickBtnContainer) quickBtnContainer.style.display = '';
         });
     }
 });

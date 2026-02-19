@@ -1967,7 +1967,7 @@ def software_create(request, entity_pk):
     else:
         form = AccountingSoftwareForm()
     return render(request, "core/software_form.html", {
-        "form": form, "entity": entity, "title": "Add Accounting Software"
+        "form": form, "entity": entity, "title": "Add Accounting Software", "is_new": True
     })
 
 
@@ -1988,7 +1988,7 @@ def software_edit(request, pk):
     else:
         form = AccountingSoftwareForm(instance=sw)
     return render(request, "core/software_form.html", {
-        "form": form, "entity": entity, "title": f"Edit: {sw.get_software_type_display()}"
+        "form": form, "entity": entity, "title": f"Edit: {sw.get_software_type_display()}", "is_new": False
     })
 
 
