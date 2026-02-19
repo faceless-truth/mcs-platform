@@ -786,10 +786,12 @@
                         <th style="width: 90px;">Date</th>
                         <th>Description</th>
                         <th class="text-end" style="width: 110px;">Amount</th>
+                        <th class="text-center" style="width: 55px;">GST</th>
+                        <th class="text-end" style="width: 90px;">GST Amt</th>
+                        <th class="text-end" style="width: 90px;">Net Amt</th>
                         <th style="width: 80px;">AI Code</th>
                         <th>AI Suggestion <small class="text-muted">(click to change)</small></th>
                         <th style="width: 60px;">Conf.</th>
-                        <th style="width: 100px;">Source</th>
                         <th style="width: 80px;">Action</th>
                     </tr>
                 </thead>
@@ -800,6 +802,23 @@
                         <td>{{ txn.description|truncatewords:8 }}</td>
                         <td class="text-end {% if txn.amount < 0 %}text-danger{% else %}text-success{% endif %}">
                             ${{ txn.amount|floatformat:2|intcomma }}
+                        </td>
+                        <td class="text-center">
+                            <div class="form-check form-switch d-flex justify-content-center mb-0">
+                                <input class="form-check-input gst-toggle" type="checkbox" role="switch"
+                                       data-txn-id="{{ txn.pk }}" data-amount="{{ txn.amount }}"
+                                       {% if txn.ai_suggested_tax_type == 'GST on Income' or txn.ai_suggested_tax_type == 'GST on Expenses' %}checked{% endif %}>
+                            </div>
+                        </td>
+                        <td class="text-end gst-amount-cell" id="gst-amt-{{ txn.pk }}">
+                            {% if txn.ai_suggested_tax_type == 'GST on Income' or txn.ai_suggested_tax_type == 'GST on Expenses' %}
+                            ${{ txn.gst_amount|floatformat:2|intcomma }}
+                            {% else %}$0.00{% endif %}
+                        </td>
+                        <td class="text-end net-amount-cell" id="net-amt-{{ txn.pk }}">
+                            {% if txn.ai_suggested_tax_type == 'GST on Income' or txn.ai_suggested_tax_type == 'GST on Expenses' %}
+                            ${{ txn.net_amount|floatformat:2|intcomma }}
+                            {% else %}${{ txn.amount|floatformat:2|intcomma }}{% endif %}
                         </td>
                         <td><code>{{ txn.ai_suggested_code|default:"-" }}</code></td>
                         <td>
@@ -827,13 +846,14 @@
                             <span class="badge bg-secondary">-</span>
                             {% endif %}
                         </td>
-                        <td><small class="text-muted">{{ txn.job.file_name|truncatewords:2 }}</small></td>
                         <td>
                             <form method="post" action="{% url 'core:review_approve_transaction' pk=txn.pk %}" class="d-inline review-approve-form" data-txn-id="{{ txn.pk }}">
                                 {% csrf_token %}
                                 <input type="hidden" name="confirmed_code" value="{{ txn.ai_suggested_code }}" class="review-code-input">
                                 <input type="hidden" name="confirmed_name" value="{{ txn.ai_suggested_name }}" class="review-name-input">
-                                <input type="hidden" name="confirmed_tax_type" value="{{ txn.ai_suggested_tax_type }}">
+                                <input type="hidden" name="confirmed_tax_type" value="{{ txn.ai_suggested_tax_type }}" class="review-tax-input">
+                                <input type="hidden" name="has_gst" value="{% if txn.ai_suggested_tax_type == 'GST on Income' or txn.ai_suggested_tax_type == 'GST on Expenses' %}1{% else %}0{% endif %}" class="review-gst-flag">
+                                <input type="hidden" name="gst_amount" value="{{ txn.gst_amount|default:'0.00' }}" class="review-gst-amount">
                                 <button type="submit" class="btn btn-sm btn-outline-success py-0 px-1" title="Approve &amp; push to TB">
                                     <i class="bi bi-check-lg"></i>
                                 </button>
@@ -857,6 +877,9 @@
                         <th style="width: 90px;">Date</th>
                         <th>Description</th>
                         <th class="text-end" style="width: 110px;">Amount</th>
+                        <th class="text-center" style="width: 55px;">GST</th>
+                        <th class="text-end" style="width: 90px;">GST Amt</th>
+                        <th class="text-end" style="width: 90px;">Net Amt</th>
                         <th style="width: 80px;">Code</th>
                         <th>Account</th>
                         <th>Tax Type</th>
@@ -870,6 +893,15 @@
                         <td class="text-end {% if txn.amount < 0 %}text-danger{% else %}text-success{% endif %}">
                             ${{ txn.amount|floatformat:2|intcomma }}
                         </td>
+                        <td class="text-center">
+                            {% if txn.confirmed_tax_type == 'GST on Income' or txn.confirmed_tax_type == 'GST on Expenses' %}
+                            <span class="badge bg-success"><i class="bi bi-check-lg"></i></span>
+                            {% else %}
+                            <span class="badge bg-secondary"><i class="bi bi-x-lg"></i></span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end">${{ txn.confirmed_gst_amount|default:txn.gst_amount|floatformat:2|intcomma }}</td>
+                        <td class="text-end">${{ txn.net_amount|floatformat:2|intcomma }}</td>
                         <td><code>{{ txn.confirmed_code }}</code></td>
                         <td>{{ txn.confirmed_name }}</td>
                         <td><small>{{ txn.confirmed_tax_type|default:"-" }}</small></td>
@@ -1355,6 +1387,50 @@
     });
 })();
 
+// ===== GST Toggle Handler =====
+(function() {
+    document.addEventListener('change', function(e) {
+        if (!e.target.classList.contains('gst-toggle')) return;
+        const toggle = e.target;
+        const txnId = toggle.dataset.txnId;
+        const absAmount = Math.abs(parseFloat(toggle.dataset.amount));
+        const gstCell = document.getElementById('gst-amt-' + txnId);
+        const netCell = document.getElementById('net-amt-' + txnId);
+        const form = document.querySelector(`.review-approve-form[data-txn-id="${txnId}"]`);
+
+        if (toggle.checked) {
+            // GST ON: calculate GST = amount / 11
+            const gstAmt = (absAmount / 11).toFixed(2);
+            const netAmt = (absAmount - parseFloat(gstAmt)).toFixed(2);
+            gstCell.textContent = '$' + parseFloat(gstAmt).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+            netCell.textContent = '$' + parseFloat(netAmt).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+            if (form) {
+                form.querySelector('.review-gst-flag').value = '1';
+                form.querySelector('.review-gst-amount').value = gstAmt;
+                // Auto-set tax type based on amount direction
+                const amt = parseFloat(toggle.dataset.amount);
+                const taxInput = form.querySelector('.review-tax-input');
+                if (taxInput && (!taxInput.value || taxInput.value.includes('Free') || taxInput.value === 'BAS Excluded' || taxInput.value === 'N-T')) {
+                    taxInput.value = amt < 0 ? 'GST on Expenses' : 'GST on Income';
+                }
+            }
+        } else {
+            // GST OFF
+            gstCell.textContent = '$0.00';
+            netCell.textContent = '$' + absAmount.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+            if (form) {
+                form.querySelector('.review-gst-flag').value = '0';
+                form.querySelector('.review-gst-amount').value = '0.00';
+                const taxInput = form.querySelector('.review-tax-input');
+                if (taxInput) {
+                    const amt = parseFloat(toggle.dataset.amount);
+                    taxInput.value = amt < 0 ? 'GST Free Expenses' : 'GST Free Income';
+                }
+            }
+        }
+    });
+})();
+
 // ===== Review Tab: AJAX Approve (stay on page) =====
 (function() {
     document.addEventListener('submit', function(e) {
@@ -1386,7 +1462,6 @@
                     row.style.opacity = '0.5';
                     setTimeout(() => {
                         row.remove();
-                        // Check if pending table is now empty
                         const pendingBody = document.getElementById('pendingTableBody');
                         if (pendingBody && pendingBody.children.length === 0) {
                             const pendingSection = document.getElementById('pendingSection');
@@ -1398,7 +1473,6 @@
                 // Add row to confirmed table
                 let confirmedBody = document.getElementById('confirmedTableBody');
                 if (!confirmedBody) {
-                    // Create the confirmed section if it doesn't exist
                     const confirmedSection = document.getElementById('confirmedSection');
                     confirmedSection.innerHTML = `
                         <h6 class="text-muted mt-4 mb-2" style="font-size: 0.85rem;">CONFIRMED &amp; PUSHED TO TRIAL BALANCE</h6>
@@ -1409,6 +1483,9 @@
                                         <th style="width: 90px;">Date</th>
                                         <th>Description</th>
                                         <th class="text-end" style="width: 110px;">Amount</th>
+                                        <th class="text-center" style="width: 55px;">GST</th>
+                                        <th class="text-end" style="width: 90px;">GST Amt</th>
+                                        <th class="text-end" style="width: 90px;">Net Amt</th>
                                         <th style="width: 80px;">Code</th>
                                         <th>Account</th>
                                         <th>Tax Type</th>
@@ -1420,14 +1497,24 @@
                     confirmedBody = document.getElementById('confirmedTableBody');
                 }
                 const amt = parseFloat(data.amount);
+                const absAmt = Math.abs(amt);
                 const amtClass = amt < 0 ? 'text-danger' : 'text-success';
-                const amtFormatted = '$' + Math.abs(amt).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+                const amtFormatted = '$' + absAmt.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+                const hasGst = data.has_gst;
+                const gstAmt = hasGst ? (absAmt / 11).toFixed(2) : '0.00';
+                const netAmt = hasGst ? (absAmt - parseFloat(gstAmt)).toFixed(2) : absAmt.toFixed(2);
+                const gstBadge = hasGst
+                    ? '<span class="badge bg-success"><i class="bi bi-check-lg"></i></span>'
+                    : '<span class="badge bg-secondary"><i class="bi bi-x-lg"></i></span>';
                 const newRow = document.createElement('tr');
                 newRow.style.backgroundColor = '#d4edda';
                 newRow.innerHTML = `
                     <td>${data.date}</td>
                     <td>${data.description ? data.description.split(' ').slice(0, 8).join(' ') : ''}</td>
                     <td class="text-end ${amtClass}">${amt < 0 ? '-' : ''}${amtFormatted}</td>
+                    <td class="text-center">${gstBadge}</td>
+                    <td class="text-end">$${parseFloat(gstAmt).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}</td>
+                    <td class="text-end">$${parseFloat(netAmt).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}</td>
                     <td><code>${data.confirmed_code}</code></td>
                     <td>${data.confirmed_name}</td>
                     <td><small>${data.confirmed_tax_type || '-'}</small></td>`;
@@ -1444,9 +1531,10 @@
                 if (data.tb_updated) {
                     const notif = document.getElementById('reviewNotification');
                     const notifText = document.getElementById('reviewNotificationText');
-                    notifText.textContent = `Approved: ${data.confirmed_code} - ${data.confirmed_name} ($${Math.abs(amt).toFixed(2)}) → pushed to Trial Balance`;
+                    const gstNote = hasGst ? ` (GST: $${parseFloat(gstAmt).toFixed(2)})` : ' (No GST)';
+                    notifText.textContent = `Approved: ${data.confirmed_code} - ${data.confirmed_name} ($${absAmt.toFixed(2)})${gstNote} → pushed to Trial Balance & GST/BAS`;
                     notif.classList.remove('d-none');
-                    setTimeout(() => { notif.classList.add('d-none'); }, 4000);
+                    setTimeout(() => { notif.classList.add('d-none'); }, 5000);
                 }
             } else {
                 alert('Error approving transaction. Please try again.');

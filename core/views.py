@@ -2135,16 +2135,45 @@ def gst_activity_statement(request, pk):
     for line in tb_lines:
         coa = coa_lookup.get(line.account_code)
         if not coa:
-            excluded_lines.append({
-                "code": line.account_code,
-                "name": line.account_name,
-                "amount": abs(line.closing_balance),
-                "reason": "Not in chart of accounts",
-            })
+            # Check if the line has its own tax_type from bank statement review
+            line_tax = (getattr(line, 'tax_type', '') or '').strip()
+            if line_tax:
+                # GST accounts from bank statement review (9100 GST Collected, 9110 GST Paid)
+                if line.account_code in ('9100', '9110'):
+                    # These are GST clearing accounts - they contribute to 1A/1B directly
+                    pass  # Handled via the G9/G20 calculation from revenue/expense lines
+                excluded_lines.append({
+                    "code": line.account_code,
+                    "name": line.account_name,
+                    "amount": abs(line.closing_balance),
+                    "reason": f"Not in chart of accounts (tax: {line_tax})",
+                })
+            else:
+                excluded_lines.append({
+                    "code": line.account_code,
+                    "name": line.account_name,
+                    "amount": abs(line.closing_balance),
+                    "reason": "Not in chart of accounts",
+                })
             continue
 
         section = coa.section
-        tax_code = (coa.tax_code or "").upper().strip()
+        # Use line-level tax_type if ChartOfAccount has no tax code
+        coa_tax = (coa.tax_code or "").upper().strip()
+        line_tax = (getattr(line, 'tax_type', '') or '').strip()
+        # Map line-level tax types to COA tax codes
+        if not coa_tax and line_tax:
+            tax_map = {
+                'GST on Income': 'GST',
+                'GST on Expenses': 'GST',
+                'GST Free Income': 'FRE',
+                'GST Free Expenses': 'FRE',
+                'BAS Excluded': 'N-T',
+                'N-T': 'N-T',
+            }
+            tax_code = tax_map.get(line_tax, coa_tax)
+        else:
+            tax_code = coa_tax
         # Use closing balance; revenue is typically credit (negative in TB)
         amount = abs(line.closing_balance)
 
@@ -2915,6 +2944,27 @@ def review_approve_transaction(request, pk):
     txn.confirmed_code = request.POST.get("confirmed_code", txn.ai_suggested_code)
     txn.confirmed_name = request.POST.get("confirmed_name", txn.ai_suggested_name)
     txn.confirmed_tax_type = request.POST.get("confirmed_tax_type", txn.ai_suggested_tax_type)
+
+    # Handle GST toggle from the review form
+    has_gst = request.POST.get("has_gst", "0") == "1"
+    if has_gst:
+        abs_amount = abs(txn.amount)
+        gst_amount = (abs_amount / Decimal("11")).quantize(Decimal("0.01"))
+        net_amount = abs_amount - gst_amount
+        txn.gst_amount = gst_amount
+        txn.net_amount = net_amount
+        txn.confirmed_gst_amount = gst_amount
+        # Ensure tax type is set correctly for GST
+        if not txn.confirmed_tax_type or 'Free' in (txn.confirmed_tax_type or '') or txn.confirmed_tax_type in ('BAS Excluded', 'N-T', ''):
+            txn.confirmed_tax_type = 'GST on Expenses' if txn.amount < 0 else 'GST on Income'
+    else:
+        txn.gst_amount = Decimal("0.00")
+        txn.net_amount = abs(txn.amount)
+        txn.confirmed_gst_amount = Decimal("0.00")
+        # Set GST-free tax type if currently GST
+        if txn.confirmed_tax_type in ('GST on Income', 'GST on Expenses'):
+            txn.confirmed_tax_type = 'GST Free Expenses' if txn.amount < 0 else 'GST Free Income'
+
     txn.is_confirmed = True
     txn.save()
 
@@ -2945,22 +2995,67 @@ def review_approve_transaction(request, pk):
             amount = txn.amount
             code = txn.confirmed_code
             name = txn.confirmed_name
+            tax_type = txn.confirmed_tax_type or ''
+
+            # Push the net amount (ex-GST) to the expense/income account
+            net_for_tb = txn.net_amount if has_gst else abs(amount)
             tb_line, created = TrialBalanceLine.objects.get_or_create(
                 financial_year=target_fy,
                 account_code=code,
                 defaults={
                     "account_name": name,
-                    "debit": max(Decimal("0"), amount),
-                    "credit": abs(min(Decimal("0"), amount)),
+                    "debit": net_for_tb if amount > 0 else Decimal("0"),
+                    "credit": net_for_tb if amount < 0 else Decimal("0"),
+                    "tax_type": tax_type,
                 },
             )
             if not created:
                 if amount > 0:
-                    tb_line.debit += amount
+                    tb_line.debit += net_for_tb
                 else:
-                    tb_line.credit += abs(amount)
+                    tb_line.credit += net_for_tb
+                if not tb_line.tax_type:
+                    tb_line.tax_type = tax_type
                 tb_line.save()
             tb_updated = True
+
+            # If GST applies, also post the GST component to the GST Collected/Paid account
+            if has_gst and txn.confirmed_gst_amount > 0:
+                gst_amt = txn.confirmed_gst_amount
+                if amount > 0:
+                    # Income: GST Collected (liability) - code 9100
+                    gst_code = '9100'
+                    gst_name = 'GST Collected'
+                    gst_line, gst_created = TrialBalanceLine.objects.get_or_create(
+                        financial_year=target_fy,
+                        account_code=gst_code,
+                        defaults={
+                            "account_name": gst_name,
+                            "debit": Decimal("0"),
+                            "credit": gst_amt,
+                            "tax_type": "GST on Income",
+                        },
+                    )
+                    if not gst_created:
+                        gst_line.credit += gst_amt
+                        gst_line.save()
+                else:
+                    # Expense: GST Paid (asset) - code 9110
+                    gst_code = '9110'
+                    gst_name = 'GST Paid'
+                    gst_line, gst_created = TrialBalanceLine.objects.get_or_create(
+                        financial_year=target_fy,
+                        account_code=gst_code,
+                        defaults={
+                            "account_name": gst_name,
+                            "debit": gst_amt,
+                            "credit": Decimal("0"),
+                            "tax_type": "GST on Expenses",
+                        },
+                    )
+                    if not gst_created:
+                        gst_line.debit += gst_amt
+                        gst_line.save()
 
     if request.headers.get("X-Requested-With") == "XMLHttpRequest":
         # Return rich response for live UI updates
@@ -2978,6 +3073,9 @@ def review_approve_transaction(request, pk):
             "status": "success",
             "id": str(txn.pk),
             "tb_updated": tb_updated,
+            "has_gst": has_gst,
+            "gst_amount": str(txn.confirmed_gst_amount or Decimal("0.00")),
+            "net_amount": str(txn.net_amount or abs(txn.amount)),
             "pending_count": remaining_pending,
             "confirmed_count": remaining_confirmed,
             "confirmed_code": txn.confirmed_code,

@@ -554,6 +554,10 @@ class TrialBalanceLine(models.Model):
         blank=True,
         related_name="trial_balance_lines",
     )
+    tax_type = models.CharField(
+        max_length=30, blank=True, default="",
+        help_text="Tax type for GST/BAS reporting (e.g., GST on Income, GST on Expenses, GST Free)",
+    )
     is_adjustment = models.BooleanField(
         default=False,
         help_text="True if this line was created by an adjusting journal entry",
