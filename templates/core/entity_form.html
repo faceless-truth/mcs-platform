@@ -1,14 +1,16 @@
 {% extends "base.html" %}
 {% load crispy_forms_tags %}
-{% block title %}{{ title }} - StatementHub{% endblock %}
+{% block title %}{{ title }} — StatementHub{% endblock %}
 
 {% block content %}
 <div class="row">
     <div class="col-md-8 mx-auto">
         <nav aria-label="breadcrumb">
             <ol class="breadcrumb">
-                <li class="breadcrumb-item"><a href="{% url 'core:client_list' %}">Clients</a></li>
-                <li class="breadcrumb-item"><a href="{% url 'core:client_detail' pk=client.pk %}">{{ client.name }}</a></li>
+                <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
+                {% if form.instance.pk %}
+                <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=form.instance.pk %}">{{ form.instance.entity_name }}</a></li>
+                {% endif %}
                 <li class="breadcrumb-item active">{{ title }}</li>
             </ol>
         </nav>
@@ -20,7 +22,11 @@
                     {{ form|crispy }}
                     <div class="d-flex gap-2 mt-3">
                         <button type="submit" class="btn btn-primary">Save</button>
-                        <a href="{% url 'core:client_detail' pk=client.pk %}" class="btn btn-outline-secondary">Cancel</a>
+                        {% if form.instance.pk %}
+                        <a href="{% url 'core:entity_detail' pk=form.instance.pk %}" class="btn btn-outline-secondary">Cancel</a>
+                        {% else %}
+                        <a href="{% url 'core:entity_list' %}" class="btn btn-outline-secondary">Cancel</a>
+                        {% endif %}
                     </div>
                 </form>
             </div>

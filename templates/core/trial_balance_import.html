@@ -6,8 +6,8 @@
     <div class="col-md-8 mx-auto">
         <nav aria-label="breadcrumb">
             <ol class="breadcrumb">
-                <li class="breadcrumb-item"><a href="{% url 'core:client_list' %}">Clients</a></li>
-                <li class="breadcrumb-item"><a href="{% url 'core:client_detail' pk=fy.entity.client.pk %}">{{ fy.entity.client.name }}</a></li>
+                <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
+                <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=fy.entity.pk %}">{{ fy.entity.entity_name }}</a></li>
                 <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=fy.entity.pk %}">{{ fy.entity.entity_name }}</a></li>
                 <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy.year_label }}</a></li>
                 <li class="breadcrumb-item active">Import Trial Balance</li>

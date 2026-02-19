@@ -30,7 +30,7 @@
                     <div class="mb-3">
                         <div class="d-flex justify-content-between align-items-center mb-1">
                             <a href="{% url 'core:risk_flags' pk=info.fy_pk %}" class="fw-semibold text-decoration-none">
-                                {{ info.client_name }} &mdash; {{ info.entity_name }}
+                                {{ info.entity_name }}
                             </a>
                             <span class="badge bg-danger">{{ info.flags|length }} issue{{ info.flags|length|pluralize }}</span>
                         </div>
@@ -81,7 +81,7 @@
                         <tbody>
                             {% for fy in unfinalised_years %}
                             <tr>
-                                <td class="fw-semibold">{{ fy.entity.client.name }}</td>
+                                <td class="fw-semibold">{{ fy.entity.entity_name }}</td>
                                 <td>{{ fy.entity.entity_name }}</td>
                                 <td>
                                     <small class="text-muted">{{ fy.year_label }}</small>

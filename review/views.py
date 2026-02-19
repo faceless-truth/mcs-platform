@@ -259,7 +259,7 @@ def review_dashboard(request):
         total_flags = open_flags.count()
         if total_flags > 0:
             risk_alerts.append({
-                "client_name": fy.entity.client.name,
+                "client_name": fy.entity.entity_name,
                 "entity_name": fy.entity.entity_name,
                 "year_label": fy.year_label,
                 "financial_year": fy,

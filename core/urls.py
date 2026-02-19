@@ -7,16 +7,14 @@ app_name = "core"
 
 urlpatterns = [
 
-    # Clients
-    path("clients/", views.client_list, name="client_list"),
-    path("clients/create/", views.client_create, name="client_create"),
-    path("clients/<uuid:pk>/", views.client_detail, name="client_detail"),
-    path("clients/<uuid:pk>/edit/", views.client_edit, name="client_edit"),
-
-    # Entities
-    path("clients/<uuid:client_pk>/entities/create/", views.entity_create, name="entity_create"),
+    # Entities (top-level — replaces old Clients)
+    path("entities/", views.entity_list, name="entity_list"),
+    path("entities/create/", views.entity_create, name="entity_create"),
     path("entities/<uuid:pk>/", views.entity_detail, name="entity_detail"),
     path("entities/<uuid:pk>/edit/", views.entity_edit, name="entity_edit"),
+
+    # Backward-compat: redirect old client_list URL
+    path("clients/", views.entity_list, name="client_list"),
 
     # Financial Years
     path("entities/<uuid:entity_pk>/years/create/", views.financial_year_create, name="financial_year_create"),
@@ -55,7 +53,7 @@ urlpatterns = [
     path("officers/<uuid:pk>/edit/", views.entity_officer_edit, name="entity_officer_edit"),
     path("officers/<uuid:pk>/delete/", views.entity_officer_delete, name="entity_officer_delete"),
 
-    # Access Ledger Import
+    # Access Ledger Import (admin)
     path("import/access-ledger/", views.access_ledger_import, name="access_ledger_import"),
 
     # Chart of Accounts
@@ -69,18 +67,18 @@ urlpatterns = [
     path("years/<uuid:pk>/risk-flags/", views_audit.risk_flags_view, name="risk_flags"),
     path("risk-flags/<uuid:pk>/resolve/", views_audit.resolve_risk_flag, name="resolve_risk_flag"),
 
-    # Client Associates
-    path("clients/<uuid:client_pk>/associates/create/", views.associate_create, name="associate_create"),
+    # Associates (now entity-level)
+    path("entities/<uuid:entity_pk>/associates/create/", views.associate_create, name="associate_create"),
     path("associates/<uuid:pk>/edit/", views.associate_edit, name="associate_edit"),
     path("associates/<uuid:pk>/delete/", views.associate_delete, name="associate_delete"),
 
-    # Accounting Software
-    path("clients/<uuid:client_pk>/software/create/", views.software_create, name="software_create"),
+    # Accounting Software (now entity-level)
+    path("entities/<uuid:entity_pk>/software/create/", views.software_create, name="software_create"),
     path("software/<uuid:pk>/edit/", views.software_edit, name="software_edit"),
     path("software/<uuid:pk>/delete/", views.software_delete, name="software_delete"),
 
-    # Meeting Notes
-    path("clients/<uuid:client_pk>/notes/create/", views.meeting_note_create, name="meeting_note_create"),
+    # Meeting Notes (now entity-level)
+    path("entities/<uuid:entity_pk>/notes/create/", views.meeting_note_create, name="meeting_note_create"),
     path("notes/<uuid:pk>/", views.meeting_note_detail, name="meeting_note_detail"),
     path("notes/<uuid:pk>/edit/", views.meeting_note_edit, name="meeting_note_edit"),
     path("notes/<uuid:pk>/delete/", views.meeting_note_delete, name="meeting_note_delete"),
@@ -113,12 +111,11 @@ urlpatterns = [
     path("api/notifications/read-all/", views.mark_all_notifications_read, name="mark_all_notifications_read"),
 
     # HTMX partials
-    path("htmx/client-search/", views.htmx_client_search, name="htmx_client_search"),
+    path("htmx/entity-search/", views.htmx_client_search, name="htmx_client_search"),
     path("htmx/tb-line/<uuid:pk>/map/", views.htmx_map_tb_line, name="htmx_map_tb_line"),
 
-    # Bulk Actions
-    path("clients/bulk-action/", views.client_bulk_action, name="client_bulk_action"),
-    path("clients/<uuid:client_pk>/entities/bulk-action/", views.entity_bulk_action, name="entity_bulk_action"),
+    # Bulk Actions (entity-level)
+    path("entities/bulk-action/", views.entity_bulk_action, name="entity_bulk_action"),
 
     # Entity-level HandiLedger Import
     path("entities/<uuid:pk>/import-handiledger/", views.entity_import_handiledger, name="entity_import_handiledger"),
@@ -132,6 +129,6 @@ urlpatterns = [
     # COA Search API (for review tab dropdown)
     path("api/coa-search/", views.coa_search_api, name="coa_search_api"),
 
-    # XRM Pull (Xero Practice Manager)
-    path("clients/<uuid:client_pk>/xrm-pull/", views.xrm_pull, name="xrm_pull"),
+    # XRM Pull (Xero Practice Manager) — now entity-level
+    path("entities/<uuid:pk>/xrm-pull/", views.xrm_pull, name="xrm_pull"),
 ]

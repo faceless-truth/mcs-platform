@@ -28,7 +28,8 @@ class EntityForm(forms.ModelForm):
             "entity_name", "trading_as", "entity_type", "abn", "acn",
             "registration_date", "financial_year_end",
             "reporting_framework", "company_size", "show_cents",
-            "xpm_client_id", "contact_phone",
+            "contact_email", "contact_phone", "assigned_accountant",
+            "xpm_client_id",
         )
         widgets = {
             "registration_date": forms.DateInput(attrs={"type": "date"}),
@@ -212,7 +213,7 @@ class ClientAssociateForm(forms.ModelForm):
         fields = (
             "name", "relationship_type", "date_of_birth", "email", "phone",
             "occupation", "employer", "abn", "tfn_last_three",
-            "related_client", "related_entity", "notes", "is_active",
+            "related_entity", "notes", "is_active",
         )
         widgets = {
             "date_of_birth": forms.DateInput(attrs={"type": "date"}),
@@ -228,10 +229,11 @@ class ClientAssociateForm(forms.ModelForm):
                 field.widget.attrs["class"] = "form-control"
         # Make select fields use form-select
         self.fields["relationship_type"].widget.attrs["class"] = "form-select"
-        self.fields["related_client"].widget.attrs["class"] = "form-select"
         self.fields["related_entity"].widget.attrs["class"] = "form-select"
-        self.fields["related_client"].required = False
         self.fields["related_entity"].required = False
+        # Remove related_client field (no longer used)
+        if "related_client" in self.fields:
+            del self.fields["related_client"]
 
 
 # ---------------------------------------------------------------------------
@@ -241,7 +243,7 @@ class AccountingSoftwareForm(forms.ModelForm):
     class Meta:
         model = AccountingSoftware
         fields = (
-            "software_type", "software_version", "is_cloud", "entity",
+            "software_type", "software_version", "is_cloud",
             "login_email", "organisation_name", "has_advisor_access",
             "advisor_login_email", "subscription_level", "notes", "is_primary",
         )
@@ -249,7 +251,7 @@ class AccountingSoftwareForm(forms.ModelForm):
             "notes": forms.Textarea(attrs={"rows": 2}),
         }
 
-    def __init__(self, *args, client=None, **kwargs):
+    def __init__(self, *args, client=None, entity=None, **kwargs):
         super().__init__(*args, **kwargs)
         for name, field in self.fields.items():
             if isinstance(field.widget, forms.CheckboxInput):
@@ -257,13 +259,9 @@ class AccountingSoftwareForm(forms.ModelForm):
             else:
                 field.widget.attrs["class"] = "form-control"
         self.fields["software_type"].widget.attrs["class"] = "form-select"
-        self.fields["entity"].widget.attrs["class"] = "form-select"
-        self.fields["entity"].required = False
-        # Filter entity choices to only this client's entities
-        if client:
-            self.fields["entity"].queryset = Entity.objects.filter(client=client)
-        else:
-            self.fields["entity"].queryset = Entity.objects.none()
+        # Remove entity field from the form since it's set automatically
+        if "entity" in self.fields:
+            del self.fields["entity"]
 
 
 # ---------------------------------------------------------------------------
@@ -273,7 +271,7 @@ class MeetingNoteForm(forms.ModelForm):
     class Meta:
         model = MeetingNote
         fields = (
-            "title", "meeting_date", "meeting_type", "attendees", "entity",
+            "title", "meeting_date", "meeting_type", "attendees",
             "discussion_points", "action_items", "notes",
             "follow_up_date", "follow_up_completed", "is_pinned", "tags",
         )
@@ -287,7 +285,7 @@ class MeetingNoteForm(forms.ModelForm):
             "tags": forms.TextInput(attrs={"placeholder": "e.g. tax-planning, smsf, urgent"}),
         }
 
-    def __init__(self, *args, client=None, **kwargs):
+    def __init__(self, *args, client=None, entity=None, **kwargs):
         super().__init__(*args, **kwargs)
         for name, field in self.fields.items():
             if isinstance(field.widget, forms.CheckboxInput):
@@ -295,9 +293,6 @@ class MeetingNoteForm(forms.ModelForm):
             else:
                 field.widget.attrs["class"] = "form-control"
         self.fields["meeting_type"].widget.attrs["class"] = "form-select"
-        self.fields["entity"].widget.attrs["class"] = "form-select"
-        self.fields["entity"].required = False
-        if client:
-            self.fields["entity"].queryset = Entity.objects.filter(client=client)
-        else:
-            self.fields["entity"].queryset = Entity.objects.none()
+        # Remove entity field from the form since it's set automatically
+        if "entity" in self.fields:
+            del self.fields["entity"]

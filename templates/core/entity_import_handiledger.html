@@ -4,8 +4,8 @@
 {% block content %}
 <nav aria-label="breadcrumb">
     <ol class="breadcrumb">
-        <li class="breadcrumb-item"><a href="{% url 'core:client_list' %}">Clients</a></li>
-        <li class="breadcrumb-item"><a href="{% url 'core:client_detail' pk=entity.client.pk %}">{{ entity.client.name }}</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
         <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
         <li class="breadcrumb-item active">Import HandiLedger</li>
     </ol>

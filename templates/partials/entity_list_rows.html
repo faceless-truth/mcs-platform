@@ -1,0 +1,37 @@
+{% for entity in entities %}
+<tr>
+    <td>
+        <input type="checkbox" class="form-check-input entity-checkbox" value="{{ entity.pk }}">
+    </td>
+    <td>
+        <a href="{% url 'core:entity_detail' pk=entity.pk %}" class="text-decoration-none fw-semibold">
+            {{ entity.entity_name }}
+        </a>
+        {% if entity.trading_as %}
+        <br><small class="text-muted">t/a {{ entity.trading_as }}</small>
+        {% endif %}
+        {% if entity.is_archived %}
+        <span class="badge bg-secondary ms-1">Archived</span>
+        {% endif %}
+    </td>
+    <td>
+        <span class="badge bg-{% if entity.entity_type == 'company' %}primary{% elif entity.entity_type == 'trust' %}info{% elif entity.entity_type == 'smsf' %}success{% elif entity.entity_type == 'partnership' %}warning text-dark{% elif entity.entity_type == 'sole_trader' %}secondary{% else %}light text-dark{% endif %}">
+            {{ entity.get_entity_type_display }}
+        </span>
+    </td>
+    <td><small>{{ entity.abn|default:"—" }}</small></td>
+    <td><small>{{ entity.assigned_accountant|default:"—" }}</small></td>
+    <td class="text-center">
+        <span class="badge bg-light text-dark">{{ entity.num_fys|default:"0" }}</span>
+    </td>
+    <td class="text-end">
+        <a href="{% url 'core:entity_detail' pk=entity.pk %}" class="btn btn-sm btn-outline-primary">
+            <i class="bi bi-arrow-right"></i>
+        </a>
+    </td>
+</tr>
+{% empty %}
+<tr>
+    <td colspan="7" class="text-center text-muted py-4">No entities found.</td>
+</tr>
+{% endfor %}

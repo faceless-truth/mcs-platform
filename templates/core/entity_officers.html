@@ -8,7 +8,7 @@
     <div>
         <h2>Officers & Signatories</h2>
         <p class="text-muted mb-0">
-            <a href="{% url 'core:client_detail' entity.client.pk %}">{{ entity.client.name }}</a>
+            <a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a>
             &raquo;
             <a href="{% url 'core:entity_detail' entity.pk %}">{{ entity.entity_name }}</a>
             &raquo; Officers

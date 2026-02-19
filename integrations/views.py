@@ -97,7 +97,7 @@ def oauth_callback(request):
 
     if not all([code, state, entity_pk, provider_name]) or state != expected_state:
         messages.error(request, "OAuth authentication failed: invalid state.")
-        return redirect("core:client_list")
+        return redirect("core:entity_list")
 
     if error:
         messages.error(request, f"OAuth authentication failed: {error}")

@@ -46,7 +46,7 @@ class Client(models.Model):
         return self.name
 
     def get_absolute_url(self):
-        return reverse("core:client_detail", kwargs={"pk": self.pk})
+        return reverse("core:entity_list")
 
     @property
     def entity_count(self):
@@ -91,7 +91,17 @@ class Entity(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     client = models.ForeignKey(
-        Client, on_delete=models.CASCADE, related_name="entities"
+        Client, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="entities",
+        help_text="Legacy client link (optional). Entities are now top-level objects.",
+    )
+    contact_email = models.EmailField(blank=True)
+    assigned_accountant = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="assigned_entities",
     )
     entity_name = models.CharField(max_length=255)
     entity_type = models.CharField(max_length=20, choices=EntityType.choices)
@@ -1098,7 +1108,13 @@ class ClientAssociate(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     client = models.ForeignKey(
-        Client, on_delete=models.CASCADE, related_name="associates"
+        Client, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="associates",
+    )
+    entity = models.ForeignKey(
+        Entity, on_delete=models.CASCADE, null=True, blank=True,
+        related_name="associates",
+        help_text="The entity this associate is linked to",
     )
     name = models.CharField(max_length=255)
     relationship_type = models.CharField(
@@ -1177,13 +1193,13 @@ class AccountingSoftware(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     client = models.ForeignKey(
-        Client, on_delete=models.CASCADE, related_name="software_configs"
+        Client, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="software_configs",
     )
     entity = models.ForeignKey(
-        Entity, on_delete=models.SET_NULL,
-        null=True, blank=True,
+        Entity, on_delete=models.CASCADE, null=True, blank=True,
         related_name="software_configs",
-        help_text="Optionally link to a specific entity (if different from client default)",
+        help_text="The entity this software is linked to",
     )
     software_type = models.CharField(
         max_length=20, choices=SoftwareType.choices,
@@ -1255,13 +1271,13 @@ class MeetingNote(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     client = models.ForeignKey(
-        Client, on_delete=models.CASCADE, related_name="meeting_notes"
+        Client, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="meeting_notes",
     )
     entity = models.ForeignKey(
-        Entity, on_delete=models.SET_NULL,
-        null=True, blank=True,
+        Entity, on_delete=models.CASCADE, null=True, blank=True,
         related_name="meeting_notes",
-        help_text="Optionally link to a specific entity discussed",
+        help_text="The entity this meeting note is linked to",
     )
     title = models.CharField(
         max_length=255,

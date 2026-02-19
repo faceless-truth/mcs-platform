@@ -83,10 +83,9 @@ def dashboard(request):
     # Group risk flags by client/entity for display
     risk_summary = {}
     for flag in open_risk_flags:
-        key = f"{flag.financial_year.entity.client.name} — {flag.financial_year.entity.entity_name}"
+        key = flag.financial_year.entity.entity_name
         if key not in risk_summary:
             risk_summary[key] = {
-                "client_name": flag.financial_year.entity.client.name,
                 "entity_name": flag.financial_year.entity.entity_name,
                 "fy_pk": flag.financial_year.pk,
                 "flags": [],
@@ -115,10 +114,11 @@ def dashboard(request):
 
 
 # ---------------------------------------------------------------------------
-# Clients
+# Entities (top-level — replaces Clients)
 # ---------------------------------------------------------------------------
 @login_required
-def client_list(request):
+def entity_list(request):
+    """Main list page showing all entities (replaces client_list)."""
     query = request.GET.get("q", "")
     entity_type = request.GET.get("entity_type", "")
     status_filter = request.GET.get("status", "")
@@ -126,124 +126,97 @@ def client_list(request):
 
     if show_archived:
         if request.user.is_admin:
-            clients = Client.objects.filter(is_archived=True)
+            entities = Entity.objects.filter(is_archived=True)
         else:
-            clients = Client.objects.filter(
+            entities = Entity.objects.filter(
                 assigned_accountant=request.user, is_archived=True
             )
     else:
         if request.user.is_admin:
-            clients = Client.objects.filter(is_active=True, is_archived=False)
+            entities = Entity.objects.filter(is_archived=False)
         else:
-            clients = Client.objects.filter(
-                assigned_accountant=request.user, is_active=True, is_archived=False
+            entities = Entity.objects.filter(
+                assigned_accountant=request.user, is_archived=False
             )
 
     if query:
-        clients = clients.filter(
-            Q(name__icontains=query)
-            | Q(entities__abn__icontains=query)
-            | Q(entities__entity_name__icontains=query)
+        entities = entities.filter(
+            Q(entity_name__icontains=query)
+            | Q(abn__icontains=query)
+            | Q(trading_as__icontains=query)
         ).distinct()
 
-    clients = clients.annotate(num_entities=Count("entities"))
+    if entity_type:
+        entities = entities.filter(entity_type=entity_type)
+
+    entities = entities.annotate(num_fys=Count("financial_years"))
 
     context = {
-        "clients": clients,
+        "entities": entities,
         "query": query,
         "entity_type": entity_type,
         "status_filter": status_filter,
         "show_archived": show_archived,
+        "entity_types": Entity.EntityType.choices,
     }
 
     if request.htmx:
-        return render(request, "partials/client_list_rows.html", context)
-    return render(request, "core/client_list.html", context)
+        return render(request, "partials/entity_list_rows.html", context)
+    return render(request, "core/entity_list.html", context)
+
+
+# Keep client_list as alias for backward compatibility
+client_list = entity_list
 
 
 @login_required
 def client_create(request):
-    if not request.user.can_edit:
-        messages.error(request, "You do not have permission to create clients.")
-        return redirect("review:dashboard")
-
-    if request.method == "POST":
-        form = ClientForm(request.POST)
-        if form.is_valid():
-            client = form.save()
-            _log_action(request, "import", f"Created client: {client.name}", client)
-            messages.success(request, f"Client '{client.name}' created successfully.")
-            return redirect("core:client_detail", pk=client.pk)
-    else:
-        form = ClientForm()
-    return render(request, "core/client_form.html", {"form": form, "title": "Create Client"})
+    """Redirect to entity_create — clients are no longer created directly."""
+    return redirect("core:entity_create")
 
 
 @login_required
 def client_detail(request, pk):
-    client = get_object_or_404(Client, pk=pk)
-    entities = client.entities.all()
-    associates = client.associates.filter(is_active=True)
-    family_associates = [a for a in associates if a.is_family]
-    business_associates = [a for a in associates if not a.is_family]
-    software_configs = client.software_configs.all()
-    meeting_notes = client.meeting_notes.all()[:20]
-    pending_followups = client.meeting_notes.filter(
-        follow_up_completed=False, follow_up_date__isnull=False
-    ).order_by("follow_up_date")
-    context = {
-        "client": client,
-        "entities": entities,
-        "family_associates": family_associates,
-        "business_associates": business_associates,
-        "software_configs": software_configs,
-        "meeting_notes": meeting_notes,
-        "pending_followups": pending_followups,
-    }
-    return render(request, "core/client_detail.html", context)
+    """Legacy redirect — try to find entity or client."""
+    # Try as entity first
+    entity = Entity.objects.filter(pk=pk).first()
+    if entity:
+        return redirect("core:entity_detail", pk=pk)
+    # Try as client — redirect to first entity
+    client = Client.objects.filter(pk=pk).first()
+    if client:
+        first_entity = client.entities.first()
+        if first_entity:
+            return redirect("core:entity_detail", pk=first_entity.pk)
+    return redirect("core:entity_list")
 
 
 @login_required
 def client_edit(request, pk):
-    client = get_object_or_404(Client, pk=pk)
-    if not request.user.can_edit:
-        messages.error(request, "You do not have permission to edit clients.")
-        return redirect("core:client_detail", pk=pk)
-
-    if request.method == "POST":
-        form = ClientForm(request.POST, instance=client)
-        if form.is_valid():
-            form.save()
-            messages.success(request, f"Client '{client.name}' updated.")
-            return redirect("core:client_detail", pk=pk)
-    else:
-        form = ClientForm(instance=client)
-    return render(request, "core/client_form.html", {"form": form, "title": f"Edit: {client.name}"})
+    """Legacy redirect."""
+    return redirect("core:entity_list")
 
 
 # ---------------------------------------------------------------------------
 # Entities
 # ---------------------------------------------------------------------------
 @login_required
-def entity_create(request, client_pk):
-    client = get_object_or_404(Client, pk=client_pk)
+def entity_create(request, client_pk=None):
     if not request.user.can_edit:
         messages.error(request, "You do not have permission to create entities.")
-        return redirect("core:client_detail", pk=client_pk)
+        return redirect("core:entity_list")
 
     if request.method == "POST":
         form = EntityForm(request.POST)
         if form.is_valid():
-            entity = form.save(commit=False)
-            entity.client = client
-            entity.save()
+            entity = form.save()
             _log_action(request, "import", f"Created entity: {entity.entity_name}", entity)
             messages.success(request, f"Entity '{entity.entity_name}' created.")
-            return redirect("core:client_detail", pk=client_pk)
+            return redirect("core:entity_detail", pk=entity.pk)
     else:
         form = EntityForm()
     return render(request, "core/entity_form.html", {
-        "form": form, "client": client, "title": "Create Entity"
+        "form": form, "title": "Create Entity"
     })
 
 
@@ -253,11 +226,24 @@ def entity_detail(request, pk):
     financial_years = entity.financial_years.all()
     officers = entity.officers.filter(date_ceased__isnull=True)
     unfinalised_count = financial_years.exclude(status="finalised").count()
+    associates = entity.associates.filter(is_active=True)
+    family_associates = [a for a in associates if a.is_family]
+    business_associates = [a for a in associates if not a.is_family]
+    software_configs = entity.software_configs.all()
+    meeting_notes = entity.meeting_notes.all()[:20]
+    pending_followups = entity.meeting_notes.filter(
+        follow_up_completed=False, follow_up_date__isnull=False
+    ).order_by("follow_up_date")
     context = {
         "entity": entity,
         "financial_years": financial_years,
         "officers": officers,
         "unfinalised_count": unfinalised_count,
+        "family_associates": family_associates,
+        "business_associates": business_associates,
+        "software_configs": software_configs,
+        "meeting_notes": meeting_notes,
+        "pending_followups": pending_followups,
     }
     return render(request, "core/entity_detail.html", context)
 
@@ -278,7 +264,7 @@ def entity_edit(request, pk):
     else:
         form = EntityForm(instance=entity)
     return render(request, "core/entity_form.html", {
-        "form": form, "client": entity.client, "title": f"Edit: {entity.entity_name}"
+        "form": form, "title": f"Edit: {entity.entity_name}"
     })
 
 
@@ -435,7 +421,6 @@ def financial_year_detail(request, pk):
     context = {
         "fy": fy,
         "entity": fy.entity,
-        "client": fy.entity.client,
         "tb_lines": tb_lines,
         "tb_sections": ordered_sections,
         "adjustments": adjustments,
@@ -872,9 +857,8 @@ def journal_detail(request, pk):
     )
     fy = journal.financial_year
     entity = fy.entity
-    client = entity.client
     return render(request, "core/journal_detail.html", {
-        "journal": journal, "fy": fy, "entity": entity, "client": client,
+        "journal": journal, "fy": fy, "entity": entity,
     })
 
 
@@ -1161,24 +1145,25 @@ def generate_document(request, pk):
 # ---------------------------------------------------------------------------
 @login_required
 def htmx_client_search(request):
+    """HTMX search endpoint for entities (replaces client search)."""
     query = request.GET.get("q", "")
     if len(query) < 2:
         return HttpResponse("")
 
     if request.user.is_admin:
-        clients = Client.objects.filter(is_active=True)
+        entities = Entity.objects.filter(is_archived=False)
     else:
-        clients = Client.objects.filter(
-            assigned_accountant=request.user, is_active=True
+        entities = Entity.objects.filter(
+            assigned_accountant=request.user, is_archived=False
         )
 
-    clients = clients.filter(
-        Q(name__icontains=query)
-        | Q(entities__abn__icontains=query)
-        | Q(entities__entity_name__icontains=query)
-    ).distinct()[:20]
+    entities = entities.filter(
+        Q(entity_name__icontains=query)
+        | Q(abn__icontains=query)
+        | Q(trading_as__icontains=query)
+    ).distinct().annotate(num_fys=Count("financial_years"))[:20]
 
-    return render(request, "partials/client_list_rows.html", {"clients": clients})
+    return render(request, "partials/entity_list_rows.html", {"entities": entities})
 
 
 @login_required
@@ -1803,187 +1788,187 @@ def journals_pdf(request, pk):
 # Client Associates (Family & Business)
 # ---------------------------------------------------------------------------
 @login_required
-def associate_create(request, client_pk):
-    client = get_object_or_404(Client, pk=client_pk)
+def associate_create(request, entity_pk):
+    entity = get_object_or_404(Entity, pk=entity_pk)
     if not request.user.can_edit:
         messages.error(request, "You do not have permission to add associates.")
-        return redirect("core:client_detail", pk=client_pk)
+        return redirect("core:entity_detail", pk=entity_pk)
 
     if request.method == "POST":
         form = ClientAssociateForm(request.POST)
         if form.is_valid():
             assoc = form.save(commit=False)
-            assoc.client = client
+            assoc.entity = entity
             assoc.save()
             _log_action(request, "import", f"Added associate: {assoc.name} ({assoc.get_relationship_type_display()})", assoc)
             messages.success(request, f"Associate '{assoc.name}' added.")
-            return redirect("core:client_detail", pk=client_pk)
+            return redirect("core:entity_detail", pk=entity_pk)
     else:
         form = ClientAssociateForm()
     return render(request, "core/associate_form.html", {
-        "form": form, "client": client, "title": "Add Associate"
+        "form": form, "entity": entity, "title": "Add Associate"
     })
 
 
 @login_required
 def associate_edit(request, pk):
     assoc = get_object_or_404(ClientAssociate, pk=pk)
-    client = assoc.client
+    entity = assoc.entity
     if not request.user.can_edit:
         messages.error(request, "You do not have permission to edit associates.")
-        return redirect("core:client_detail", pk=client.pk)
+        return redirect("core:entity_detail", pk=entity.pk)
 
     if request.method == "POST":
         form = ClientAssociateForm(request.POST, instance=assoc)
         if form.is_valid():
             form.save()
             messages.success(request, f"Associate '{assoc.name}' updated.")
-            return redirect("core:client_detail", pk=client.pk)
+            return redirect("core:entity_detail", pk=entity.pk)
     else:
         form = ClientAssociateForm(instance=assoc)
     return render(request, "core/associate_form.html", {
-        "form": form, "client": client, "title": f"Edit: {assoc.name}"
+        "form": form, "entity": entity, "title": f"Edit: {assoc.name}"
     })
 
 
 @login_required
 def associate_delete(request, pk):
     assoc = get_object_or_404(ClientAssociate, pk=pk)
-    client = assoc.client
+    entity = assoc.entity
     if not request.user.can_edit:
         messages.error(request, "You do not have permission to delete associates.")
-        return redirect("core:client_detail", pk=client.pk)
+        return redirect("core:entity_detail", pk=entity.pk)
 
     if request.method == "POST":
         name = assoc.name
         assoc.delete()
         messages.success(request, f"Associate '{name}' removed.")
-    return redirect("core:client_detail", pk=client.pk)
+    return redirect("core:entity_detail", pk=entity.pk)
 
 
 # ---------------------------------------------------------------------------
 # Accounting Software
 # ---------------------------------------------------------------------------
 @login_required
-def software_create(request, client_pk):
-    client = get_object_or_404(Client, pk=client_pk)
+def software_create(request, entity_pk):
+    entity = get_object_or_404(Entity, pk=entity_pk)
     if not request.user.can_edit:
         messages.error(request, "You do not have permission to add software configs.")
-        return redirect("core:client_detail", pk=client_pk)
+        return redirect("core:entity_detail", pk=entity_pk)
 
     if request.method == "POST":
-        form = AccountingSoftwareForm(request.POST, client=client)
+        form = AccountingSoftwareForm(request.POST)
         if form.is_valid():
             sw = form.save(commit=False)
-            sw.client = client
+            sw.entity = entity
             sw.save()
             _log_action(request, "import", f"Added software: {sw.get_software_type_display()}", sw)
             messages.success(request, f"Software '{sw.get_software_type_display()}' added.")
-            return redirect("core:client_detail", pk=client_pk)
+            return redirect("core:entity_detail", pk=entity_pk)
     else:
-        form = AccountingSoftwareForm(client=client)
+        form = AccountingSoftwareForm()
     return render(request, "core/software_form.html", {
-        "form": form, "client": client, "title": "Add Accounting Software"
+        "form": form, "entity": entity, "title": "Add Accounting Software"
     })
 
 
 @login_required
 def software_edit(request, pk):
     sw = get_object_or_404(AccountingSoftware, pk=pk)
-    client = sw.client
+    entity = sw.entity
     if not request.user.can_edit:
         messages.error(request, "You do not have permission to edit software configs.")
-        return redirect("core:client_detail", pk=client.pk)
+        return redirect("core:entity_detail", pk=entity.pk)
 
     if request.method == "POST":
-        form = AccountingSoftwareForm(request.POST, instance=sw, client=client)
+        form = AccountingSoftwareForm(request.POST, instance=sw)
         if form.is_valid():
             form.save()
             messages.success(request, f"Software '{sw.get_software_type_display()}' updated.")
-            return redirect("core:client_detail", pk=client.pk)
+            return redirect("core:entity_detail", pk=entity.pk)
     else:
-        form = AccountingSoftwareForm(instance=sw, client=client)
+        form = AccountingSoftwareForm(instance=sw)
     return render(request, "core/software_form.html", {
-        "form": form, "client": client, "title": f"Edit: {sw.get_software_type_display()}"
+        "form": form, "entity": entity, "title": f"Edit: {sw.get_software_type_display()}"
     })
 
 
 @login_required
 def software_delete(request, pk):
     sw = get_object_or_404(AccountingSoftware, pk=pk)
-    client = sw.client
+    entity = sw.entity
     if not request.user.can_edit:
         messages.error(request, "You do not have permission to delete software configs.")
-        return redirect("core:client_detail", pk=client.pk)
+        return redirect("core:entity_detail", pk=entity.pk)
 
     if request.method == "POST":
         label = sw.get_software_type_display()
         sw.delete()
         messages.success(request, f"Software '{label}' removed.")
-    return redirect("core:client_detail", pk=client.pk)
+    return redirect("core:entity_detail", pk=entity.pk)
 
 
 # ---------------------------------------------------------------------------
 # Meeting Notes
 # ---------------------------------------------------------------------------
 @login_required
-def meeting_note_create(request, client_pk):
-    client = get_object_or_404(Client, pk=client_pk)
+def meeting_note_create(request, entity_pk):
+    entity = get_object_or_404(Entity, pk=entity_pk)
 
     if request.method == "POST":
-        form = MeetingNoteForm(request.POST, client=client)
+        form = MeetingNoteForm(request.POST)
         if form.is_valid():
             note = form.save(commit=False)
-            note.client = client
+            note.entity = entity
             note.created_by = request.user
             note.save()
             _log_action(request, "import", f"Added meeting note: {note.title}", note)
             messages.success(request, f"Meeting note '{note.title}' created.")
-            return redirect("core:client_detail", pk=client_pk)
+            return redirect("core:entity_detail", pk=entity_pk)
     else:
-        form = MeetingNoteForm(client=client, initial={"meeting_date": timezone.now().date()})
+        form = MeetingNoteForm(initial={"meeting_date": timezone.now().date()})
     return render(request, "core/meeting_note_form.html", {
-        "form": form, "client": client, "title": "New Meeting Note"
+        "form": form, "entity": entity, "title": "New Meeting Note"
     })
 
 
 @login_required
 def meeting_note_edit(request, pk):
     note = get_object_or_404(MeetingNote, pk=pk)
-    client = note.client
+    entity = note.entity
 
     if request.method == "POST":
-        form = MeetingNoteForm(request.POST, instance=note, client=client)
+        form = MeetingNoteForm(request.POST, instance=note)
         if form.is_valid():
             form.save()
             messages.success(request, f"Meeting note '{note.title}' updated.")
-            return redirect("core:client_detail", pk=client.pk)
+            return redirect("core:entity_detail", pk=entity.pk)
     else:
-        form = MeetingNoteForm(instance=note, client=client)
+        form = MeetingNoteForm(instance=note)
     return render(request, "core/meeting_note_form.html", {
-        "form": form, "client": client, "title": f"Edit: {note.title}"
+        "form": form, "entity": entity, "title": f"Edit: {note.title}"
     })
 
 
 @login_required
 def meeting_note_detail(request, pk):
     note = get_object_or_404(MeetingNote, pk=pk)
-    client = note.client
+    entity = note.entity
     return render(request, "core/meeting_note_detail.html", {
-        "note": note, "client": client,
+        "note": note, "entity": entity,
     })
 
 
 @login_required
 def meeting_note_delete(request, pk):
     note = get_object_or_404(MeetingNote, pk=pk)
-    client = note.client
+    entity = note.entity
 
     if request.method == "POST":
         title = note.title
         note.delete()
         messages.success(request, f"Meeting note '{title}' deleted.")
-    return redirect("core:client_detail", pk=client.pk)
+    return redirect("core:entity_detail", pk=entity.pk)
 
 
 @login_required
@@ -2171,7 +2156,6 @@ def gst_activity_statement(request, pk):
     context = {
         "fy": fy,
         "entity": entity,
-        "client": entity.client,
         "bas_data": bas_data,
         "sales_lines": sales_lines,
         "purchase_lines": purchase_lines,
@@ -2787,65 +2771,22 @@ def notifications_api(request):
 
 @login_required
 def client_bulk_action(request):
-    """Handle bulk delete/archive actions on selected clients."""
+    """Bulk delete/archive actions on selected entities (top-level)."""
     if request.method != "POST":
-        return redirect("core:client_list")
+        return redirect("core:entity_list")
 
     if not request.user.can_edit:
         messages.error(request, "You do not have permission.")
-        return redirect("core:client_list")
-
-    action = request.POST.get("bulk_action")
-    client_ids = request.POST.getlist("client_ids")
-
-    if not client_ids:
-        messages.warning(request, "No clients selected.")
-        return redirect("core:client_list")
-
-    clients = Client.objects.filter(pk__in=client_ids)
-
-    if action == "archive":
-        count = clients.update(is_archived=True, is_active=False)
-        messages.success(request, f"Archived {count} client(s).")
-        _log_action(request, "update", f"Archived {count} client(s)")
-    elif action == "unarchive":
-        count = clients.update(is_archived=False, is_active=True)
-        messages.success(request, f"Unarchived {count} client(s).")
-        _log_action(request, "update", f"Unarchived {count} client(s)")
-    elif action == "delete":
-        count = clients.count()
-        for c in clients:
-            _log_action(request, "delete", f"Deleted client: {c.name}")
-        clients.delete()
-        messages.success(request, f"Deleted {count} client(s) and all associated data.")
-    else:
-        messages.error(request, "Invalid action.")
-
-    return redirect("core:client_list")
-
-
-# ============================================================
-# Bulk Entity Actions (Delete / Archive)
-# ============================================================
-
-@login_required
-def entity_bulk_action(request, client_pk):
-    """Handle bulk delete/archive actions on selected entities."""
-    if request.method != "POST":
-        return redirect("core:client_detail", pk=client_pk)
-
-    if not request.user.can_edit:
-        messages.error(request, "You do not have permission.")
-        return redirect("core:client_detail", pk=client_pk)
+        return redirect("core:entity_list")
 
     action = request.POST.get("bulk_action")
     entity_ids = request.POST.getlist("entity_ids")
 
     if not entity_ids:
         messages.warning(request, "No entities selected.")
-        return redirect("core:client_detail", pk=client_pk)
+        return redirect("core:entity_list")
 
-    entities = Entity.objects.filter(pk__in=entity_ids, client_id=client_pk)
+    entities = Entity.objects.filter(pk__in=entity_ids)
 
     if action == "archive":
         count = entities.update(is_archived=True)
@@ -2864,7 +2805,11 @@ def entity_bulk_action(request, client_pk):
     else:
         messages.error(request, "Invalid action.")
 
-    return redirect("core:client_detail", pk=client_pk)
+    return redirect("core:entity_list")
+
+
+# Alias for backward compatibility
+entity_bulk_action = client_bulk_action
 
 
 # ============================================================
@@ -2895,7 +2840,8 @@ def entity_import_handiledger(request, pk):
             try:
                 result = import_access_ledger_zip(
                     zip_file,
-                    client=entity.client,
+                    client=entity.client if entity.client else None,
+                    entity=entity,
                     replace_existing=replace,
                 )
                 if result["errors"]:
@@ -3033,9 +2979,9 @@ def coa_search_api(request):
 # ============================================================
 
 @login_required
-def xrm_pull(request, client_pk):
-    """Pull entity data from Xero Practice Manager for selected entities."""
-    import json
+def xrm_pull(request, pk):
+    """Pull entity data from Xero Practice Manager for a single entity."""
+    entity = get_object_or_404(Entity, pk=pk)
 
     if request.method != "POST":
         return JsonResponse({"status": "error", "message": "POST required"}, status=405)
@@ -3043,35 +2989,18 @@ def xrm_pull(request, client_pk):
     if not request.user.can_edit:
         return JsonResponse({"status": "error", "message": "Permission denied"}, status=403)
 
-    try:
-        data = json.loads(request.body)
-        entity_ids = data.get("entity_ids", [])
-    except (json.JSONDecodeError, ValueError):
-        return JsonResponse({"status": "error", "message": "Invalid request body"}, status=400)
-
-    if not entity_ids:
-        return JsonResponse({"status": "error", "message": "No entities selected"})
-
-    entities = Entity.objects.filter(pk__in=entity_ids, client_id=client_pk)
-
-    # Check if any entities have XPM client IDs
-    xpm_entities = entities.filter(xpm_client_id__isnull=False).exclude(xpm_client_id="")
-    if not xpm_entities.exists():
+    if not entity.xpm_client_id:
         return JsonResponse({
             "status": "error",
-            "message": "None of the selected entities have an XPM Client ID configured. "
+            "message": "This entity does not have an XPM Client ID configured. "
                        "Edit the entity and add the XPM Client ID first."
         })
 
     # Placeholder for actual XPM API integration
     # In production, this would call the Xero Practice Manager API
-    updated = []
-    for entity in xpm_entities:
-        updated.append(entity.entity_name)
-        _log_action(request, "xrm_pull", f"XRM pull requested for {entity.entity_name} (XPM ID: {entity.xpm_client_id})", entity)
+    _log_action(request, "xrm_pull", f"XRM pull requested for {entity.entity_name} (XPM ID: {entity.xpm_client_id})", entity)
 
     return JsonResponse({
         "status": "success",
-        "message": f"XRM pull initiated for {len(updated)} entity/entities: {', '.join(updated)}. "
-                   f"Data will be synced shortly."
+        "message": f"XRM pull initiated for {entity.entity_name}. Data will be synced shortly."
     })

@@ -876,13 +876,13 @@ def _apply_auto_mappings(entity, chart_by_year):
 # =============================================================================
 
 @transaction.atomic
-def import_access_ledger_zip(zip_file, client=None, replace_existing=False):
+def import_access_ledger_zip(zip_file, client=None, entity=None, replace_existing=False):
     """
     Import an Access Ledger ZIP export into StatementHub.
-
     Args:
         zip_file: File-like object or path to the ZIP file.
         client: Optional Client instance to associate the entity with.
+        entity: Optional Entity instance to import data into directly.
         replace_existing: If True, delete existing data for this entity
                          before importing. If False, skip if entity exists.
 
@@ -940,8 +940,8 @@ def import_access_ledger_zip(zip_file, client=None, replace_existing=False):
     logger.info(f"Entity: {entity_name} ({entity_info['entity_type']})")
 
     # --- Step 2: Create or find Entity ---
-    entity = Entity.objects.filter(entity_name__iexact=entity_name).first()
-
+    if entity is None:
+        entity = Entity.objects.filter(entity_name__iexact=entity_name).first()
     if entity and not replace_existing:
         result["warnings"].append(
             f"Entity '{entity_name}' already exists. "

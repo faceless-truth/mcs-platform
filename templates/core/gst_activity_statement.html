@@ -5,8 +5,8 @@
 <!-- Breadcrumb -->
 <nav aria-label="breadcrumb" class="mb-3">
     <ol class="breadcrumb small">
-        <li class="breadcrumb-item"><a href="{% url 'core:client_list' %}">Clients</a></li>
-        <li class="breadcrumb-item"><a href="{% url 'core:client_detail' pk=client.pk %}">{{ client.name }}</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
         <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
         <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy.year_label }}</a></li>
         <li class="breadcrumb-item active">GST Activity Statement</li>

@@ -19,7 +19,7 @@
     <div class="col-12">
         <nav aria-label="breadcrumb">
             <ol class="breadcrumb">
-                <li class="breadcrumb-item"><a href="{% url 'core:client_list' %}">Clients</a></li>
+                <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
                 <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=fy.entity.pk %}">{{ fy.entity.entity_name }}</a></li>
                 <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">FY{{ fy.end_date|date:"Y" }}</a></li>
                 <li class="breadcrumb-item active">Review Import</li>
