@@ -60,10 +60,16 @@
                     <small class="text-muted">Order on declaration page</small>
                 </div>
                 <div class="col-md-3 mb-3 d-flex align-items-center pt-4">
-                    <div class="form-check">
+                    <div class="form-check mb-2">
                         {{ form.is_signatory }}
                         <label class="form-check-label" for="{{ form.is_signatory.id_for_label }}">
                             Signs financial statements
+                        </label>
+                    </div>
+                    <div class="form-check">
+                        {{ form.is_chairperson }}
+                        <label class="form-check-label" for="{{ form.is_chairperson.id_for_label }}">
+                            Chairperson
                         </label>
                     </div>
                 </div>

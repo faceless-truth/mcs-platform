@@ -47,6 +47,7 @@ urlpatterns = [
 
     # Document Generation
     path("years/<uuid:pk>/generate/", views.generate_document, name="generate_document"),
+    path("years/<uuid:pk>/distribution-minutes/", views.generate_distribution_minutes, name="generate_distribution_minutes"),
     path("documents/<uuid:pk>/delete/", views.delete_document, name="delete_document"),
 
     # Entity Officers / Signatories

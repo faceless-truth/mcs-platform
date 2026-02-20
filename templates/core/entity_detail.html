@@ -322,9 +322,10 @@
                         <td>{{ officer.date_ceased|date:"d M Y"|default:"—" }}</td>
                         <td>
                             {% if officer.is_signatory %}
-                            <span class="badge bg-success"><i class="bi bi-pen"></i> Yes</span>
-                            {% else %}
-                            <span class="badge bg-secondary">No</span>
+                            <span class="badge bg-success"><i class="bi bi-pen"></i> Signatory</span>
+                            {% endif %}
+                            {% if officer.is_chairperson %}
+                            <span class="badge bg-primary"><i class="bi bi-person-check"></i> Chairperson</span>
                             {% endif %}
                         </td>
                         <td>

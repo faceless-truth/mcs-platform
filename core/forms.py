@@ -154,7 +154,7 @@ class EntityOfficerForm(forms.ModelForm):
         model = EntityOfficer
         fields = (
             "full_name", "role", "title", "date_appointed", "date_ceased",
-            "is_signatory", "display_order", "profit_share_percentage",
+            "is_signatory", "is_chairperson", "display_order", "profit_share_percentage",
             "distribution_percentage",
         )
         widgets = {

@@ -226,6 +226,10 @@ class EntityOfficer(models.Model):
         default=True,
         help_text="Whether this person signs the financial statements",
     )
+    is_chairperson = models.BooleanField(
+        default=False,
+        help_text="Whether this person is the chairperson (used in distribution minutes)",
+    )
     display_order = models.IntegerField(
         default=0,
         help_text="Order in which signatories appear on declaration page",

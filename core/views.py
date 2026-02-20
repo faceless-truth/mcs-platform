@@ -1248,6 +1248,111 @@ def generate_document(request, pk):
 
 
 # ---------------------------------------------------------------------------
+# Distribution Minutes Generation
+# ---------------------------------------------------------------------------
+@login_required
+def generate_distribution_minutes(request, pk):
+    """Generate distribution minutes document for a trust entity."""
+    fy = get_object_or_404(FinancialYear, pk=pk)
+    entity = fy.entity
+
+    # Only trusts have distribution minutes
+    if entity.entity_type != 'trust':
+        messages.error(request, "Distribution minutes are only applicable to trust entities.")
+        return redirect("core:financial_year_detail", pk=pk)
+
+    fmt = request.GET.get("format", "docx").lower()
+    if fmt not in ("docx", "pdf"):
+        fmt = "docx"
+
+    from .distmin_gen import generate_distribution_minutes as gen_distmin
+
+    try:
+        buffer = gen_distmin(fy.pk)
+    except (ValueError, FileNotFoundError) as e:
+        messages.error(request, f"Distribution minutes generation failed: {e}")
+        return redirect("core:financial_year_detail", pk=pk)
+    except Exception as e:
+        messages.error(request, f"Unexpected error generating distribution minutes: {e}")
+        return redirect("core:financial_year_detail", pk=pk)
+
+    entity_name = entity.entity_name.replace(" ", "_")
+    base_filename = f"{entity_name}_Distribution_Minutes_{fy.year_label}"
+
+    if fmt == "pdf":
+        import subprocess, tempfile, os
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                docx_path = os.path.join(tmpdir, f"{base_filename}.docx")
+                with open(docx_path, "wb") as f:
+                    f.write(buffer.getvalue())
+
+                lo_bin = None
+                for candidate in ["soffice", "libreoffice", "/usr/bin/soffice", "/usr/bin/libreoffice"]:
+                    try:
+                        subprocess.run([candidate, "--version"], capture_output=True, timeout=5)
+                        lo_bin = candidate
+                        break
+                    except (FileNotFoundError, subprocess.TimeoutExpired):
+                        continue
+
+                if not lo_bin:
+                    raise RuntimeError("LibreOffice is not installed.")
+
+                result = subprocess.run(
+                    [lo_bin, "--headless", "--norestore", "--convert-to", "pdf",
+                     "--outdir", tmpdir, docx_path],
+                    capture_output=True, timeout=120,
+                    env={**os.environ, "HOME": tmpdir},
+                )
+                pdf_path = os.path.join(tmpdir, f"{base_filename}.pdf")
+                if not os.path.exists(pdf_path):
+                    raise RuntimeError("PDF conversion failed.")
+                with open(pdf_path, "rb") as f:
+                    pdf_bytes = f.read()
+
+            filename = f"{base_filename}.pdf"
+            response = HttpResponse(pdf_bytes, content_type="application/pdf")
+            response["Content-Disposition"] = f'attachment; filename="{filename}"'
+            file_content = pdf_bytes
+            file_format = "pdf"
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"PDF conversion failed: {e}")
+            messages.error(request, f"PDF conversion failed: {e}. Falling back to DOCX.")
+            filename = f"{base_filename}.docx"
+            response = HttpResponse(
+                buffer.getvalue(),
+                content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+            response["Content-Disposition"] = f'attachment; filename="{filename}"'
+            file_content = buffer.getvalue()
+            file_format = "docx"
+    else:
+        filename = f"{base_filename}.docx"
+        response = HttpResponse(
+            buffer.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        file_content = buffer.getvalue()
+        file_format = "docx"
+
+    _log_action(request, "generate", f"Generated distribution minutes ({file_format.upper()}) for {fy}", fy)
+
+    # Save record
+    from django.core.files.base import ContentFile
+    doc = GeneratedDocument(
+        financial_year=fy,
+        file_format=file_format,
+        generated_by=request.user,
+    )
+    doc.file.save(filename, ContentFile(file_content), save=True)
+
+    return response
+
+
+# ---------------------------------------------------------------------------
 # HTMX Partials
 # ---------------------------------------------------------------------------
 @login_required

@@ -73,6 +73,10 @@ WSGI_APPLICATION = "config.wsgi.application"
 DATABASES = {
     "default": env.db("DATABASE_URL", default="sqlite:///db.sqlite3")
 }
+# Keep database connections alive for 10 minutes (avoids reconnect overhead
+# under concurrent load — critical for 100+ simultaneous users)
+DATABASES["default"]["CONN_MAX_AGE"] = int(os.environ.get("DB_CONN_MAX_AGE", 600))
+DATABASES["default"]["CONN_HEALTH_CHECKS"] = True
 
 # Custom user model
 AUTH_USER_MODEL = "accounts.User"
@@ -148,6 +152,30 @@ EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
 DEFAULT_FROM_EMAIL = os.environ.get(
     "DEFAULT_FROM_EMAIL",
     "StatementHub <noreply@statementhub.com.au>",
+)
+
+# ─── Caching (for concurrent user performance) ───────────────────────────────
+# Use database-backed cache in production; falls back to local memory for dev.
+# For 100+ concurrent users, consider Redis: CACHE_URL=redis://localhost:6379/0
+CACHES = {
+    "default": {
+        "BACKEND": os.environ.get(
+            "CACHE_BACKEND",
+            "django.core.cache.backends.locmem.LocMemCache",
+        ),
+        "LOCATION": os.environ.get("CACHE_LOCATION", "statementhub-cache"),
+        "TIMEOUT": 300,
+        "OPTIONS": {
+            "MAX_ENTRIES": 1000,
+        },
+    }
+}
+
+# Use cached sessions for better performance under concurrent load
+# (avoids a DB query per request for session data)
+SESSION_ENGINE = os.environ.get(
+    "SESSION_ENGINE",
+    "django.contrib.sessions.backends.cached_db",
 )
 
 # Security settings (enforced in production)

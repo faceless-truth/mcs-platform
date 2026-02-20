@@ -62,9 +62,13 @@
                     <td>{{ officer.date_ceased|date:"d/m/Y"|default:"-" }}</td>
                     <td>
                         {% if officer.is_signatory %}
-                            <span class="badge bg-success">Yes</span>
-                        {% else %}
-                            <span class="badge bg-secondary">No</span>
+                            <span class="badge bg-success">Signatory</span>
+                        {% endif %}
+                        {% if officer.is_chairperson %}
+                            <span class="badge bg-primary">Chairperson</span>
+                        {% endif %}
+                        {% if not officer.is_signatory and not officer.is_chairperson %}
+                            <span class="badge bg-secondary">—</span>
                         {% endif %}
                     </td>
                     {% if entity.entity_type == 'partnership' %}
