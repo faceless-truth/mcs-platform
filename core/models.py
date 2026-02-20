@@ -1489,3 +1489,90 @@ class ActivityLog(models.Model):
 
     def __str__(self):
         return f"[{self.get_event_type_display()}] {self.title}"
+
+
+
+# ---------------------------------------------------------------------------
+# Bank Account
+# ---------------------------------------------------------------------------
+class BankAccount(models.Model):
+    """
+    Represents a bank account or credit card linked to an entity.
+    Auto-detected from PDF headers (BSB, account number) during upload.
+    Can be mapped to a trial balance account code for automated posting.
+    """
+
+    class AccountType(models.TextChoices):
+        CHEQUE = "cheque", "Cheque Account"
+        SAVINGS = "savings", "Savings Account"
+        CREDIT_CARD = "credit_card", "Credit Card"
+        LOAN = "loan", "Loan Account"
+        TERM_DEPOSIT = "term_deposit", "Term Deposit"
+        OTHER = "other", "Other"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entity = models.ForeignKey(
+        Entity, on_delete=models.CASCADE,
+        related_name="bank_accounts",
+        help_text="The entity this bank account belongs to",
+    )
+    bank_name = models.CharField(
+        max_length=100, blank=True, default="",
+        help_text="Bank name (e.g. CBA, Westpac, ANZ)",
+    )
+    bsb = models.CharField(
+        max_length=20, blank=True, default="",
+        verbose_name="BSB",
+        help_text="Bank-State-Branch number (e.g. 063-123)",
+    )
+    account_number = models.CharField(
+        max_length=50, blank=True, default="",
+        help_text="Account number",
+    )
+    account_name = models.CharField(
+        max_length=255, blank=True, default="",
+        help_text="Account name as shown on statement",
+    )
+    nickname = models.CharField(
+        max_length=100, blank=True, default="",
+        help_text="User-friendly nickname (e.g. 'Main Business Account')",
+    )
+    account_type = models.CharField(
+        max_length=20,
+        choices=AccountType.choices,
+        default=AccountType.CHEQUE,
+    )
+    tb_account_code = models.CharField(
+        max_length=20, blank=True, default="",
+        help_text="Linked trial balance account code (e.g. 1-1100)",
+    )
+    tb_account_name = models.CharField(
+        max_length=255, blank=True, default="",
+        help_text="Linked trial balance account name",
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["bank_name", "account_number"]
+        unique_together = ["entity", "bsb", "account_number"]
+
+    def __str__(self):
+        label = self.nickname or self.account_name or f"{self.bank_name} {self.account_number}"
+        return f"{label} ({self.get_account_type_display()})"
+
+    @property
+    def display_name(self):
+        if self.nickname:
+            return self.nickname
+        if self.account_name:
+            return self.account_name
+        parts = []
+        if self.bank_name:
+            parts.append(self.bank_name)
+        if self.bsb:
+            parts.append(f"BSB {self.bsb}")
+        if self.account_number:
+            parts.append(f"Acc {self.account_number}")
+        return " ".join(parts) or "Unknown Account"

@@ -1,0 +1,567 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Preview Bank Statements — StatementHub{% endblock %}
+
+{% block extra_head %}
+<style>
+    .stmt-card { border-left: 4px solid #0d6efd; }
+    .stmt-card.has-error { border-left-color: #dc3545; }
+    .stmt-card.verified { border-left-color: #198754; }
+    .txn-table th { font-size: 0.75rem; }
+    .txn-table td { font-size: 0.82rem; padding: 0.25rem 0.5rem; }
+    .txn-table input { font-size: 0.82rem; padding: 0.15rem 0.4rem; }
+    .txn-table .form-control { border: 1px solid transparent; background: transparent; }
+    .txn-table .form-control:hover { border-color: #dee2e6; background: #fff; }
+    .txn-table .form-control:focus { border-color: #86b7fe; background: #fff; box-shadow: 0 0 0 0.15rem rgba(13,110,253,.15); }
+    .balance-ok { color: #198754; font-weight: 600; }
+    .balance-mismatch { color: #dc3545; font-weight: 600; }
+    .remove-txn-btn { opacity: 0.3; transition: opacity 0.15s; }
+    .remove-txn-btn:hover { opacity: 1; }
+    .stmt-summary { font-size: 0.85rem; }
+    .stmt-summary dt { font-weight: 600; color: #555; }
+    .loading-overlay {
+        position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(255,255,255,0.85); z-index: 9999;
+        display: flex; align-items: center; justify-content: center;
+        flex-direction: column;
+    }
+    .account-badge { font-size: 0.75rem; }
+    #noDataMessage { display: none; }
+</style>
+{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
+        {% if entity %}
+        <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
+        {% endif %}
+        {% if fy %}
+        <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy.year_label }}</a></li>
+        {% endif %}
+        <li class="breadcrumb-item active">Preview Bank Statements</li>
+    </ol>
+</nav>
+
+<!-- Header -->
+<div class="d-flex justify-content-between align-items-start mb-3">
+    <div>
+        <h4 class="mb-1"><i class="bi bi-eye"></i> Preview &amp; Verify Transactions</h4>
+        <p class="text-muted mb-0">
+            Review extracted transactions before importing. Edit dates, amounts, or descriptions to fix OCR errors.
+            Remove duplicates or unwanted transactions.
+        </p>
+    </div>
+    <div class="d-flex gap-2">
+        {% if fy %}
+        <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-arrow-left"></i> Back
+        </a>
+        {% endif %}
+        <button class="btn btn-success btn-sm" id="confirmImportBtn" disabled>
+            <i class="bi bi-check-circle"></i> Confirm Import <span id="importCount" class="badge bg-light text-dark ms-1">0</span>
+        </button>
+    </div>
+</div>
+
+<!-- Global Summary Bar -->
+<div class="card mb-3" id="globalSummary" style="display: none;">
+    <div class="card-body py-2">
+        <div class="row text-center">
+            <div class="col">
+                <small class="text-muted d-block">Statements</small>
+                <strong id="summaryStatements">0</strong>
+            </div>
+            <div class="col">
+                <small class="text-muted d-block">Total Transactions</small>
+                <strong id="summaryTransactions">0</strong>
+            </div>
+            <div class="col">
+                <small class="text-muted d-block">Total Debits</small>
+                <strong class="text-danger" id="summaryDebits">$0.00</strong>
+            </div>
+            <div class="col">
+                <small class="text-muted d-block">Total Credits</small>
+                <strong class="text-success" id="summaryCredits">$0.00</strong>
+            </div>
+            <div class="col">
+                <small class="text-muted d-block">Balance Status</small>
+                <span id="summaryBalanceStatus" class="badge bg-secondary">—</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- No Data Message -->
+<div class="card text-center py-5" id="noDataMessage">
+    <div class="card-body">
+        <i class="bi bi-exclamation-triangle text-warning" style="font-size: 3rem;"></i>
+        <h5 class="mt-3">No Statement Data Found</h5>
+        <p class="text-muted">
+            No parsed statement data was found. This may happen if the page was refreshed.
+            Please go back and upload your bank statements again.
+        </p>
+        {% if fy %}
+        <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-primary">
+            <i class="bi bi-arrow-left"></i> Back to Financial Year
+        </a>
+        {% else %}
+        <a href="{% url 'review:dashboard' %}" class="btn btn-primary">
+            <i class="bi bi-arrow-left"></i> Back to Dashboard
+        </a>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Statement Cards Container -->
+<div id="statementsContainer"></div>
+
+<!-- Loading Overlay -->
+<div class="loading-overlay" id="importOverlay" style="display: none;">
+    <div class="spinner-border text-primary mb-3" style="width: 3rem; height: 3rem;"></div>
+    <h5>Importing Transactions...</h5>
+    <p class="text-muted" id="importProgress">Saving verified data to database...</p>
+</div>
+
+<script>
+(function() {
+    'use strict';
+
+    // =====================================================================
+    // State
+    // =====================================================================
+    let statements = [];  // Array of parsed statement objects from sessionStorage
+    const entityId = '{{ entity.pk|default:"" }}';
+    const fyId = '{{ fy.pk|default:"" }}';
+    const csrfToken = '{{ csrf_token }}';
+
+    // =====================================================================
+    // Init: Load data from sessionStorage
+    // =====================================================================
+    function init() {
+        const raw = sessionStorage.getItem('mcs_preview_statements');
+        if (!raw) {
+            document.getElementById('noDataMessage').style.display = 'block';
+            return;
+        }
+        try {
+            statements = JSON.parse(raw);
+        } catch(e) {
+            document.getElementById('noDataMessage').style.display = 'block';
+            return;
+        }
+        if (!statements || statements.length === 0) {
+            document.getElementById('noDataMessage').style.display = 'block';
+            return;
+        }
+
+        document.getElementById('globalSummary').style.display = 'block';
+        document.getElementById('confirmImportBtn').disabled = false;
+        renderStatements();
+        updateGlobalSummary();
+    }
+
+    // =====================================================================
+    // Render all statement cards
+    // =====================================================================
+    function renderStatements() {
+        const container = document.getElementById('statementsContainer');
+        container.innerHTML = '';
+
+        statements.forEach((stmt, stmtIdx) => {
+            const card = createStatementCard(stmt, stmtIdx);
+            container.appendChild(card);
+        });
+    }
+
+    function createStatementCard(stmt, stmtIdx) {
+        const div = document.createElement('div');
+        div.className = 'card stmt-card mb-3';
+        div.id = `stmt-${stmtIdx}`;
+
+        const txns = stmt.transactions || [];
+        const openBal = parseFloat(stmt.opening_balance) || 0;
+        const closeBal = parseFloat(stmt.closing_balance) || 0;
+
+        // Calculate running totals
+        let totalDebits = 0, totalCredits = 0;
+        txns.forEach(t => {
+            const amt = parseFloat(t.amount) || 0;
+            if (amt < 0) totalDebits += Math.abs(amt);
+            else totalCredits += amt;
+        });
+
+        // Calculate expected closing balance
+        const expectedClose = openBal + totalCredits - totalDebits;
+        const balanceDiff = Math.abs(expectedClose - closeBal);
+        const balanceOk = balanceDiff < 0.02;
+
+        const bankLabel = stmt.bank || 'Unknown Bank';
+        const accountLabel = stmt.account_name || '';
+        const bsbLabel = stmt.bsb ? `BSB ${stmt.bsb}` : '';
+        const accNumLabel = stmt.account_number ? `Acc ${stmt.account_number}` : '';
+        const accountInfo = [bsbLabel, accNumLabel].filter(Boolean).join(' / ');
+
+        div.innerHTML = `
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <div>
+                    <h6 class="mb-0">
+                        <i class="bi bi-file-earmark-pdf text-danger me-1"></i>
+                        ${escHtml(stmt.filename || 'Unknown file')}
+                        <span class="badge bg-info account-badge ms-2">${escHtml(bankLabel)}</span>
+                    </h6>
+                    <small class="text-muted">
+                        ${accountLabel ? escHtml(accountLabel) + ' — ' : ''}${accountInfo ? escHtml(accountInfo) : ''}
+                        ${stmt.period_start || stmt.period_end ? ' — Period: ' + escHtml(stmt.period_start || '?') + ' to ' + escHtml(stmt.period_end || '?') : ''}
+                    </small>
+                </div>
+                <div class="d-flex gap-2 align-items-center">
+                    <span class="badge bg-primary">${txns.length} transactions</span>
+                    <button class="btn btn-outline-danger btn-sm" onclick="removeStatement(${stmtIdx})" title="Remove this statement">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="card-body p-2">
+                <!-- Balance Summary Row -->
+                <div class="row g-2 mb-2 stmt-summary">
+                    <div class="col-auto">
+                        <dt class="d-inline">Opening Balance:</dt>
+                        <dd class="d-inline ms-1">
+                            <input type="number" step="0.01" class="form-control form-control-sm d-inline-block"
+                                   style="width: 140px;" value="${openBal.toFixed(2)}"
+                                   onchange="updateOpeningBalance(${stmtIdx}, this.value)">
+                        </dd>
+                    </div>
+                    <div class="col-auto">
+                        <dt class="d-inline">Closing Balance (Statement):</dt>
+                        <dd class="d-inline ms-1">
+                            <input type="number" step="0.01" class="form-control form-control-sm d-inline-block"
+                                   style="width: 140px;" value="${closeBal.toFixed(2)}"
+                                   onchange="updateClosingBalance(${stmtIdx}, this.value)">
+                        </dd>
+                    </div>
+                    <div class="col-auto">
+                        <dt class="d-inline">Calculated Closing:</dt>
+                        <dd class="d-inline ms-1 ${balanceOk ? 'balance-ok' : 'balance-mismatch'}" id="calcClose-${stmtIdx}">
+                            $${expectedClose.toFixed(2)}
+                            ${balanceOk
+                                ? '<i class="bi bi-check-circle-fill text-success ms-1"></i>'
+                                : '<i class="bi bi-exclamation-triangle-fill text-danger ms-1"></i> Diff: $' + balanceDiff.toFixed(2)
+                            }
+                        </dd>
+                    </div>
+                    <div class="col-auto ms-auto">
+                        <span class="text-danger">Debits: -$${totalDebits.toFixed(2)}</span>
+                        <span class="text-success ms-2">Credits: +$${totalCredits.toFixed(2)}</span>
+                    </div>
+                </div>
+
+                <!-- Transactions Table -->
+                <div class="table-responsive" style="max-height: 500px; overflow-y: auto;">
+                    <table class="table table-sm table-hover txn-table mb-0">
+                        <thead class="table-light sticky-top">
+                            <tr>
+                                <th style="width: 30px;">#</th>
+                                <th style="width: 110px;">Date</th>
+                                <th>Description</th>
+                                <th class="text-end" style="width: 120px;">Amount</th>
+                                <th class="text-end" style="width: 120px;">Balance</th>
+                                <th style="width: 40px;"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="txnBody-${stmtIdx}">
+                            ${txns.map((t, tIdx) => createTxnRow(stmtIdx, tIdx, t)).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+
+        return div;
+    }
+
+    function createTxnRow(stmtIdx, tIdx, txn) {
+        const amt = parseFloat(txn.amount) || 0;
+        const bal = parseFloat(txn.balance) || 0;
+        const amtClass = amt < 0 ? 'text-danger' : 'text-success';
+
+        return `
+            <tr id="txn-${stmtIdx}-${tIdx}">
+                <td class="text-muted">${tIdx + 1}</td>
+                <td>
+                    <input type="text" class="form-control form-control-sm"
+                           value="${escAttr(txn.date)}"
+                           onchange="updateTxnField(${stmtIdx}, ${tIdx}, 'date', this.value)"
+                           style="width: 100px;">
+                </td>
+                <td>
+                    <input type="text" class="form-control form-control-sm"
+                           value="${escAttr(txn.description)}"
+                           onchange="updateTxnField(${stmtIdx}, ${tIdx}, 'description', this.value)">
+                </td>
+                <td class="text-end">
+                    <input type="number" step="0.01" class="form-control form-control-sm text-end ${amtClass}"
+                           value="${amt.toFixed(2)}"
+                           onchange="updateTxnField(${stmtIdx}, ${tIdx}, 'amount', parseFloat(this.value))"
+                           style="width: 110px;">
+                </td>
+                <td class="text-end" id="txnBal-${stmtIdx}-${tIdx}">
+                    $${bal.toFixed(2)}
+                </td>
+                <td>
+                    <button class="btn btn-sm border-0 remove-txn-btn" onclick="removeTxn(${stmtIdx}, ${tIdx})" title="Remove transaction">
+                        <i class="bi bi-x-lg text-danger"></i>
+                    </button>
+                </td>
+            </tr>
+        `;
+    }
+
+    // =====================================================================
+    // Edit handlers
+    // =====================================================================
+    window.updateTxnField = function(stmtIdx, tIdx, field, value) {
+        if (!statements[stmtIdx] || !statements[stmtIdx].transactions[tIdx]) return;
+        statements[stmtIdx].transactions[tIdx][field] = value;
+        recalcBalances(stmtIdx);
+        updateGlobalSummary();
+    };
+
+    window.updateOpeningBalance = function(stmtIdx, value) {
+        if (!statements[stmtIdx]) return;
+        statements[stmtIdx].opening_balance = parseFloat(value) || 0;
+        recalcBalances(stmtIdx);
+        updateGlobalSummary();
+    };
+
+    window.updateClosingBalance = function(stmtIdx, value) {
+        if (!statements[stmtIdx]) return;
+        statements[stmtIdx].closing_balance = parseFloat(value) || 0;
+        recalcBalances(stmtIdx);
+        updateGlobalSummary();
+    };
+
+    window.removeTxn = function(stmtIdx, tIdx) {
+        if (!statements[stmtIdx]) return;
+        const txn = statements[stmtIdx].transactions[tIdx];
+        const desc = (txn.description || '').substring(0, 40);
+        if (!confirm(`Remove transaction: "${desc}"?`)) return;
+
+        statements[stmtIdx].transactions.splice(tIdx, 1);
+
+        // Re-render the statement card
+        const card = document.getElementById(`stmt-${stmtIdx}`);
+        if (card) {
+            const newCard = createStatementCard(statements[stmtIdx], stmtIdx);
+            card.replaceWith(newCard);
+        }
+        updateGlobalSummary();
+    };
+
+    window.removeStatement = function(stmtIdx) {
+        const stmt = statements[stmtIdx];
+        if (!confirm(`Remove entire statement "${stmt.filename}"? This will discard all ${stmt.transactions.length} transactions.`)) return;
+
+        statements.splice(stmtIdx, 1);
+        renderStatements();
+        updateGlobalSummary();
+
+        if (statements.length === 0) {
+            document.getElementById('noDataMessage').style.display = 'block';
+            document.getElementById('globalSummary').style.display = 'none';
+            document.getElementById('confirmImportBtn').disabled = true;
+        }
+    };
+
+    // =====================================================================
+    // Recalculate running balances for a statement
+    // =====================================================================
+    function recalcBalances(stmtIdx) {
+        const stmt = statements[stmtIdx];
+        if (!stmt) return;
+
+        let running = parseFloat(stmt.opening_balance) || 0;
+        const txns = stmt.transactions;
+
+        txns.forEach((t, tIdx) => {
+            const amt = parseFloat(t.amount) || 0;
+            running += amt;
+            t.balance = Math.round(running * 100) / 100;
+
+            const balCell = document.getElementById(`txnBal-${stmtIdx}-${tIdx}`);
+            if (balCell) balCell.textContent = '$' + t.balance.toFixed(2);
+        });
+
+        // Update calculated closing balance display
+        const closeBal = parseFloat(stmt.closing_balance) || 0;
+        const diff = Math.abs(running - closeBal);
+        const ok = diff < 0.02;
+        const calcEl = document.getElementById(`calcClose-${stmtIdx}`);
+        if (calcEl) {
+            calcEl.className = ok ? 'balance-ok d-inline' : 'balance-mismatch d-inline';
+            calcEl.innerHTML = `$${running.toFixed(2)} ${ok
+                ? '<i class="bi bi-check-circle-fill text-success ms-1"></i>'
+                : '<i class="bi bi-exclamation-triangle-fill text-danger ms-1"></i> Diff: $' + diff.toFixed(2)
+            }`;
+        }
+
+        // Update card border
+        const card = document.getElementById(`stmt-${stmtIdx}`);
+        if (card) {
+            card.classList.toggle('has-error', !ok);
+            card.classList.toggle('verified', ok);
+        }
+    }
+
+    // =====================================================================
+    // Global summary
+    // =====================================================================
+    function updateGlobalSummary() {
+        let totalTxns = 0, totalDebits = 0, totalCredits = 0;
+        let allBalanced = true;
+
+        statements.forEach((stmt, idx) => {
+            const txns = stmt.transactions || [];
+            totalTxns += txns.length;
+            txns.forEach(t => {
+                const amt = parseFloat(t.amount) || 0;
+                if (amt < 0) totalDebits += Math.abs(amt);
+                else totalCredits += amt;
+            });
+
+            // Check balance
+            const open = parseFloat(stmt.opening_balance) || 0;
+            const close = parseFloat(stmt.closing_balance) || 0;
+            let running = open;
+            txns.forEach(t => { running += parseFloat(t.amount) || 0; });
+            if (Math.abs(running - close) >= 0.02) allBalanced = false;
+        });
+
+        document.getElementById('summaryStatements').textContent = statements.length;
+        document.getElementById('summaryTransactions').textContent = totalTxns;
+        document.getElementById('summaryDebits').textContent = '-$' + totalDebits.toFixed(2);
+        document.getElementById('summaryCredits').textContent = '+$' + totalCredits.toFixed(2);
+        document.getElementById('importCount').textContent = totalTxns;
+
+        const statusEl = document.getElementById('summaryBalanceStatus');
+        if (allBalanced) {
+            statusEl.className = 'badge bg-success';
+            statusEl.innerHTML = '<i class="bi bi-check-circle"></i> All Balanced';
+        } else {
+            statusEl.className = 'badge bg-warning text-dark';
+            statusEl.innerHTML = '<i class="bi bi-exclamation-triangle"></i> Mismatch';
+        }
+
+        // Enable/disable import button
+        document.getElementById('confirmImportBtn').disabled = (totalTxns === 0);
+    }
+
+    // =====================================================================
+    // Confirm Import
+    // =====================================================================
+    document.getElementById('confirmImportBtn').addEventListener('click', function() {
+        const totalTxns = statements.reduce((sum, s) => sum + (s.transactions || []).length, 0);
+
+        // Check for balance mismatches
+        let mismatches = [];
+        statements.forEach((stmt, idx) => {
+            const open = parseFloat(stmt.opening_balance) || 0;
+            const close = parseFloat(stmt.closing_balance) || 0;
+            let running = open;
+            (stmt.transactions || []).forEach(t => { running += parseFloat(t.amount) || 0; });
+            if (Math.abs(running - close) >= 0.02) {
+                mismatches.push(stmt.filename || `Statement ${idx + 1}`);
+            }
+        });
+
+        let confirmMsg = `Import ${totalTxns} transactions from ${statements.length} statement(s)?`;
+        if (mismatches.length > 0) {
+            confirmMsg += `\n\nWARNING: Balance mismatch detected in:\n- ${mismatches.join('\n- ')}\n\nProceed anyway?`;
+        }
+
+        if (!confirm(confirmMsg)) return;
+
+        // Show overlay
+        document.getElementById('importOverlay').style.display = 'flex';
+
+        // Prepare payload
+        const payload = {
+            financial_year_id: fyId,
+            entity_id: entityId,
+            statements: statements.map(stmt => ({
+                filename: stmt.filename,
+                bank: stmt.bank,
+                account_name: stmt.account_name,
+                bsb: stmt.bsb,
+                account_number: stmt.account_number,
+                opening_balance: parseFloat(stmt.opening_balance) || 0,
+                closing_balance: parseFloat(stmt.closing_balance) || 0,
+                period_start: stmt.period_start || '',
+                period_end: stmt.period_end || '',
+                account_nickname: stmt.account_nickname || '',
+                account_type: stmt.account_type || 'cheque',
+                transactions: (stmt.transactions || []).map(t => ({
+                    date: t.date,
+                    description: t.description,
+                    amount: parseFloat(t.amount) || 0,
+                })),
+            })),
+        };
+
+        fetch('/confirm-import/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken,
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+            body: JSON.stringify(payload),
+        })
+        .then(resp => resp.json())
+        .then(data => {
+            if (data.status === 'success') {
+                // Clear sessionStorage
+                sessionStorage.removeItem('mcs_preview_statements');
+
+                document.getElementById('importProgress').innerHTML =
+                    `<span class="text-success"><i class="bi bi-check-circle"></i> ${data.total_transactions} transactions imported successfully!</span>`;
+
+                // Redirect after brief delay
+                setTimeout(() => {
+                    window.location.href = data.redirect || '/';
+                }, 1000);
+            } else {
+                document.getElementById('importOverlay').style.display = 'none';
+                alert('Import error: ' + (data.message || 'Unknown error'));
+            }
+        })
+        .catch(err => {
+            document.getElementById('importOverlay').style.display = 'none';
+            console.error('Import error:', err);
+            alert('Import failed. Please try again.');
+        });
+    });
+
+    // =====================================================================
+    // Utility
+    // =====================================================================
+    function escHtml(str) {
+        const div = document.createElement('div');
+        div.textContent = str || '';
+        return div.innerHTML;
+    }
+
+    function escAttr(str) {
+        return (str || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    // =====================================================================
+    // Start
+    // =====================================================================
+    init();
+
+})();
+</script>
+{% endblock %}

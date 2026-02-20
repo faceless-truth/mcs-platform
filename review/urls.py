@@ -19,9 +19,21 @@ urlpatterns = [
     path("api/review/<uuid:pk>/accept-all/",
          views.accept_all_suggestions, name="accept_all"),
 
-    # Upload bank statement
+    # Upload bank statement (legacy — saves directly to DB)
     path("upload-statement/",
          views.upload_bank_statement, name="upload_statement"),
+
+    # NEW: Parse-only endpoint (returns JSON, does NOT save to DB)
+    path("parse-statement/",
+         views.parse_statement, name="parse_statement"),
+
+    # NEW: Upload preview page
+    path("upload-preview/",
+         views.upload_preview, name="upload_preview"),
+
+    # NEW: Confirm import (saves verified transactions to DB)
+    path("confirm-import/",
+         views.confirm_import, name="confirm_import"),
 
     # Async classification
     path("api/review/<uuid:pk>/classify-batch/",

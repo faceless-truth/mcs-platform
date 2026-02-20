@@ -1105,3 +1105,369 @@ def classify_batch(request, pk):
         "auto_coded_count": job.auto_coded_count,
         "confirmed_count": job.confirmed_count,
     })
+
+
+
+# ---------------------------------------------------------------------------
+# Parse-only endpoint (returns JSON, does NOT save to DB)
+# ---------------------------------------------------------------------------
+@login_required
+@require_POST
+def parse_statement(request):
+    """
+    Parse a single bank statement file and return extracted data as JSON.
+    Does NOT create ReviewJob or PendingTransaction records.
+    Used by the preview flow: upload → preview → confirm.
+    """
+    import time
+    import base64
+    start_time = time.time()
+    from datetime import datetime as dt
+    from .pdf_parsers import extract_transactions_from_pdf_direct
+
+    uploaded_file = request.FILES.get('file')
+    if not uploaded_file:
+        return JsonResponse({'status': 'error', 'message': 'No file provided'}, status=400)
+
+    entity_id = request.POST.get('entity_id')
+    period_start_str = request.POST.get('period_start', '')
+    period_end_str = request.POST.get('period_end', '')
+
+    # Parse period dates
+    period_start_date = None
+    period_end_date = None
+    try:
+        if period_start_str:
+            period_start_date = dt.strptime(period_start_str, '%Y-%m-%d').date()
+        if period_end_str:
+            period_end_date = dt.strptime(period_end_str, '%Y-%m-%d').date()
+    except ValueError:
+        pass
+
+    content = uploaded_file.read()
+    filename = uploaded_file.name
+    logger.info(f'[parse-statement] Parsing: {filename} ({len(content)} bytes)')
+
+    # Extract transactions using direct parser first, fall back to Claude Vision for scanned PDFs
+    extracted = None
+    used_vision = False
+    try:
+        if filename.lower().endswith('.pdf'):
+            try:
+                extracted = extract_transactions_from_pdf_direct(content, filename)
+            except ValueError as ve:
+                # Unsupported bank or scanned PDF — try Claude Vision OCR fallback
+                logger.info(f'[parse-statement] Direct parse failed for {filename}: {ve}. Trying Claude Vision OCR...')
+                try:
+                    from .email_ingestion import extract_transactions_from_pdf as claude_extract
+                    pdf_b64 = base64.b64encode(content).decode('utf-8')
+                    extracted = claude_extract(pdf_b64, filename)
+                    used_vision = True
+                    logger.info(f'[parse-statement] Claude Vision OCR succeeded for {filename}')
+                except Exception as vision_err:
+                    logger.error(f'[parse-statement] Claude Vision OCR also failed for {filename}: {vision_err}')
+                    return JsonResponse({
+                        'status': 'error',
+                        'message': f'Could not parse {filename}. Direct parser: {ve}. Vision OCR: {vision_err}'
+                    }, status=400)
+        else:
+            extracted = _parse_excel_bank_statement(content, filename)
+    except Exception as exc:
+        logger.error(f'[parse-statement] Extraction error for {filename}: {exc}', exc_info=True)
+        return JsonResponse({'status': 'error', 'message': f'Extraction error: {exc}'}, status=400)
+
+    if not extracted or not extracted.get('transactions'):
+        return JsonResponse({'status': 'error', 'message': f'No transactions could be extracted from {filename}'}, status=400)
+
+    transactions = extracted['transactions']
+    total_before_filter = len(transactions)
+
+    # Filter by period
+    if period_start_date or period_end_date:
+        filtered = []
+        for txn in transactions:
+            txn_date_str = txn.get('date', '')
+            txn_date = None
+            for fmt in ('%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y', '%d %b %Y', '%d %B %Y', '%m/%d/%Y'):
+                try:
+                    txn_date = dt.strptime(txn_date_str.strip(), fmt).date()
+                    break
+                except (ValueError, AttributeError):
+                    continue
+            if txn_date:
+                if period_start_date and txn_date < period_start_date:
+                    continue
+                if period_end_date and txn_date > period_end_date:
+                    continue
+            filtered.append(txn)
+        transactions = filtered
+
+    if not transactions:
+        return JsonResponse({'status': 'error', 'message': f'{filename}: No transactions within the selected period'}, status=400)
+
+    # Normalize transaction amounts and compute running balance
+    txn_list = []
+    running_balance = float(extracted.get('opening_balance', 0))
+    for txn in transactions:
+        amount = float(txn.get('amount', 0))
+        balance = txn.get('balance')
+        if balance is not None:
+            running_balance = float(balance)
+        else:
+            running_balance += amount
+        txn_list.append({
+            'date': txn.get('date', ''),
+            'description': txn.get('description', ''),
+            'amount': round(amount, 2),
+            'balance': round(running_balance, 2),
+        })
+
+    # Auto-detect bank account info
+    account_key = ''
+    bsb = extracted.get('bsb', '')
+    account_number = extracted.get('account_number', '')
+    if bsb and account_number:
+        account_key = f'{bsb}_{account_number}'
+    elif account_number:
+        account_key = account_number
+
+    # Check if we already know this bank account
+    bank_account_info = None
+    if entity_id and (bsb or account_number):
+        try:
+            from core.models import BankAccount
+            ba = BankAccount.objects.filter(
+                entity_id=entity_id,
+                bsb=bsb,
+                account_number=account_number,
+            ).first()
+            if ba:
+                bank_account_info = {
+                    'id': str(ba.pk),
+                    'nickname': ba.nickname,
+                    'account_type': ba.account_type,
+                    'tb_account_code': ba.tb_account_code,
+                    'tb_account_name': ba.tb_account_name,
+                }
+        except Exception:
+            pass
+
+    elapsed = round(time.time() - start_time, 2)
+    logger.info(f'[parse-statement] {filename}: {len(txn_list)} txns parsed in {elapsed}s (vision={used_vision})')
+
+    return JsonResponse({
+        'status': 'success',
+        'filename': filename,
+        'bank': extracted.get('bank', 'Unknown'),
+        'account_name': extracted.get('account_name', ''),
+        'bsb': bsb,
+        'account_number': account_number,
+        'account_key': account_key,
+        'opening_balance': float(extracted.get('opening_balance', 0)),
+        'closing_balance': float(extracted.get('closing_balance', 0)),
+        'period_start': extracted.get('period_start', ''),
+        'period_end': extracted.get('period_end', ''),
+        'transactions': txn_list,
+        'total_before_filter': total_before_filter,
+        'excluded': total_before_filter - len(txn_list),
+        'bank_account_info': bank_account_info,
+        'elapsed_seconds': elapsed,
+        'used_vision_ocr': used_vision,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Upload Preview page
+# ---------------------------------------------------------------------------
+@login_required
+def upload_preview(request):
+    """
+    Render the preview page. The actual transaction data is passed from the
+    browser via sessionStorage (populated by the upload modal JS).
+    This view just renders the template shell.
+    """
+    financial_year_id = request.GET.get('fy', '')
+    entity_id = request.GET.get('entity', '')
+
+    fy = None
+    entity = None
+    if financial_year_id:
+        try:
+            from core.models import FinancialYear
+            fy = FinancialYear.objects.select_related('entity').get(pk=financial_year_id)
+            entity = fy.entity
+        except Exception:
+            pass
+    if not entity and entity_id:
+        try:
+            from core.models import Entity
+            entity = Entity.objects.get(pk=entity_id)
+        except Exception:
+            pass
+
+    return render(request, 'review/upload_preview.html', {
+        'fy': fy,
+        'entity': entity,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Confirm Import (saves verified transactions to DB)
+# ---------------------------------------------------------------------------
+@login_required
+@require_POST
+def confirm_import(request):
+    """
+    Receive the verified/edited transaction data from the preview page
+    and create ReviewJob + PendingTransaction records.
+    """
+    import json as json_mod
+
+    try:
+        data = json_mod.loads(request.body)
+    except Exception:
+        return JsonResponse({'status': 'error', 'message': 'Invalid JSON'}, status=400)
+
+    financial_year_id = data.get('financial_year_id', '')
+    entity_id = data.get('entity_id', '')
+    statements = data.get('statements', [])
+
+    if not statements:
+        return JsonResponse({'status': 'error', 'message': 'No statements to import'}, status=400)
+
+    entity = None
+    is_gst = True
+    client_name = 'Unknown'
+    if entity_id:
+        try:
+            from core.models import Entity
+            entity = Entity.objects.get(pk=entity_id)
+            is_gst = entity.is_gst_registered
+            client_name = entity.entity_name
+        except Exception:
+            pass
+
+    total_imported = 0
+    job_ids = []
+
+    for stmt in statements:
+        filename = stmt.get('filename', 'Unknown')
+        transactions = stmt.get('transactions', [])
+        if not transactions:
+            continue
+
+        opening_balance = Decimal(str(stmt.get('opening_balance', 0)))
+        closing_balance = Decimal(str(stmt.get('closing_balance', 0)))
+        bsb = stmt.get('bsb', '')
+        account_number = stmt.get('account_number', '')
+        account_name = stmt.get('account_name', '')
+        bank = stmt.get('bank', '')
+        account_nickname = stmt.get('account_nickname', '')
+        account_type = stmt.get('account_type', 'cheque')
+
+        # Auto-create or update BankAccount record
+        if entity and (bsb or account_number):
+            try:
+                from core.models import BankAccount
+                ba, created = BankAccount.objects.get_or_create(
+                    entity=entity,
+                    bsb=bsb,
+                    account_number=account_number,
+                    defaults={
+                        'account_name': account_name,
+                        'bank_name': bank,
+                        'account_type': account_type,
+                        'nickname': account_nickname,
+                    }
+                )
+                if not created and not ba.account_name and account_name:
+                    ba.account_name = account_name
+                    ba.save(update_fields=['account_name'])
+            except Exception as e:
+                logger.error(f'[confirm-import] BankAccount error: {e}')
+
+        # Create ReviewJob
+        job = ReviewJob.objects.create(
+            entity=entity,
+            client_name=client_name,
+            file_name=filename,
+            submitted_by=request.user.get_full_name() or request.user.username,
+            source='upload',
+            total_transactions=len(transactions),
+            auto_coded_count=0,
+            flagged_count=len(transactions),
+            confirmed_count=0,
+            is_gst_registered=is_gst,
+            bank_account_name=account_name,
+            bsb=bsb,
+            account_number=account_number,
+            period_start=stmt.get('period_start', ''),
+            period_end=stmt.get('period_end', ''),
+            opening_balance=opening_balance,
+            closing_balance=closing_balance,
+        )
+        job_ids.append(str(job.pk))
+
+        # Bulk create transactions
+        pending_objs = []
+        for txn in transactions:
+            amount = Decimal(str(txn.get('amount', 0)))
+            pending_objs.append(PendingTransaction(
+                job=job,
+                date=txn.get('date', ''),
+                description=txn.get('description', ''),
+                amount=amount,
+                gst_amount=Decimal('0.00'),
+                net_amount=abs(amount),
+                ai_suggested_code='',
+                ai_suggested_name='',
+                ai_suggested_tax_type='',
+                ai_confidence=0,
+                ai_reasoning='',
+                from_learning=False,
+                is_confirmed=False,
+                confirmed_code='',
+                confirmed_name='',
+                confirmed_tax_type='',
+            ))
+        PendingTransaction.objects.bulk_create(pending_objs)
+        total_imported += len(transactions)
+
+        # Log activity
+        ReviewActivity.objects.create(
+            activity_type='new_statement',
+            title='Bank statement imported (verified)',
+            description=f'{client_name} — {len(transactions)} transactions from {filename}',
+        )
+
+        # Dashboard activity log
+        try:
+            from core.models import ActivityLog
+            ActivityLog.objects.create(
+                user=request.user,
+                event_type='bank_upload',
+                title=f'Bank statement imported: {filename}',
+                description=f'{client_name} — {len(transactions)} transactions (verified & imported)',
+                url=f'/review/{job.pk}/',
+            )
+        except Exception:
+            pass
+
+    # Build redirect URL
+    redirect_url = '/'
+    if financial_year_id:
+        from django.urls import reverse
+        try:
+            redirect_url = reverse('core:financial_year_detail', kwargs={'pk': financial_year_id}) + '?tab=review'
+        except Exception:
+            redirect_url = f'/years/{financial_year_id}/?tab=review'
+
+    logger.info(f'[confirm-import] {len(statements)} statements, {total_imported} transactions imported')
+
+    return JsonResponse({
+        'status': 'success',
+        'total_statements': len(statements),
+        'total_transactions': total_imported,
+        'job_ids': job_ids,
+        'redirect': redirect_url,
+    })
