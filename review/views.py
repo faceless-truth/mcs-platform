@@ -538,7 +538,6 @@ def accept_all_suggestions(request, pk):
 def upload_bank_statement(request):
     """
     Handle manual bank statement upload (PDF or Excel).
-    Processes through the same pipeline as email ingestion.
     Accepts period_start and period_end to filter out-of-period transactions.
     Supports multiple files via 'files' field.
     """
