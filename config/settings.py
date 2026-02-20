@@ -178,6 +178,9 @@ SESSION_ENGINE = os.environ.get(
     "django.contrib.sessions.backends.cached_db",
 )
 
+# Webhook secret for n8n integration (set in .env)
+WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
+
 # Security settings (enforced in production)
 if not DEBUG:
     SECURE_BROWSER_XSS_FILTER = True
@@ -185,6 +188,10 @@ if not DEBUG:
     SECURE_SSL_REDIRECT = True
     CSRF_COOKIE_SECURE = True
     X_FRAME_OPTIONS = "DENY"
+    SECURE_HSTS_SECONDS = 31536000
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_REFERRER_POLICY = "strict-origin-when-cross-origin"
 
 # MC&S Logo for financial statement documents
 MCS_LOGO_PATH = BASE_DIR / "static" / "MCSlogo.png"

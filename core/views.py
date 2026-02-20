@@ -68,7 +68,7 @@ def dashboard(request):
             status__in=["draft", "in_review", "reviewed"],
         )
         .select_related("entity", "entity__client")
-        .order_by("entity__client__name", "entity__entity_name", "-period_end")
+        .order_by("entity__client__name", "entity__entity_name", "-end_date")
     )
 
     # Open audit risk flags across all clients I'm working on

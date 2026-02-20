@@ -130,22 +130,30 @@ def _sync_from_airtable():
                 pass
 
             # Create or update the ReviewJob
-            job, created = ReviewJob.objects.update_or_create(
+            existing_job = ReviewJob.objects.filter(
                 client_name=client_name,
                 status__in=["awaiting_review", "in_progress"],
-                defaults={
-                    "entity": entity,
-                    "file_name": f"Bank Statement — {len(records)} transactions",
-                    "submitted_by": accountant_email or "Via bankstatements@mcands.com.au",
-                    "source": "airtable",
-                    "total_transactions": len(records),
-                    "auto_coded_count": len(records),
-                    "flagged_count": len(records),
-                    "confirmed_count": confirmed_count,
-                    "status": job_status,
-                    "is_gst_registered": is_gst,
-                },
-            )
+            ).first()
+            defaults = {
+                "entity": entity,
+                "file_name": f"Bank Statement — {len(records)} transactions",
+                "submitted_by": accountant_email or "Via bankstatements@mcands.com.au",
+                "source": "airtable",
+                "total_transactions": len(records),
+                "auto_coded_count": len(records),
+                "flagged_count": len(records),
+                "confirmed_count": confirmed_count,
+                "status": job_status,
+                "is_gst_registered": is_gst,
+            }
+            if existing_job:
+                for key, value in defaults.items():
+                    setattr(existing_job, key, value)
+                existing_job.save()
+                job, created = existing_job, False
+            else:
+                job = ReviewJob.objects.create(client_name=client_name, **defaults)
+                created = True
 
             if created:
                 ReviewActivity.objects.create(
@@ -297,11 +305,6 @@ def review_dashboard(request):
         greeting = "Good evening"
     first_name = request.user.first_name or request.user.username.capitalize()
 
-    # --- Entity list for upload modal ---
-    entities = Entity.objects.filter(
-        client__in=client_qs
-    ).select_related("client").order_by("entity_name")
-
     context = {
         "greeting": greeting,
         "first_name": first_name,
@@ -312,7 +315,6 @@ def review_dashboard(request):
         "risk_alerts": risk_alerts,
         "unfinalised_years": unfinalised_years,
         "recent_audit_logs": recent_audit_logs,
-        "entities": entities,
     }
     return render(request, "review/dashboard.html", context)
 
@@ -360,7 +362,10 @@ def confirm_transaction(request, pk):
     Updates the local record and pushes to Airtable.
     """
     txn = get_object_or_404(PendingTransaction, pk=pk)
-    data = json.loads(request.body)
+    try:
+        data = json.loads(request.body)
+    except (json.JSONDecodeError, ValueError):
+        return JsonResponse({"status": "error", "message": "Invalid JSON"}, status=400)
 
     txn.confirmed_code = data.get("confirmed_code", "")
     txn.confirmed_name = data.get("confirmed_name", "")
@@ -588,6 +593,16 @@ def upload_bank_statement(request):
         filename = uploaded_file.name
         logger.info(f"Processing file: {filename} ({len(content)} bytes)")
 
+        # Validate file content matches extension (magic bytes)
+        is_pdf_content = content[:5] == b'%PDF-'
+        is_xlsx_content = content[:4] == b'PK\x03\x04'
+        if filename.lower().endswith(".pdf") and not is_pdf_content:
+            errors.append(f"{filename}: File content does not match PDF format")
+            continue
+        if filename.lower().endswith(".xlsx") and not is_xlsx_content:
+            errors.append(f"{filename}: File content does not match Excel format")
+            continue
+
         try:
             if filename.lower().endswith(".pdf"):
                 extracted = extract_transactions_from_pdf_direct(content, filename)
@@ -710,7 +725,7 @@ def upload_bank_statement(request):
                 # Look for bank account lines in the trial balance (common codes: 1-xxxx for bank accounts)
                 bank_tb_lines = TrialBalanceLine.objects.filter(
                     financial_year=fy,
-                    account_code__regex=r'^1-[0-9]',  # Bank accounts typically start with 1-
+                    account_code__regex=r'^1-[0-9]+',  # Bank accounts typically start with 1-
                 )
                 if bank_tb_lines.exists():
                     tb_bank_total = sum(line.net_movement for line in bank_tb_lines)
@@ -900,7 +915,14 @@ def notify_new_review_job(request):
     """
     Webhook endpoint for n8n to notify StatementHub of a new review job.
     POST /api/notify/new-review-job
+    Requires X-Webhook-Secret header matching WEBHOOK_SECRET setting.
     """
+    expected_secret = getattr(settings, "WEBHOOK_SECRET", "")
+    if expected_secret:
+        provided_secret = request.headers.get("X-Webhook-Secret", "")
+        if not provided_secret or provided_secret != expected_secret:
+            return JsonResponse({"status": "error", "message": "Unauthorized"}, status=403)
+
     try:
         data = json.loads(request.body)
 
@@ -976,7 +998,10 @@ def classify_batch(request, pk):
     except json.JSONDecodeError:
         data = {}
 
-    batch_size = min(int(data.get("batch_size", 15)), 30)  # Cap at 30
+    try:
+        batch_size = min(int(data.get("batch_size", 15)), 30)  # Cap at 30
+    except (ValueError, TypeError):
+        batch_size = 15
 
     # Get unclassified transactions (ai_confidence == 0 and no ai_suggested_code)
     unclassified = list(

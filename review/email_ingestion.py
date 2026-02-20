@@ -477,6 +477,11 @@ def classify_transactions(transactions, entity=None, is_gst_registered=True):
         ai_results = _ai_classify_batch(
             unknown_txns, is_gst_registered, entity_type=entity_type
         )
+        if len(ai_results) != len(unknown_indices):
+            logger.warning(
+                f"AI classification count mismatch: expected {len(unknown_indices)}, "
+                f"got {len(ai_results)}. Falling back to Suspense for unmatched."
+            )
         for idx, ai_result in zip(unknown_indices, ai_results):
             results[idx] = {
                 "index": idx,
@@ -491,6 +496,19 @@ def classify_transactions(transactions, entity=None, is_gst_registered=True):
                 "reasoning": ai_result.get("reasoning", ""),
                 "from_learning": False,
             }
+        # Fill any remaining unmatched indices with fallback
+        matched_indices = set(unknown_indices[:len(ai_results)])
+        for idx in unknown_indices:
+            if idx not in matched_indices:
+                results[idx] = {
+                    "index": idx,
+                    "account_code": "0000",
+                    "account_name": "Suspense",
+                    "tax_type": "BAS Excluded" if not is_gst_registered else "GST Free",
+                    "confidence": 0,
+                    "reasoning": "AI classification unavailable",
+                    "from_learning": False,
+                }
 
     return results
 

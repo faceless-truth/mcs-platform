@@ -42,7 +42,10 @@ MONTH_MAP_UPPER = {k.upper(): v for k, v in MONTH_MAP.items()}
 
 def _amt(s):
     """Parse an amount string like '9,109.45' to float."""
-    return float(s.replace(",", ""))
+    try:
+        return float(s.replace(",", ""))
+    except (ValueError, AttributeError):
+        return 0.0
 
 
 def _empty_result():
@@ -92,7 +95,7 @@ CBA_CREDIT_RE = re.compile(
 
 def _cba_date_to_iso(date_str, year):
     parts = date_str.strip().split()
-    if len(parts) != 2:
+    if len(parts) < 2:
         return ""
     day = parts[0].zfill(2)
     month = MONTH_MAP.get(parts[1], "01")

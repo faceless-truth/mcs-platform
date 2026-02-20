@@ -1158,7 +1158,7 @@ class ClientAssociate(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     client = models.ForeignKey(
         Client, on_delete=models.SET_NULL, null=True, blank=True,
-        related_name="associates",
+        related_name="client_associates",
     )
     entity = models.ForeignKey(
         Entity, on_delete=models.CASCADE, null=True, blank=True,
@@ -1206,7 +1206,8 @@ class ClientAssociate(models.Model):
         ordering = ["client", "relationship_type", "name"]
 
     def __str__(self):
-        return f"{self.name} ({self.get_relationship_type_display()}) - {self.client.name}"
+        client_label = self.client.name if self.client else "No Client"
+        return f"{self.name} ({self.get_relationship_type_display()}) - {client_label}"
 
     @property
     def is_family(self):
@@ -1296,7 +1297,8 @@ class AccountingSoftware(models.Model):
 
     def __str__(self):
         entity_label = f" ({self.entity.entity_name})" if self.entity else ""
-        return f"{self.client.name}{entity_label} — {self.get_software_type_display()}"
+        client_label = self.client.name if self.client else "No Client"
+        return f"{client_label}{entity_label} — {self.get_software_type_display()}"
 
 
 # ---------------------------------------------------------------------------
@@ -1384,7 +1386,8 @@ class MeetingNote(models.Model):
         verbose_name_plural = "Meeting Notes"
 
     def __str__(self):
-        return f"{self.meeting_date:%d/%m/%Y} — {self.title} ({self.client.name})"
+        client_label = self.client.name if self.client else "No Client"
+        return f"{self.meeting_date:%d/%m/%Y} — {self.title} ({client_label})"
 
     @property
     def tag_list(self):
