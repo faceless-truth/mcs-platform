@@ -27,7 +27,6 @@ class ReviewJob(models.Model):
     ]
 
     SOURCE_CHOICES = [
-        ("email", "Email Ingestion"),
         ("upload", "Manual Upload"),
         ("airtable", "Airtable Sync"),
     ]
