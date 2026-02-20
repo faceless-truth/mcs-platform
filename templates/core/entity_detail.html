@@ -46,7 +46,7 @@
     </li>
     <li class="nav-item" role="presentation">
         <button class="nav-link" id="officers-tab" data-bs-toggle="tab" data-bs-target="#officers" type="button" role="tab">
-            <i class="bi bi-person-badge"></i> Officers & Signatories
+            <i class="bi bi-person-badge"></i> Directors/Trustees/Beneficiaries
             {% if officers %}
             <span class="badge bg-secondary">{{ officers|length }}</span>
             {% endif %}
@@ -292,7 +292,7 @@
     <!-- ============ OFFICERS & SIGNATORIES TAB ============ -->
     <div class="tab-pane fade" id="officers" role="tabpanel">
         <div class="d-flex justify-content-between align-items-center mb-3">
-            <h5 class="mb-0">Officers & Signatories</h5>
+            <h5 class="mb-0">Directors/Trustees/Beneficiaries</h5>
             {% if user.can_edit %}
             <a href="{% url 'core:entity_officers' pk=entity.pk %}" class="btn btn-sm btn-primary">
                 <i class="bi bi-pencil"></i> Manage Officers

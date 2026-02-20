@@ -249,8 +249,8 @@ class EntityOfficer(models.Model):
 
     class Meta:
         ordering = ["entity", "display_order", "full_name"]
-        verbose_name = "Entity Officer / Signatory"
-        verbose_name_plural = "Entity Officers / Signatories"
+        verbose_name = "Director / Trustee / Beneficiary"
+        verbose_name_plural = "Directors / Trustees / Beneficiaries"
 
     def __str__(self):
         return f"{self.full_name} ({self.get_role_display()}) - {self.entity.entity_name}"

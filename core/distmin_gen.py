@@ -78,10 +78,10 @@ def generate_distribution_minutes(financial_year_id):
     if not trustees.exists():
         raise ValueError(
             f"No active trustees found for {entity.entity_name}. "
-            f"Please add at least one trustee in the Officers section."
+            f"Please add at least one trustee in the Directors/Trustees/Beneficiaries tab."
         )
 
-    # Get chairperson
+    # Get chairperson — must be explicitly ticked in Directors/Trustees/Beneficiaries tab
     chairperson = EntityOfficer.objects.filter(
         entity=entity,
         is_chairperson=True,
@@ -89,8 +89,11 @@ def generate_distribution_minutes(financial_year_id):
     ).first()
 
     if not chairperson:
-        # Fallback: use the first trustee as chairperson
-        chairperson = trustees.first()
+        raise ValueError(
+            f"No chairperson found for {entity.entity_name}. "
+            f"Please tick the Chairperson checkbox for the appropriate person "
+            f"in the Directors/Trustees/Beneficiaries tab."
+        )
 
     # Build trustee name(s) string
     trustee_names = [t.full_name for t in trustees]
