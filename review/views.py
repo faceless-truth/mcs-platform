@@ -750,6 +750,9 @@ def upload_bank_statement(request):
         if balance_warning:
             activity_desc += f" | WARNING: {balance_warning}"
 
+        # Attach warning to job so it can be collected after the loop
+        job._balance_warning = balance_warning
+
         ReviewActivity.objects.create(
             activity_type="new_statement",
             title="Bank statement uploaded",
@@ -806,9 +809,9 @@ def upload_bank_statement(request):
         success_msg += f" Errors: {'; '.join(errors)}"
     django_messages.success(request, success_msg)
 
-    # Show balance warning as a separate warning message
-    if balance_warning:
-        django_messages.warning(request, balance_warning)
+    # Show each balance warning as a separate warning message
+    for warning in all_balance_warnings:
+        django_messages.warning(request, warning)
 
     if is_ajax:
         return JsonResponse({
@@ -817,7 +820,7 @@ def upload_bank_statement(request):
             "jobs_created": len(created_jobs),
             "total_transactions": sum(j.total_transactions for j in created_jobs),
             "errors": errors,
-            "balance_warning": balance_warning,
+            "balance_warnings": all_balance_warnings,
         })
     return redirect(redirect_url)
 
@@ -1322,6 +1325,7 @@ def confirm_import(request):
     and create ReviewJob + PendingTransaction records.
     """
     import json as json_mod
+    from datetime import datetime as dt
 
     try:
         data = json_mod.loads(request.body)
@@ -1335,6 +1339,10 @@ def confirm_import(request):
     if not statements:
         return JsonResponse({'status': 'error', 'message': 'No statements to import'}, status=400)
 
+    # Validate: cap number of statements to prevent abuse
+    if len(statements) > 50:
+        return JsonResponse({'status': 'error', 'message': 'Too many statements (max 50)'}, status=400)
+
     entity = None
     is_gst = True
     client_name = 'Unknown'
@@ -1347,8 +1355,24 @@ def confirm_import(request):
         except Exception:
             pass
 
+    # Validate financial year ownership if provided
+    fy = None
+    if financial_year_id:
+        try:
+            from core.models import FinancialYear
+            fy = FinancialYear.objects.select_related('entity').get(pk=financial_year_id)
+            # Ensure entity matches the financial year's entity
+            if entity and fy.entity_id != entity.pk:
+                return JsonResponse({
+                    'status': 'error',
+                    'message': 'Entity does not match the selected financial year'
+                }, status=400)
+        except Exception:
+            pass
+
     total_imported = 0
     job_ids = []
+    validation_warnings = []
 
     for stmt in statements:
         filename = stmt.get('filename', 'Unknown')
@@ -1356,8 +1380,60 @@ def confirm_import(request):
         if not transactions:
             continue
 
-        opening_balance = Decimal(str(stmt.get('opening_balance', 0)))
-        closing_balance = Decimal(str(stmt.get('closing_balance', 0)))
+        # Validate individual transactions
+        valid_txns = []
+        for txn in transactions:
+            # Must have date and description
+            txn_date = (txn.get('date') or '').strip()
+            txn_desc = (txn.get('description') or '').strip()
+            try:
+                txn_amount = float(txn.get('amount', 0))
+            except (ValueError, TypeError):
+                continue
+
+            if not txn_date or not txn_desc:
+                continue
+
+            # Validate date format (must be parseable)
+            parsed_date = None
+            for fmt in ('%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y', '%d %b %Y', '%d %B %Y'):
+                try:
+                    parsed_date = dt.strptime(txn_date, fmt).date()
+                    break
+                except (ValueError, AttributeError):
+                    continue
+
+            if not parsed_date:
+                continue
+
+            # Validate date is within financial year period if available
+            if fy:
+                if parsed_date < fy.start_date or parsed_date > fy.end_date:
+                    validation_warnings.append(
+                        f'{filename}: Transaction on {txn_date} is outside financial year period'
+                    )
+                    # Still allow it — user may have intentionally kept it
+
+            # Validate amount is not absurdly large (data integrity)
+            if abs(txn_amount) > 999_999_999:
+                continue
+
+            valid_txns.append({
+                'date': txn_date,
+                'description': txn_desc,
+                'amount': txn_amount,
+            })
+
+        transactions = valid_txns
+        if not transactions:
+            continue
+
+        try:
+            opening_balance = Decimal(str(stmt.get('opening_balance', 0)))
+            closing_balance = Decimal(str(stmt.get('closing_balance', 0)))
+        except Exception:
+            opening_balance = Decimal('0')
+            closing_balance = Decimal('0')
         bsb = stmt.get('bsb', '')
         account_number = stmt.get('account_number', '')
         account_name = stmt.get('account_name', '')
@@ -1470,4 +1546,5 @@ def confirm_import(request):
         'total_transactions': total_imported,
         'job_ids': job_ids,
         'redirect': redirect_url,
+        'validation_warnings': validation_warnings,
     })

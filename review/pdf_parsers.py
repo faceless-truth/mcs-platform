@@ -20,6 +20,7 @@ This replaces the Claude-based extraction for near-instant processing.
 import io
 import re
 import logging
+from datetime import date
 from decimal import Decimal
 
 import pdfplumber
@@ -104,7 +105,7 @@ def parse_cba_statement(pdf_content):
     with pdfplumber.open(io.BytesIO(pdf_content)) as pdf:
         all_lines = []
         header_parsed = False
-        year = "2025"
+        year = str(date.today().year)
 
         for page_idx, page in enumerate(pdf.pages):
             text = page.extract_text()
@@ -274,7 +275,7 @@ def parse_anz_statement(pdf_content):
     result = _empty_result()
     pages = _extract_all_text(pdf_content)
     all_lines = []
-    year = "2025"
+    year = str(date.today().year)
 
     # Parse header from page 1
     if pages:
@@ -902,15 +903,53 @@ def parse_nab_statement(pdf_content):
                 else:
                     pending[i]["amount"] = -abs(pending[i]["amount"])
         else:
-            # Fallback: if no exact match, use simple heuristic
-            # (balance went down = all debits, up = all credits)
-            sign = 1 if net_change > 0 else -1
-            for t in pending:
-                t["amount"] = sign * abs(t["amount"])
-            logger.warning(
-                f"NAB sign resolution: no exact subset-sum match for "
-                f"net_change={net_change}, amounts={amounts}. Used heuristic."
-            )
+            # Fallback: smarter heuristic when exact subset-sum fails
+            if n == 1:
+                # Single transaction: sign must match net_change direction
+                pending[0]["amount"] = abs(pending[0]["amount"]) if net_change > 0 else -abs(pending[0]["amount"])
+            else:
+                # Try with relaxed tolerance (rounding errors in OCR)
+                relaxed_best = None
+                for mask in range(1 << n):
+                    total = 0.0
+                    for i in range(n):
+                        if mask & (1 << i):
+                            total += amounts[i]
+                        else:
+                            total -= amounts[i]
+                    if abs(round(total, 2) - net_change) < 1.00:
+                        relaxed_best = mask
+                        break
+
+                if relaxed_best is not None:
+                    for i in range(n):
+                        if relaxed_best & (1 << i):
+                            pending[i]["amount"] = abs(pending[i]["amount"])
+                        else:
+                            pending[i]["amount"] = -abs(pending[i]["amount"])
+                    logger.warning(
+                        f"NAB sign resolution: used relaxed tolerance match for "
+                        f"net_change={net_change}, amounts={amounts}."
+                    )
+                else:
+                    # Last resort: greedy assignment — assign each sign to
+                    # minimise the remaining difference from net_change
+                    remaining = net_change
+                    sorted_idx = sorted(range(n), key=lambda i: amounts[i], reverse=True)
+                    signs = [0] * n
+                    for i in sorted_idx:
+                        if remaining >= 0:
+                            signs[i] = 1
+                            remaining -= amounts[i]
+                        else:
+                            signs[i] = -1
+                            remaining += amounts[i]
+                    for i in range(n):
+                        pending[i]["amount"] = signs[i] * abs(pending[i]["amount"])
+                    logger.warning(
+                        f"NAB sign resolution: no exact subset-sum match for "
+                        f"net_change={net_change}, amounts={amounts}. Used greedy heuristic."
+                    )
 
         transactions.extend(pending)
         pending.clear()
