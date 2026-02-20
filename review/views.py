@@ -1258,7 +1258,7 @@ def parse_statement(request):
     elapsed = round(time.time() - start_time, 2)
     logger.info(f'[parse-statement] {filename}: {len(txn_list)} txns parsed in {elapsed}s (vision={used_vision})')
 
-    return JsonResponse({
+    response_data = {
         'status': 'success',
         'filename': filename,
         'bank': extracted.get('bank', 'Unknown'),
@@ -1276,7 +1276,18 @@ def parse_statement(request):
         'bank_account_info': bank_account_info,
         'elapsed_seconds': elapsed,
         'used_vision_ocr': used_vision,
-    })
+    }
+
+    # Store parsed data in Django session (reliable fallback for sessionStorage)
+    if request.POST.get('clear_session') == '1':
+        request.session.pop('mcs_parsed_statements', None)
+
+    parsed_list = request.session.get('mcs_parsed_statements', [])
+    parsed_list.append(response_data)
+    request.session['mcs_parsed_statements'] = parsed_list
+    request.session.modified = True
+
+    return JsonResponse(response_data)
 
 
 # ---------------------------------------------------------------------------
@@ -1285,9 +1296,8 @@ def parse_statement(request):
 @login_required
 def upload_preview(request):
     """
-    Render the preview page. The actual transaction data is passed from the
-    browser via sessionStorage (populated by the upload modal JS).
-    This view just renders the template shell.
+    Render the preview page. Transaction data is passed via Django session
+    (primary, reliable) with sessionStorage as a browser-side fallback.
     """
     financial_year_id = request.GET.get('fy', '')
     entity_id = request.GET.get('entity', '')
@@ -1308,9 +1318,14 @@ def upload_preview(request):
         except Exception:
             pass
 
+    # Read parsed data from Django session (stored by parse_statement)
+    parsed_data = request.session.get('mcs_parsed_statements', [])
+    # Don't clear yet — allow page refresh. Cleared on confirm_import.
+
     return render(request, 'review/upload_preview.html', {
         'fy': fy,
         'entity': entity,
+        'parsed_data_json': json.dumps(parsed_data),
     })
 
 
@@ -1406,13 +1421,14 @@ def confirm_import(request):
             if not parsed_date:
                 continue
 
-            # Validate date is within financial year period if available
+            # Enforce: transaction must be within financial year period
             if fy:
                 if parsed_date < fy.start_date or parsed_date > fy.end_date:
                     validation_warnings.append(
-                        f'{filename}: Transaction on {txn_date} is outside financial year period'
+                        f'{filename}: Transaction on {txn_date} excluded — outside financial year period '
+                        f'({fy.start_date.strftime("%d/%m/%Y")} to {fy.end_date.strftime("%d/%m/%Y")})'
                     )
-                    # Still allow it — user may have intentionally kept it
+                    continue  # Skip this transaction
 
             # Validate amount is not absurdly large (data integrity)
             if abs(txn_amount) > 999_999_999:
@@ -1537,6 +1553,10 @@ def confirm_import(request):
             redirect_url = reverse('core:financial_year_detail', kwargs={'pk': financial_year_id}) + '?tab=review'
         except Exception:
             redirect_url = f'/years/{financial_year_id}/?tab=review'
+
+    # Clear session data now that import is complete
+    request.session.pop('mcs_parsed_statements', None)
+    request.session.modified = True
 
     logger.info(f'[confirm-import] {len(statements)} statements, {total_imported} transactions imported')
 
