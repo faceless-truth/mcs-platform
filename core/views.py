@@ -419,6 +419,20 @@ def financial_year_detail(request, pk):
         is_confirmed=True,
     ).select_related('job').order_by('date')
 
+    # Activity / Audit trail — all AuditLog entries for this financial year
+    activity_logs = AuditLog.objects.filter(
+        affected_object_id=str(fy.pk),
+    ).select_related('user').order_by('-timestamp')
+    # Also include journal-specific logs (where affected_object_id is a journal PK)
+    journal_pks = list(fy.adjusting_journals.values_list('pk', flat=True))
+    journal_logs = AuditLog.objects.filter(
+        affected_object_id__in=[str(pk) for pk in journal_pks],
+    ).select_related('user').order_by('-timestamp') if journal_pks else AuditLog.objects.none()
+    # Merge and deduplicate, ordered by timestamp descending
+    from itertools import chain
+    all_log_pks = set(activity_logs.values_list('pk', flat=True)) | set(journal_logs.values_list('pk', flat=True))
+    activity_logs = AuditLog.objects.filter(pk__in=all_log_pks).select_related('user').order_by('-timestamp')
+
     context = {
         "fy": fy,
         "entity": fy.entity,
@@ -450,6 +464,8 @@ def financial_year_detail(request, pk):
         # Review
         "pending_review": pending_review,
         "confirmed_review": confirmed_review,
+        # Activity
+        "activity_logs": activity_logs,
     }
     return render(request, "core/financial_year_detail.html", context)
 

@@ -252,6 +252,11 @@
             <i class="bi bi-file-earmark"></i> Documents ({{ documents.count }})
         </button>
     </li>
+    <li class="nav-item">
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-activity" type="button">
+            <i class="bi bi-clock-history"></i> Activity ({{ activity_logs.count }})
+        </button>
+    </li>
 </ul>
 
 <div class="tab-content border border-top-0 rounded-bottom bg-white">
@@ -966,6 +971,97 @@
             <p>No documents generated yet.</p>
         </div>
         {% endfor %}
+    </div>
+
+    <!-- ===== ACTIVITY TAB ===== -->
+    <div class="tab-pane fade p-3" id="tab-activity">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h6 class="mb-0"><i class="bi bi-clock-history"></i> Activity &amp; Audit Trail</h6>
+            <small class="text-muted">All journal activity is permanently logged for audit purposes</small>
+        </div>
+
+        {% if activity_logs %}
+        <div class="table-responsive">
+            <table class="table table-sm table-hover align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width: 160px;">Date &amp; Time</th>
+                        <th style="width: 140px;">Accountant</th>
+                        <th style="width: 120px;">Action</th>
+                        <th>Details</th>
+                        <th style="width: 100px;">Reference</th>
+                        <th style="width: 80px;" class="text-center">View</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for log in activity_logs %}
+                    <tr>
+                        <td>
+                            <span class="fw-semibold">{{ log.timestamp|date:"d M Y" }}</span><br>
+                            <small class="text-muted">{{ log.timestamp|date:"H:i:s" }}</small>
+                        </td>
+                        <td>
+                            {% if log.user %}
+                            <i class="bi bi-person-circle text-primary me-1"></i>
+                            {{ log.user.get_full_name|default:log.user.username }}
+                            {% else %}
+                            <span class="text-muted">System</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if log.action == 'adjustment' %}
+                                {% if 'Posted' in log.description %}
+                                <span class="badge bg-success"><i class="bi bi-check-circle"></i> Posted</span>
+                                {% elif 'Deleted' in log.description %}
+                                <span class="badge bg-danger"><i class="bi bi-trash"></i> Deleted</span>
+                                {% elif 'Created' in log.description %}
+                                <span class="badge bg-info text-dark"><i class="bi bi-plus-circle"></i> Created</span>
+                                {% else %}
+                                <span class="badge bg-secondary">{{ log.get_action_display }}</span>
+                                {% endif %}
+                            {% elif log.action == 'import' %}
+                            <span class="badge bg-primary"><i class="bi bi-upload"></i> Import</span>
+                            {% elif log.action == 'generate' %}
+                            <span class="badge bg-info text-dark"><i class="bi bi-file-earmark"></i> Generated</span>
+                            {% elif log.action == 'status_change' %}
+                            <span class="badge bg-warning text-dark"><i class="bi bi-arrow-repeat"></i> Status Change</span>
+                            {% elif log.action == 'delete' %}
+                            <span class="badge bg-danger"><i class="bi bi-trash"></i> Deleted</span>
+                            {% else %}
+                            <span class="badge bg-secondary">{{ log.get_action_display }}</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ log.description }}</td>
+                        <td>
+                            {% if log.affected_object_id and log.action == 'adjustment' and 'Deleted' not in log.description %}
+                            <code>{{ log.description|truncatewords:2 }}</code>
+                            {% elif log.affected_object_id %}
+                            <code class="text-muted">{{ log.affected_object_id|truncatechars:12 }}</code>
+                            {% else %}
+                            <span class="text-muted">&mdash;</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">
+                            {% if log.affected_object_id and log.action == 'adjustment' and 'Deleted' not in log.description %}
+                            <a href="{% url 'core:journal_detail' pk=log.affected_object_id %}" class="btn btn-sm btn-outline-primary" title="View journal">
+                                <i class="bi bi-eye"></i>
+                            </a>
+                            {% else %}
+                            <span class="text-muted">&mdash;</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-4 text-muted">
+            <i class="bi bi-clock-history" style="font-size: 2.5rem;"></i>
+            <p class="mt-2">No activity recorded yet for this financial year.</p>
+            <p class="small">Activity will appear here as journals are created, posted, or deleted.</p>
+        </div>
+        {% endif %}
     </div>
 
 </div>
