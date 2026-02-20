@@ -4,9 +4,14 @@ StatementHub — Distribution Minutes Document Generator
 Generates distribution minutes from the Distmin.docx template by replacing
 placeholders with actual entity data:
   - [add trustee or trustees here] → Trustee name(s) from EntityOfficer
-  - [add chairperson here] → Chairperson name from EntityOfficer (is_chairperson=True)
+  - [add chairperson here] → Chairperson name from EntityOfficer
   - [current financial year] → Financial year (e.g. "2025")
   - Trust name in "As Trustee for the ..." line → actual entity name
+
+Roles are stored in the `roles` JSONField on EntityOfficer as a list of
+role strings, e.g. ["trustee"], ["beneficiary", "chairperson"].
+The code checks both the `roles` JSONField and the legacy `role` CharField
+for backward compatibility.
 """
 import io
 import copy
@@ -50,6 +55,16 @@ def _replace_in_table(table, replacements):
                 _replace_in_paragraph(paragraph, replacements)
 
 
+def _officer_has_role(officer, role_value):
+    """
+    Check if an officer has a specific role.
+    Checks the `roles` JSONField first, then falls back to the legacy `role` CharField.
+    """
+    if officer.roles:
+        return role_value in officer.roles
+    return officer.role == role_value
+
+
 def generate_distribution_minutes(financial_year_id):
     """
     Generate distribution minutes for a given financial year.
@@ -68,30 +83,39 @@ def generate_distribution_minutes(financial_year_id):
     fy = FinancialYear.objects.select_related("entity").get(pk=financial_year_id)
     entity = fy.entity
 
-    # Get active trustees for this entity
-    trustees = EntityOfficer.objects.filter(
+    # Get ALL active officers for this entity
+    all_officers = EntityOfficer.objects.filter(
         entity=entity,
-        role=EntityOfficer.OfficerRole.TRUSTEE,
         date_ceased__isnull=True,
     ).order_by("display_order", "full_name")
 
-    if not trustees.exists():
+    # Find trustees — check both `roles` JSONField and legacy `role` field
+    trustees = [o for o in all_officers if _officer_has_role(o, "trustee")]
+
+    if not trustees:
         raise ValueError(
             f"No active trustees found for {entity.entity_name}. "
             f"Please add at least one trustee in the Directors/Trustees/Beneficiaries tab."
         )
 
-    # Get chairperson — must be explicitly ticked in Directors/Trustees/Beneficiaries tab
-    chairperson = EntityOfficer.objects.filter(
-        entity=entity,
-        is_chairperson=True,
-        date_ceased__isnull=True,
-    ).first()
+    # Find chairperson — check `roles` JSONField first, then `is_chairperson` boolean as fallback
+    chairperson = None
+    for o in all_officers:
+        if _officer_has_role(o, "chairperson"):
+            chairperson = o
+            break
+
+    # Fallback: check the is_chairperson boolean field
+    if not chairperson:
+        for o in all_officers:
+            if getattr(o, 'is_chairperson', False):
+                chairperson = o
+                break
 
     if not chairperson:
         raise ValueError(
             f"No chairperson found for {entity.entity_name}. "
-            f"Please tick the Chairperson checkbox for the appropriate person "
+            f"Please assign the Chairperson role to the appropriate person "
             f"in the Directors/Trustees/Beneficiaries tab."
         )
 

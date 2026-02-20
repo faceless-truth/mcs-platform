@@ -209,6 +209,7 @@ class EntityOfficer(models.Model):
         SECRETARY = "secretary", "Secretary"
         PUBLIC_OFFICER = "public_officer", "Public Officer"
         SOLE_TRADER = "sole_trader", "Sole Trader / Proprietor"
+        CHAIRPERSON = "chairperson", "Chairperson"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     entity = models.ForeignKey(
@@ -216,6 +217,10 @@ class EntityOfficer(models.Model):
     )
     full_name = models.CharField(max_length=255)
     role = models.CharField(max_length=20, choices=OfficerRole.choices)
+    roles = models.JSONField(
+        default=list, blank=True,
+        help_text="Multiple roles for this person, e.g. ['trustee', 'beneficiary']",
+    )
     title = models.CharField(
         max_length=50, blank=True,
         help_text='Optional title, e.g. "Managing Director", "Senior Partner"',
@@ -253,7 +258,27 @@ class EntityOfficer(models.Model):
         verbose_name_plural = "Directors / Trustees / Beneficiaries"
 
     def __str__(self):
+        if self.roles:
+            role_labels = ', '.join(
+                dict(self.OfficerRole.choices).get(r, r.title()) for r in self.roles
+            )
+            return f"{self.full_name} ({role_labels}) - {self.entity.entity_name}"
         return f"{self.full_name} ({self.get_role_display()}) - {self.entity.entity_name}"
+
+    @property
+    def roles_display(self):
+        """Return a human-readable comma-separated list of all roles."""
+        if self.roles:
+            return ', '.join(
+                dict(self.OfficerRole.choices).get(r, r.title()) for r in self.roles
+            )
+        return self.get_role_display()
+
+    def has_role(self, role_value):
+        """Check if this officer has a specific role (checks both roles list and legacy role field)."""
+        if self.roles:
+            return role_value in self.roles
+        return self.role == role_value
 
     @property
     def is_active(self):
