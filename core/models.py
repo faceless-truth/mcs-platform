@@ -8,6 +8,7 @@ import uuid
 from django.conf import settings
 from django.db import models
 from django.urls import reverse
+from config.encryption import EncryptedCharField
 
 
 # ---------------------------------------------------------------------------
@@ -149,13 +150,13 @@ class Entity(models.Model):
         max_length=100, blank=True, verbose_name="XPM Client ID",
         help_text="Xero Practice Manager reference",
     )
-    contact_phone = models.CharField(
-        max_length=50, blank=True,
+    contact_phone = EncryptedCharField(
+        max_length=255, blank=True,
         help_text="Primary contact phone for this entity",
     )
-    tfn = models.CharField(
-        max_length=20, blank=True, verbose_name="TFN",
-        help_text="Tax File Number",
+    tfn = EncryptedCharField(
+        max_length=255, blank=True, verbose_name="TFN",
+        help_text="Tax File Number (encrypted at rest)",
     )
     address_line_1 = models.CharField(
         max_length=255, blank=True,
@@ -947,6 +948,7 @@ class AuditLog(models.Model):
     """
 
     class Action(models.TextChoices):
+        VIEW = "view", "View"
         LOGIN = "login", "User Login"
         LOGOUT = "logout", "User Logout"
         IMPORT = "import", "Data Import"

@@ -116,6 +116,14 @@ class InvitationSignupForm(forms.Form):
             self.add_error("password2", "Passwords do not match.")
         if p1 and len(p1) < 12:
             self.add_error("password1", "Password must be at least 12 characters.")
+        if p1:
+            from django.contrib.auth.password_validation import validate_password
+            from django.core.exceptions import ValidationError as DjangoValidationError
+            try:
+                validate_password(p1)
+            except DjangoValidationError as e:
+                for error in e.messages:
+                    self.add_error("password1", error)
         return cleaned_data
 
 

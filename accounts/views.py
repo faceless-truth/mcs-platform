@@ -1,17 +1,22 @@
 """MCS Platform - Account Views with Invitation-Based Signup and TOTP 2FA"""
 import io
 import base64
+import logging
 import pyotp
 import qrcode
 from django.conf import settings
 from django.contrib.auth import views as auth_views, login as auth_login
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.mail import send_mail
 from django.shortcuts import render, redirect, get_object_or_404
 from django.template.loader import render_to_string
 from django.utils import timezone
+from django.utils.decorators import method_decorator
 from django.utils.html import strip_tags
+from django_ratelimit.decorators import ratelimit
 
 from .models import User, Invitation
 from .forms import (
@@ -23,11 +28,14 @@ from .forms import (
     UserEditForm,
 )
 
+logger = logging.getLogger(__name__)
+
 
 # ---------------------------------------------------------------------------
 # Login with 2FA
 # ---------------------------------------------------------------------------
 
+@method_decorator(ratelimit(key='ip', rate='5/m', method='POST'), name='dispatch')
 class MCSLoginView(auth_views.LoginView):
     """
     Step 1 of login: username + password.
@@ -49,6 +57,7 @@ class MCSLoginView(auth_views.LoginView):
         return super().form_valid(form)
 
 
+@ratelimit(key='ip', rate='5/m', method='POST')
 def totp_verify_view(request):
     """
     Step 2 of login: TOTP verification.
@@ -69,6 +78,8 @@ def totp_verify_view(request):
                 # Code valid — complete login
                 del request.session["2fa_user_pk"]
                 next_url = request.session.pop("2fa_next", "")
+                # Cycle session key to prevent session fixation
+                request.session.cycle_key()
                 auth_login(request, user)
                 return redirect(next_url or settings.LOGIN_REDIRECT_URL)
             else:
@@ -197,9 +208,10 @@ def _send_invitation_email(request, invitation):
         )
     except Exception as e:
         # Log but don't crash — the invitation link is still valid
+        logger.error(f"Failed to send invitation email to {invitation.email}: {e}")
         messages.warning(
             request,
-            f"Invitation created but email could not be sent ({e}). "
+            f"Invitation created but email could not be sent. "
             f"You can share the signup link manually: {signup_url}"
         )
 
@@ -351,3 +363,50 @@ def user_reset_2fa(request, pk):
     user.save(update_fields=["totp_secret", "totp_confirmed"])
     messages.success(request, f"2FA reset for {user.get_full_name() or user.username}. They will need to set up 2FA again.")
     return redirect("accounts:user_list")
+
+
+@login_required
+def setup_2fa_view(request):
+    """Mandatory 2FA setup for users without TOTP configured."""
+    user = request.user
+    if user.has_2fa:
+        return redirect(settings.LOGIN_REDIRECT_URL)
+
+    # Generate or reuse TOTP secret
+    if "setup_totp_secret" not in request.session:
+        request.session["setup_totp_secret"] = pyotp.random_base32()
+
+    totp_secret = request.session["setup_totp_secret"]
+    totp = pyotp.TOTP(totp_secret)
+    provisioning_uri = totp.provisioning_uri(
+        name=user.email or user.username,
+        issuer_name="StatementHub",
+    )
+
+    # Generate QR code
+    qr_img = qrcode.make(provisioning_uri, box_size=6, border=2)
+    buffer = io.BytesIO()
+    qr_img.save(buffer, format="PNG")
+    qr_base64 = base64.b64encode(buffer.getvalue()).decode()
+
+    if request.method == "POST":
+        form = TOTPVerifyForm(request.POST)
+        if form.is_valid():
+            code = form.cleaned_data["totp_code"]
+            if totp.verify(code, valid_window=1):
+                user.totp_secret = totp_secret
+                user.totp_confirmed = True
+                user.save(update_fields=["totp_secret", "totp_confirmed"])
+                del request.session["setup_totp_secret"]
+                messages.success(request, "Two-factor authentication has been enabled for your account.")
+                return redirect(settings.LOGIN_REDIRECT_URL)
+            else:
+                form.add_error("totp_code", "Invalid code. Please try again.")
+    else:
+        form = TOTPVerifyForm()
+
+    return render(request, "accounts/setup_2fa.html", {
+        "form": form,
+        "qr_base64": qr_base64,
+        "totp_secret": totp_secret,
+    })

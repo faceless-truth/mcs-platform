@@ -30,6 +30,7 @@ INSTALLED_APPS = [
     "django_htmx",
     "crispy_forms",
     "crispy_bootstrap5",
+    "csp",
     # Local apps
     "accounts.apps.AccountsConfig",
     "core.apps.CoreConfig",
@@ -39,6 +40,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "csp.middleware.CSPMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -47,6 +49,7 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "django_htmx.middleware.HtmxMiddleware",
+    "config.middleware.Require2FAMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -129,13 +132,18 @@ SESSION_COOKIE_AGE = 1800  # 30 minutes
 SESSION_SAVE_EVERY_REQUEST = True  # Reset timeout on activity
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SECURE = not DEBUG
+SESSION_COOKIE_SAMESITE = "Lax"
 
-# CSRF trusted origins (for proxy/tunnel access)
+# CSRF trusted origins (configured via environment)
 CSRF_TRUSTED_ORIGINS = [
-    "https://*.manus.computer",
-    "https://statementhub.com.au",
-    "https://www.statementhub.com.au",
+    origin.strip()
+    for origin in os.environ.get(
+        "CSRF_TRUSTED_ORIGINS",
+        "https://statementhub.com.au,https://www.statementhub.com.au",
+    ).split(",")
+    if origin.strip()
 ]
+CSRF_COOKIE_SAMESITE = "Lax"
 
 # Email configuration
 # Development: console backend (emails printed to terminal)
@@ -188,16 +196,43 @@ if not DEBUG:
     SECURE_SSL_REDIRECT = True
     CSRF_COOKIE_SECURE = True
     X_FRAME_OPTIONS = "DENY"
+    # HSTS — tell browsers to only use HTTPS for 1 year
     SECURE_HSTS_SECONDS = 31536000
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
     SECURE_REFERRER_POLICY = "strict-origin-when-cross-origin"
+
+# File upload limits (prevent memory exhaustion)
+FILE_UPLOAD_MAX_MEMORY_SIZE = 20 * 1024 * 1024  # 20MB
+DATA_UPLOAD_MAX_MEMORY_SIZE = 20 * 1024 * 1024  # 20MB
+DATA_UPLOAD_MAX_NUMBER_FIELDS = 5000
+
+# Content Security Policy (via django-csp 4.x)
+CONTENT_SECURITY_POLICY = {
+    "DIRECTIVES": {
+        "default-src": ("'self'",),
+        "style-src": ("'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net", "https://fonts.googleapis.com"),
+        "script-src": ("'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net", "https://unpkg.com"),
+        "font-src": ("'self'", "https://cdn.jsdelivr.net", "https://fonts.gstatic.com"),
+        "img-src": ("'self'", "data:"),
+        "connect-src": ("'self'",),
+    }
+}
+
+# Database SSL in production
+if not DEBUG and "sqlite" not in DATABASES["default"].get("ENGINE", ""):
+    DATABASES["default"].setdefault("OPTIONS", {})["sslmode"] = os.environ.get("DB_SSLMODE", "prefer")
 
 # MC&S Logo for financial statement documents
 MCS_LOGO_PATH = BASE_DIR / "static" / "MCSlogo.png"
 
 # Airtable integration (for Bank Statement Review module)
 AIRTABLE_API_KEY = os.environ.get("AIRTABLE_API_KEY", "")
+# Airtable table configuration (moved from hardcoded values in views)
+AIRTABLE_BASE_ID = os.environ.get("AIRTABLE_BASE_ID", "")
+AIRTABLE_PENDING_TABLE = os.environ.get("AIRTABLE_PENDING_TABLE", "")
+AIRTABLE_JOBS_TABLE = os.environ.get("AIRTABLE_JOBS_TABLE", "")
+AIRTABLE_LEARNING_TABLE = os.environ.get("AIRTABLE_LEARNING_TABLE", "")
 
 # Accounting platform integrations (OAuth2 credentials)
 # Xero (Accounting + Practice Manager)

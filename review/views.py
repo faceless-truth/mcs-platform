@@ -18,7 +18,10 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
+from django_ratelimit.decorators import ratelimit
 
+from config.webhook_auth import verify_webhook
+from config.authorization import get_review_job_for_user
 from .models import PendingTransaction, ReviewActivity, ReviewJob, TransactionPattern
 
 logger = logging.getLogger(__name__)
@@ -28,10 +31,10 @@ logger = logging.getLogger(__name__)
 # Airtable configuration
 # ---------------------------------------------------------------------------
 
-AIRTABLE_BASE_ID = "appCIoC2AVqJ3axMG"
-AIRTABLE_PENDING_TABLE = "tbl9XbFuVooVtBu2G"
-AIRTABLE_JOBS_TABLE = "tblVXkcc3wFQCvQyv"
-AIRTABLE_LEARNING_TABLE = "tblDO2k2wB3OSFBxa"
+AIRTABLE_BASE_ID = getattr(settings, "AIRTABLE_BASE_ID", "")
+AIRTABLE_PENDING_TABLE = getattr(settings, "AIRTABLE_PENDING_TABLE", "")
+AIRTABLE_JOBS_TABLE = getattr(settings, "AIRTABLE_JOBS_TABLE", "")
+AIRTABLE_LEARNING_TABLE = getattr(settings, "AIRTABLE_LEARNING_TABLE", "")
 
 
 def _get_airtable_headers():
@@ -326,7 +329,7 @@ def review_detail(request, pk):
     Shows all flagged transactions with account picker, tax type dropdowns,
     and GST breakdown columns for GST-registered entities.
     """
-    job = get_object_or_404(ReviewJob, pk=pk)
+    job = get_review_job_for_user(request, pk)
     transactions = job.transactions.all().order_by("date", "description")
 
     # Get entity-type-specific chart of accounts for the picker
@@ -367,9 +370,21 @@ def confirm_transaction(request, pk):
     except (json.JSONDecodeError, ValueError):
         return JsonResponse({"status": "error", "message": "Invalid JSON"}, status=400)
 
-    txn.confirmed_code = data.get("confirmed_code", "")
-    txn.confirmed_name = data.get("confirmed_name", "")
-    txn.confirmed_tax_type = data.get("confirmed_tax_type", "")
+    # Validate input lengths and content
+    confirmed_code = data.get("confirmed_code", "")[:20]
+    confirmed_name = data.get("confirmed_name", "")[:255]
+    confirmed_tax_type = data.get("confirmed_tax_type", "")[:50]
+
+    VALID_TAX_TYPES = {
+        "", "GST on Income", "GST on Expenses", "Input Taxed", "N-T",
+        "GST Free Income", "GST Free Expenses", "BAS Excluded",
+    }
+    if confirmed_tax_type and confirmed_tax_type not in VALID_TAX_TYPES:
+        return JsonResponse({"status": "error", "message": "Invalid tax type"}, status=400)
+
+    txn.confirmed_code = confirmed_code
+    txn.confirmed_name = confirmed_name
+    txn.confirmed_tax_type = confirmed_tax_type
     txn.is_confirmed = True
 
     # Recalculate GST based on confirmed tax type
@@ -908,19 +923,20 @@ def _parse_excel_bank_statement(content, filename):
 # Webhook endpoint (called by n8n)
 # ---------------------------------------------------------------------------
 
+@ratelimit(key='ip', rate='5/m', method='POST')
 @csrf_exempt
 @require_POST
 def notify_new_review_job(request):
     """
     Webhook endpoint for n8n to notify StatementHub of a new review job.
     POST /api/notify/new-review-job
-    Requires X-Webhook-Secret header matching WEBHOOK_SECRET setting.
+
+    Authentication: HMAC-SHA256 signature or Bearer token (via WEBHOOK_SECRET).
     """
-    expected_secret = getattr(settings, "WEBHOOK_SECRET", "")
-    if expected_secret:
-        provided_secret = request.headers.get("X-Webhook-Secret", "")
-        if not provided_secret or provided_secret != expected_secret:
-            return JsonResponse({"status": "error", "message": "Unauthorized"}, status=403)
+    # Verify webhook authentication
+    is_valid, error_response = verify_webhook(request)
+    if not is_valid:
+        return error_response
 
     try:
         data = json.loads(request.body)
@@ -961,8 +977,8 @@ def notify_new_review_job(request):
 
         return JsonResponse({"status": "ok", "job_id": str(job.id)})
     except Exception as e:
-        logger.error(f"Webhook error: {e}")
-        return JsonResponse({"status": "error", "message": str(e)}, status=400)
+        logger.error(f"Webhook error: {e}", exc_info=True)
+        return JsonResponse({"status": "error", "message": "An internal error occurred"}, status=400)
 
 
 # ---------------------------------------------------------------------------
@@ -990,7 +1006,7 @@ def classify_batch(request, pk):
     """
     from .email_ingestion import classify_transactions
 
-    job = get_object_or_404(ReviewJob, pk=pk)
+    job = get_review_job_for_user(request, pk)
 
     try:
         data = json.loads(request.body) if request.body else {}
@@ -1138,6 +1154,7 @@ def classify_batch(request, pk):
 # ---------------------------------------------------------------------------
 # Parse-only endpoint (returns JSON, does NOT save to DB)
 # ---------------------------------------------------------------------------
+@ratelimit(key='user', rate='10/m', method='POST')
 @login_required
 @require_POST
 def parse_statement(request):
@@ -1170,6 +1187,23 @@ def parse_statement(request):
             period_end_date = dt.strptime(period_end_str, '%Y-%m-%d').date()
     except ValueError:
         pass
+
+    # Validate file size (20MB limit)
+    if uploaded_file.size > 20 * 1024 * 1024:
+        return JsonResponse(
+            {"status": "error", "message": "File too large. Maximum size is 20MB."},
+            status=400,
+        )
+
+    # Validate file type
+    allowed_extensions = {".pdf", ".xlsx", ".xls", ".csv"}
+    import os as _os
+    file_ext = _os.path.splitext(uploaded_file.name)[1].lower()
+    if file_ext not in allowed_extensions:
+        return JsonResponse(
+            {"status": "error", "message": f"Unsupported file type: {file_ext}. Allowed: PDF, Excel, CSV."},
+            status=400,
+        )
 
     content = uploaded_file.read()
     filename = uploaded_file.name

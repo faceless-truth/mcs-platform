@@ -5,6 +5,7 @@ from django.contrib.auth.models import AbstractUser
 from django.db import models
 from django.utils import timezone
 from datetime import timedelta
+from config.encryption import EncryptedCharField
 
 
 class User(AbstractUser):
@@ -29,7 +30,7 @@ class User(AbstractUser):
     is_active = models.BooleanField(default=True)
 
     # TOTP 2FA fields
-    totp_secret = models.CharField(max_length=64, blank=True, default="")
+    totp_secret = EncryptedCharField(max_length=255, blank=True, default="")
     totp_confirmed = models.BooleanField(
         default=False,
         help_text="Whether the user has confirmed their TOTP setup by entering a valid code.",

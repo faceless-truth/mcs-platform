@@ -8,6 +8,7 @@ import uuid
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
+from config.encryption import EncryptedCharField, EncryptedTextField
 
 
 class AccountingConnection(models.Model):
@@ -40,8 +41,8 @@ class AccountingConnection(models.Model):
     )
 
     # OAuth2 tokens
-    access_token = models.TextField(blank=True, default="")
-    refresh_token = models.TextField(blank=True, default="")
+    access_token = EncryptedTextField(blank=True, default="")
+    refresh_token = EncryptedTextField(blank=True, default="")
     token_expires_at = models.DateTimeField(null=True, blank=True)
 
     # Provider-specific identifiers
@@ -156,8 +157,8 @@ class XPMConnection(models.Model):
     )
 
     # OAuth2 tokens
-    access_token = models.TextField(blank=True, default="")
-    refresh_token = models.TextField(blank=True, default="")
+    access_token = EncryptedTextField(blank=True, default="")
+    refresh_token = EncryptedTextField(blank=True, default="")
     token_expires_at = models.DateTimeField(null=True, blank=True)
 
     # Xero tenant
@@ -276,8 +277,8 @@ class XeroGlobalConnection(models.Model):
     )
 
     # OAuth2 tokens
-    access_token = models.TextField(blank=True, default="")
-    refresh_token = models.TextField(blank=True, default="")
+    access_token = EncryptedTextField(blank=True, default="")
+    refresh_token = EncryptedTextField(blank=True, default="")
     token_expires_at = models.DateTimeField(null=True, blank=True)
 
     # Audit
@@ -377,8 +378,8 @@ class QBGlobalConnection(models.Model):
     )
 
     # OAuth2 tokens (updated with each new company connection)
-    access_token = models.TextField(blank=True, default="")
-    refresh_token = models.TextField(blank=True, default="")
+    access_token = EncryptedTextField(blank=True, default="")
+    refresh_token = EncryptedTextField(blank=True, default="")
     token_expires_at = models.DateTimeField(null=True, blank=True)
 
     # Audit
@@ -432,8 +433,8 @@ class QBTenant(models.Model):
     )
 
     # Each QBO company has its own tokens
-    access_token = models.TextField(blank=True, default="")
-    refresh_token = models.TextField(blank=True, default="")
+    access_token = EncryptedTextField(blank=True, default="")
+    refresh_token = EncryptedTextField(blank=True, default="")
     token_expires_at = models.DateTimeField(null=True, blank=True)
 
     # Link to StatementHub entity
@@ -486,8 +487,8 @@ class MYOBGlobalConnection(models.Model):
     )
 
     # OAuth2 tokens
-    access_token = models.TextField(blank=True, default="")
-    refresh_token = models.TextField(blank=True, default="")
+    access_token = EncryptedTextField(blank=True, default="")
+    refresh_token = EncryptedTextField(blank=True, default="")
     token_expires_at = models.DateTimeField(null=True, blank=True)
 
     # Audit
@@ -545,14 +546,14 @@ class MYOBCompanyFile(models.Model):
         help_text="MYOB company file ID",
     )
 
-    # Company file credentials (stored encrypted in production)
-    cf_username = models.CharField(
-        max_length=255, blank=True, default="Administrator",
+    # Company file credentials (encrypted at rest)
+    cf_username = EncryptedCharField(
+        max_length=500, blank=True, default="Administrator",
         help_text="Company file username",
     )
-    cf_password = models.CharField(
-        max_length=255, blank=True, default="",
-        help_text="Company file password",
+    cf_password = EncryptedCharField(
+        max_length=500, blank=True, default="",
+        help_text="Company file password (encrypted at rest)",
     )
 
     # Link to StatementHub entity
