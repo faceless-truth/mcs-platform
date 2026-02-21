@@ -937,7 +937,7 @@ def import_access_ledger_zip(zip_file, client=None, entity=None, replace_existin
         reader.close()
         return result
 
-    logger.info(f"Entity: {entity_name} ({entity_info['entity_type']})")
+    logger.info(f"Processing entity (type={entity_info['entity_type']})")
 
     # --- Step 2: Create or find Entity ---
     if entity is None:

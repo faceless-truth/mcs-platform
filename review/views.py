@@ -605,7 +605,7 @@ def upload_bank_statement(request):
     for uploaded_file in uploaded_files:
         content = uploaded_file.read()
         filename = uploaded_file.name
-        logger.info(f"Processing file: {filename} ({len(content)} bytes)")
+        logger.info(f"Processing file ({len(content)} bytes, entity_id={entity_id})")
 
         # Validate file content matches extension (magic bytes)
         is_pdf_content = content[:5] == b'%PDF-'
@@ -623,11 +623,11 @@ def upload_bank_statement(request):
             else:
                 extracted = _parse_excel_bank_statement(content, filename)
         except Exception as exc:
-            logger.error(f"Extraction exception for {filename}: {exc}", exc_info=True)
+            logger.error(f"Extraction exception (entity_id={entity_id}): {exc}", exc_info=True)
             errors.append(f"{filename}: Extraction error — {exc}")
             continue
 
-        logger.info(f"Extraction result for {filename}: {type(extracted)} — keys={list(extracted.keys()) if isinstance(extracted, dict) else 'N/A'} — txn_count={len(extracted.get('transactions', [])) if isinstance(extracted, dict) else 0}")
+        logger.info(f"Extraction result (entity_id={entity_id}): txn_count={len(extracted.get('transactions', [])) if isinstance(extracted, dict) else 0}")
 
         if not extracted or not extracted.get("transactions"):
             errors.append(f"{filename}: No transactions could be extracted")
@@ -750,7 +750,7 @@ def upload_bank_statement(request):
                             f"differs from trial balance bank total (${tb_bank_total:,.2f}) "
                             f"by ${difference:,.2f}. Please investigate — you may have missed a bank statement."
                         )
-                        logger.warning(f"Balance mismatch for {client_name}: {balance_warning}")
+                        logger.warning(f"Balance mismatch for entity_id={entity_id}, fy_id={financial_year_id}: difference=${difference:,.2f}")
                         # Create a risk flag if the model exists
                         try:
                             from core.models import RiskFlag
@@ -766,7 +766,7 @@ def upload_bank_statement(request):
                             logger.error(f"Could not create risk flag: {e}")
                 else:
                     # No bank lines in TB yet — store the opening balance as the reference point
-                    logger.info(f"No bank lines in TB for {client_name}. Opening balance ${user_opening_balance:,.2f} will be the reference.")
+                    logger.info(f"No bank lines in TB for entity_id={entity_id}. Opening balance stored as reference.")
             except Exception as e:
                 logger.error(f"Balance cross-check error: {e}")
 

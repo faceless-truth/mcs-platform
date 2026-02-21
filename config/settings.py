@@ -223,6 +223,27 @@ CONTENT_SECURITY_POLICY = {
 if not DEBUG and "sqlite" not in DATABASES["default"].get("ENGINE", ""):
     DATABASES["default"].setdefault("OPTIONS", {})["sslmode"] = os.environ.get("DB_SSLMODE", "prefer")
 
+# Logging — scrub PII (emails, TFNs, phone numbers) from all log output
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "filters": {
+        "sensitive_data": {
+            "()": "config.log_filters.SensitiveDataFilter",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "filters": ["sensitive_data"],
+        },
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": os.environ.get("LOG_LEVEL", "INFO"),
+    },
+}
+
 # MC&S Logo for financial statement documents
 MCS_LOGO_PATH = BASE_DIR / "static" / "MCSlogo.png"
 

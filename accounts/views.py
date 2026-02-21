@@ -208,7 +208,7 @@ def _send_invitation_email(request, invitation):
         )
     except Exception as e:
         # Log but don't crash — the invitation link is still valid
-        logger.error(f"Failed to send invitation email to {invitation.email}: {e}")
+        logger.error(f"Failed to send invitation email (invitation_id={invitation.pk}): {e}")
         messages.warning(
             request,
             f"Invitation created but email could not be sent. "
