@@ -5,9 +5,9 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies (including libmagic for python-magic)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq-dev gcc && \
+    libpq-dev gcc libmagic1 && \
     rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
@@ -19,6 +19,11 @@ COPY . .
 
 # Collect static files
 RUN python manage.py collectstatic --noinput 2>/dev/null || true
+
+# Create non-root user
+RUN addgroup --system app && adduser --system --ingroup app app && \
+    chown -R app:app /app
+USER app
 
 EXPOSE 8000
 

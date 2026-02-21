@@ -23,6 +23,7 @@ from .forms import (
     EntityOfficerForm, ClientAssociateForm, AccountingSoftwareForm,
     MeetingNoteForm,
 )
+from config.authorization import get_entity_for_user, get_financial_year_for_user
 
 
 def _log_action(request, action, description, obj=None):
@@ -223,7 +224,9 @@ def entity_create(request, client_pk=None):
 
 @login_required
 def entity_detail(request, pk):
-    entity = get_object_or_404(Entity, pk=pk)
+    entity = get_entity_for_user(request, pk)
+    # Audit log: data access
+    _log_action(request, "view", f"Viewed entity: {entity.entity_name}", entity)
     financial_years = entity.financial_years.all()
     officers = entity.officers.all().order_by('date_ceased', 'full_name')
     unfinalised_count = financial_years.exclude(status="finalised").count()
@@ -251,7 +254,7 @@ def entity_detail(request, pk):
 
 @login_required
 def entity_edit(request, pk):
-    entity = get_object_or_404(Entity, pk=pk)
+    entity = get_entity_for_user(request, pk)
     if not request.user.can_edit:
         messages.error(request, "You do not have permission to edit entities.")
         return redirect("core:entity_detail", pk=pk)
@@ -301,10 +304,9 @@ def financial_year_create(request, entity_pk):
 
 @login_required
 def financial_year_detail(request, pk):
-    fy = get_object_or_404(
-        FinancialYear.objects.select_related("entity", "entity__client", "prior_year"),
-        pk=pk,
-    )
+    fy = get_financial_year_for_user(request, pk)
+    # Audit log: data access
+    _log_action(request, "view", f"Viewed financial year: {fy.year_label} for {fy.entity.entity_name}", fy)
     tb_lines = fy.trial_balance_lines.select_related("mapped_line_item").all()
     adjustments = fy.adjusting_journals.all()
     unmapped_count = tb_lines.filter(mapped_line_item__isnull=True).count()
@@ -473,7 +475,7 @@ def financial_year_detail(request, pk):
 @login_required
 def financial_year_status(request, pk):
     """Change the status of a financial year."""
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     new_status = request.POST.get("status")
 
     if not new_status or new_status not in dict(FinancialYear.Status.choices):
@@ -617,7 +619,7 @@ def roll_forward(request, pk):
 # ---------------------------------------------------------------------------
 @login_required
 def trial_balance_import(request, pk):
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
 
     if fy.is_locked:
         messages.error(request, "Cannot import into a finalised financial year.")
@@ -630,7 +632,20 @@ def trial_balance_import(request, pk):
     if request.method == "POST":
         form = TrialBalanceUploadForm(request.POST, request.FILES)
         if form.is_valid():
-            file = request.FILES["file"]
+            uploaded_file = request.FILES["file"]
+
+            # Validate file type and size
+            if uploaded_file.size > 20 * 1024 * 1024:
+                messages.error(request, "File too large. Maximum size is 20MB.")
+                return redirect("core:financial_year_detail", pk=pk)
+
+            import os as _os
+            file_ext = _os.path.splitext(uploaded_file.name)[1].lower()
+            if file_ext not in {".xlsx", ".xls"}:
+                messages.error(request, f"Unsupported file type: {file_ext}. Only Excel files (.xlsx) are supported.")
+                return redirect("core:financial_year_detail", pk=pk)
+
+            file = uploaded_file
             try:
                 result = _process_trial_balance_upload(fy, file)
                 _log_action(request, "import", f"Imported trial balance: {result['imported']} lines", fy)

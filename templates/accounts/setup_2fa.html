@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+
+{% block title %}Set Up Two-Factor Authentication{% endblock %}
+
+{% block content %}
+<div class="container py-5">
+    <div class="row justify-content-center">
+        <div class="col-md-6">
+            <div class="card shadow">
+                <div class="card-body p-4">
+                    <h3 class="card-title mb-3">Set Up Two-Factor Authentication</h3>
+                    <p class="text-muted">
+                        Two-factor authentication is required for all StatementHub users.
+                        Scan the QR code below with your authenticator app (Google Authenticator, Authy, etc.)
+                        and enter the 6-digit code to complete setup.
+                    </p>
+
+                    <div class="text-center my-4">
+                        <img src="data:image/png;base64,{{ qr_base64 }}" alt="TOTP QR Code" class="img-fluid" style="max-width: 250px;">
+                    </div>
+
+                    <p class="text-muted small text-center">
+                        Can't scan? Enter this key manually: <code>{{ totp_secret }}</code>
+                    </p>
+
+                    <form method="post">
+                        {% csrf_token %}
+                        <div class="mb-3">
+                            <label for="id_totp_code" class="form-label">{{ form.totp_code.label }}</label>
+                            {{ form.totp_code }}
+                            {% if form.totp_code.errors %}
+                            <div class="invalid-feedback d-block">
+                                {% for error in form.totp_code.errors %}{{ error }}{% endfor %}
+                            </div>
+                            {% endif %}
+                            <div class="form-text">{{ form.totp_code.help_text }}</div>
+                        </div>
+                        <button type="submit" class="btn btn-primary w-100">Enable Two-Factor Authentication</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
