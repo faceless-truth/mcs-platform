@@ -7,7 +7,6 @@
     <ol class="breadcrumb">
         <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
         <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
-        <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
         <li class="breadcrumb-item active">{{ fy.year_label }}</li>
     </ol>
 </nav>
@@ -1221,18 +1220,20 @@
                         <input type="text" class="form-control" value="{{ entity.entity_name }}" readonly>
                     </div>
                     <div class="mb-3">
-                        <label class="form-label fw-semibold">Statement Period</label>
+                        <label class="form-label fw-semibold">Financial Year Period</label>
                         <div class="row g-2">
                             <div class="col-6">
                                 <label class="form-label small text-muted">From</label>
-                                <input type="date" name="period_start" class="form-control" value="{{ fy.start_date|date:'Y-m-d' }}" required id="periodStartInput">
+                                <input type="date" name="period_start" class="form-control bg-light" value="{{ fy.start_date|date:'Y-m-d' }}" required id="periodStartInput" readonly>
                             </div>
                             <div class="col-6">
                                 <label class="form-label small text-muted">To</label>
-                                <input type="date" name="period_end" class="form-control" value="{{ fy.end_date|date:'Y-m-d' }}" required id="periodEndInput">
+                                <input type="date" name="period_end" class="form-control bg-light" value="{{ fy.end_date|date:'Y-m-d' }}" required id="periodEndInput" readonly>
                             </div>
                         </div>
-                        <small class="text-muted">Pre-filled from financial year dates. Transactions outside this period will be excluded.</small>
+                        <small class="text-muted">
+                            <i class="bi bi-lock-fill"></i> Locked to financial year dates. Only transactions within this period will be imported.
+                        </small>
                     </div>
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Bank Statement Files</label>
@@ -1413,6 +1414,7 @@
                 fd.append('entity_id', entityId);
                 fd.append('period_start', periodStart);
                 fd.append('period_end', periodEnd);
+                if (i === 0) fd.append('clear_session', '1');
 
                 const resp = await fetch('/parse-statement/', {
                     method: 'POST',
@@ -1772,7 +1774,8 @@ function showPeriodModal(fmt) {
 function downloadStatements() {
     const url = "{% url 'core:generate_document' pk=fy.pk %}" + '?format=' + selectedFormat;
     window.location.href = url;
-    bootstrap.Modal.getInstance(document.getElementById('periodModal')).hide();
+    const modal = bootstrap.Modal.getInstance(document.getElementById('periodModal'));
+    if (modal) modal.hide();
 }
 
 // Period option selection

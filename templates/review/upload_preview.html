@@ -137,20 +137,28 @@
     const csrfToken = '{{ csrf_token }}';
 
     // =====================================================================
-    // Init: Load data from sessionStorage
+    // Init: Load data from server session (primary) or sessionStorage (fallback)
     // =====================================================================
     function init() {
-        const raw = sessionStorage.getItem('mcs_preview_statements');
-        if (!raw) {
-            document.getElementById('noDataMessage').style.display = 'block';
-            return;
+        // Primary: server-side session data (embedded by Django view)
+        const serverData = {{ parsed_data_json|safe }};
+        if (serverData && serverData.length > 0) {
+            statements = serverData;
+        } else {
+            // Fallback: browser sessionStorage
+            const raw = sessionStorage.getItem('mcs_preview_statements');
+            if (!raw) {
+                document.getElementById('noDataMessage').style.display = 'block';
+                return;
+            }
+            try {
+                statements = JSON.parse(raw);
+            } catch(e) {
+                document.getElementById('noDataMessage').style.display = 'block';
+                return;
+            }
         }
-        try {
-            statements = JSON.parse(raw);
-        } catch(e) {
-            document.getElementById('noDataMessage').style.display = 'block';
-            return;
-        }
+
         if (!statements || statements.length === 0) {
             document.getElementById('noDataMessage').style.display = 'block';
             return;
@@ -554,7 +562,7 @@
     }
 
     function escAttr(str) {
-        return (str || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        return (str || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
 
     // =====================================================================

@@ -130,22 +130,30 @@ def _sync_from_airtable():
                 pass
 
             # Create or update the ReviewJob
-            job, created = ReviewJob.objects.update_or_create(
+            existing_job = ReviewJob.objects.filter(
                 client_name=client_name,
                 status__in=["awaiting_review", "in_progress"],
-                defaults={
-                    "entity": entity,
-                    "file_name": f"Bank Statement — {len(records)} transactions",
-                    "submitted_by": accountant_email or "Via bankstatements@mcands.com.au",
-                    "source": "airtable",
-                    "total_transactions": len(records),
-                    "auto_coded_count": len(records),
-                    "flagged_count": len(records),
-                    "confirmed_count": confirmed_count,
-                    "status": job_status,
-                    "is_gst_registered": is_gst,
-                },
-            )
+            ).first()
+            defaults = {
+                "entity": entity,
+                "file_name": f"Bank Statement — {len(records)} transactions",
+                "submitted_by": accountant_email or "Via bankstatements@mcands.com.au",
+                "source": "airtable",
+                "total_transactions": len(records),
+                "auto_coded_count": len(records),
+                "flagged_count": len(records),
+                "confirmed_count": confirmed_count,
+                "status": job_status,
+                "is_gst_registered": is_gst,
+            }
+            if existing_job:
+                for key, value in defaults.items():
+                    setattr(existing_job, key, value)
+                existing_job.save()
+                job, created = existing_job, False
+            else:
+                job = ReviewJob.objects.create(client_name=client_name, **defaults)
+                created = True
 
             if created:
                 ReviewActivity.objects.create(
@@ -297,11 +305,6 @@ def review_dashboard(request):
         greeting = "Good evening"
     first_name = request.user.first_name or request.user.username.capitalize()
 
-    # --- Entity list for upload modal ---
-    entities = Entity.objects.filter(
-        client__in=client_qs
-    ).select_related("client").order_by("entity_name")
-
     context = {
         "greeting": greeting,
         "first_name": first_name,
@@ -312,7 +315,6 @@ def review_dashboard(request):
         "risk_alerts": risk_alerts,
         "unfinalised_years": unfinalised_years,
         "recent_audit_logs": recent_audit_logs,
-        "entities": entities,
     }
     return render(request, "review/dashboard.html", context)
 
@@ -360,7 +362,10 @@ def confirm_transaction(request, pk):
     Updates the local record and pushes to Airtable.
     """
     txn = get_object_or_404(PendingTransaction, pk=pk)
-    data = json.loads(request.body)
+    try:
+        data = json.loads(request.body)
+    except (json.JSONDecodeError, ValueError):
+        return JsonResponse({"status": "error", "message": "Invalid JSON"}, status=400)
 
     txn.confirmed_code = data.get("confirmed_code", "")
     txn.confirmed_name = data.get("confirmed_name", "")
@@ -533,7 +538,6 @@ def accept_all_suggestions(request, pk):
 def upload_bank_statement(request):
     """
     Handle manual bank statement upload (PDF or Excel).
-    Processes through the same pipeline as email ingestion.
     Accepts period_start and period_end to filter out-of-period transactions.
     Supports multiple files via 'files' field.
     """
@@ -587,6 +591,16 @@ def upload_bank_statement(request):
         content = uploaded_file.read()
         filename = uploaded_file.name
         logger.info(f"Processing file: {filename} ({len(content)} bytes)")
+
+        # Validate file content matches extension (magic bytes)
+        is_pdf_content = content[:5] == b'%PDF-'
+        is_xlsx_content = content[:4] == b'PK\x03\x04'
+        if filename.lower().endswith(".pdf") and not is_pdf_content:
+            errors.append(f"{filename}: File content does not match PDF format")
+            continue
+        if filename.lower().endswith(".xlsx") and not is_xlsx_content:
+            errors.append(f"{filename}: File content does not match Excel format")
+            continue
 
         try:
             if filename.lower().endswith(".pdf"):
@@ -710,7 +724,7 @@ def upload_bank_statement(request):
                 # Look for bank account lines in the trial balance (common codes: 1-xxxx for bank accounts)
                 bank_tb_lines = TrialBalanceLine.objects.filter(
                     financial_year=fy,
-                    account_code__regex=r'^1-[0-9]',  # Bank accounts typically start with 1-
+                    account_code__regex=r'^1-[0-9]+',  # Bank accounts typically start with 1-
                 )
                 if bank_tb_lines.exists():
                     tb_bank_total = sum(line.net_movement for line in bank_tb_lines)
@@ -749,6 +763,9 @@ def upload_bank_statement(request):
         )
         if balance_warning:
             activity_desc += f" | WARNING: {balance_warning}"
+
+        # Attach warning to job so it can be collected after the loop
+        job._balance_warning = balance_warning
 
         ReviewActivity.objects.create(
             activity_type="new_statement",
@@ -806,9 +823,9 @@ def upload_bank_statement(request):
         success_msg += f" Errors: {'; '.join(errors)}"
     django_messages.success(request, success_msg)
 
-    # Show balance warning as a separate warning message
-    if balance_warning:
-        django_messages.warning(request, balance_warning)
+    # Show each balance warning as a separate warning message
+    for warning in all_balance_warnings:
+        django_messages.warning(request, warning)
 
     if is_ajax:
         return JsonResponse({
@@ -817,7 +834,7 @@ def upload_bank_statement(request):
             "jobs_created": len(created_jobs),
             "total_transactions": sum(j.total_transactions for j in created_jobs),
             "errors": errors,
-            "balance_warning": balance_warning,
+            "balance_warnings": all_balance_warnings,
         })
     return redirect(redirect_url)
 
@@ -897,7 +914,14 @@ def notify_new_review_job(request):
     """
     Webhook endpoint for n8n to notify StatementHub of a new review job.
     POST /api/notify/new-review-job
+    Requires X-Webhook-Secret header matching WEBHOOK_SECRET setting.
     """
+    expected_secret = getattr(settings, "WEBHOOK_SECRET", "")
+    if expected_secret:
+        provided_secret = request.headers.get("X-Webhook-Secret", "")
+        if not provided_secret or provided_secret != expected_secret:
+            return JsonResponse({"status": "error", "message": "Unauthorized"}, status=403)
+
     try:
         data = json.loads(request.body)
 
@@ -973,7 +997,10 @@ def classify_batch(request, pk):
     except json.JSONDecodeError:
         data = {}
 
-    batch_size = min(int(data.get("batch_size", 15)), 30)  # Cap at 30
+    try:
+        batch_size = min(int(data.get("batch_size", 15)), 30)  # Cap at 30
+    except (ValueError, TypeError):
+        batch_size = 15
 
     # Get unclassified transactions (ai_confidence == 0 and no ai_suggested_code)
     unclassified = list(
@@ -1255,7 +1282,7 @@ def parse_statement(request):
     elapsed = round(time.time() - start_time, 2)
     logger.info(f'[parse-statement] {filename}: {len(txn_list)} txns parsed in {elapsed}s (vision={used_vision})')
 
-    return JsonResponse({
+    response_data = {
         'status': 'success',
         'filename': filename,
         'bank': extracted.get('bank', 'Unknown'),
@@ -1273,7 +1300,18 @@ def parse_statement(request):
         'bank_account_info': bank_account_info,
         'elapsed_seconds': elapsed,
         'used_vision_ocr': used_vision,
-    })
+    }
+
+    # Store parsed data in Django session (reliable fallback for sessionStorage)
+    if request.POST.get('clear_session') == '1':
+        request.session.pop('mcs_parsed_statements', None)
+
+    parsed_list = request.session.get('mcs_parsed_statements', [])
+    parsed_list.append(response_data)
+    request.session['mcs_parsed_statements'] = parsed_list
+    request.session.modified = True
+
+    return JsonResponse(response_data)
 
 
 # ---------------------------------------------------------------------------
@@ -1282,9 +1320,8 @@ def parse_statement(request):
 @login_required
 def upload_preview(request):
     """
-    Render the preview page. The actual transaction data is passed from the
-    browser via sessionStorage (populated by the upload modal JS).
-    This view just renders the template shell.
+    Render the preview page. Transaction data is passed via Django session
+    (primary, reliable) with sessionStorage as a browser-side fallback.
     """
     financial_year_id = request.GET.get('fy', '')
     entity_id = request.GET.get('entity', '')
@@ -1305,9 +1342,14 @@ def upload_preview(request):
         except Exception:
             pass
 
+    # Read parsed data from Django session (stored by parse_statement)
+    parsed_data = request.session.get('mcs_parsed_statements', [])
+    # Don't clear yet — allow page refresh. Cleared on confirm_import.
+
     return render(request, 'review/upload_preview.html', {
         'fy': fy,
         'entity': entity,
+        'parsed_data_json': json.dumps(parsed_data),
     })
 
 
@@ -1322,6 +1364,7 @@ def confirm_import(request):
     and create ReviewJob + PendingTransaction records.
     """
     import json as json_mod
+    from datetime import datetime as dt
 
     try:
         data = json_mod.loads(request.body)
@@ -1335,6 +1378,10 @@ def confirm_import(request):
     if not statements:
         return JsonResponse({'status': 'error', 'message': 'No statements to import'}, status=400)
 
+    # Validate: cap number of statements to prevent abuse
+    if len(statements) > 50:
+        return JsonResponse({'status': 'error', 'message': 'Too many statements (max 50)'}, status=400)
+
     entity = None
     is_gst = True
     client_name = 'Unknown'
@@ -1347,8 +1394,24 @@ def confirm_import(request):
         except Exception:
             pass
 
+    # Validate financial year ownership if provided
+    fy = None
+    if financial_year_id:
+        try:
+            from core.models import FinancialYear
+            fy = FinancialYear.objects.select_related('entity').get(pk=financial_year_id)
+            # Ensure entity matches the financial year's entity
+            if entity and fy.entity_id != entity.pk:
+                return JsonResponse({
+                    'status': 'error',
+                    'message': 'Entity does not match the selected financial year'
+                }, status=400)
+        except Exception:
+            pass
+
     total_imported = 0
     job_ids = []
+    validation_warnings = []
 
     for stmt in statements:
         filename = stmt.get('filename', 'Unknown')
@@ -1356,8 +1419,61 @@ def confirm_import(request):
         if not transactions:
             continue
 
-        opening_balance = Decimal(str(stmt.get('opening_balance', 0)))
-        closing_balance = Decimal(str(stmt.get('closing_balance', 0)))
+        # Validate individual transactions
+        valid_txns = []
+        for txn in transactions:
+            # Must have date and description
+            txn_date = (txn.get('date') or '').strip()
+            txn_desc = (txn.get('description') or '').strip()
+            try:
+                txn_amount = float(txn.get('amount', 0))
+            except (ValueError, TypeError):
+                continue
+
+            if not txn_date or not txn_desc:
+                continue
+
+            # Validate date format (must be parseable)
+            parsed_date = None
+            for fmt in ('%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y', '%d %b %Y', '%d %B %Y'):
+                try:
+                    parsed_date = dt.strptime(txn_date, fmt).date()
+                    break
+                except (ValueError, AttributeError):
+                    continue
+
+            if not parsed_date:
+                continue
+
+            # Enforce: transaction must be within financial year period
+            if fy:
+                if parsed_date < fy.start_date or parsed_date > fy.end_date:
+                    validation_warnings.append(
+                        f'{filename}: Transaction on {txn_date} excluded — outside financial year period '
+                        f'({fy.start_date.strftime("%d/%m/%Y")} to {fy.end_date.strftime("%d/%m/%Y")})'
+                    )
+                    continue  # Skip this transaction
+
+            # Validate amount is not absurdly large (data integrity)
+            if abs(txn_amount) > 999_999_999:
+                continue
+
+            valid_txns.append({
+                'date': txn_date,
+                'description': txn_desc,
+                'amount': txn_amount,
+            })
+
+        transactions = valid_txns
+        if not transactions:
+            continue
+
+        try:
+            opening_balance = Decimal(str(stmt.get('opening_balance', 0)))
+            closing_balance = Decimal(str(stmt.get('closing_balance', 0)))
+        except Exception:
+            opening_balance = Decimal('0')
+            closing_balance = Decimal('0')
         bsb = stmt.get('bsb', '')
         account_number = stmt.get('account_number', '')
         account_name = stmt.get('account_name', '')
@@ -1462,6 +1578,10 @@ def confirm_import(request):
         except Exception:
             redirect_url = f'/years/{financial_year_id}/?tab=review'
 
+    # Clear session data now that import is complete
+    request.session.pop('mcs_parsed_statements', None)
+    request.session.modified = True
+
     logger.info(f'[confirm-import] {len(statements)} statements, {total_imported} transactions imported')
 
     return JsonResponse({
@@ -1470,4 +1590,5 @@ def confirm_import(request):
         'total_transactions': total_imported,
         'job_ids': job_ids,
         'redirect': redirect_url,
+        'validation_warnings': validation_warnings,
     })

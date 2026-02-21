@@ -27,7 +27,6 @@ class ReviewJob(models.Model):
     ]
 
     SOURCE_CHOICES = [
-        ("email", "Email Ingestion"),
         ("upload", "Manual Upload"),
         ("airtable", "Airtable Sync"),
     ]
@@ -224,8 +223,6 @@ class ReviewActivity(models.Model):
         ("review_completed", "Review completed"),
         ("ai_improved", "AI accuracy improved"),
         ("review_started", "Review started"),
-        ("email_received", "Email received"),
-        ("email_processed", "Email processed"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

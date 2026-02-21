@@ -178,6 +178,9 @@ SESSION_ENGINE = os.environ.get(
     "django.contrib.sessions.backends.cached_db",
 )
 
+# Webhook secret for n8n integration (set in .env)
+WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
+
 # Security settings (enforced in production)
 if not DEBUG:
     SECURE_BROWSER_XSS_FILTER = True
@@ -185,6 +188,10 @@ if not DEBUG:
     SECURE_SSL_REDIRECT = True
     CSRF_COOKIE_SECURE = True
     X_FRAME_OPTIONS = "DENY"
+    SECURE_HSTS_SECONDS = 31536000
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_REFERRER_POLICY = "strict-origin-when-cross-origin"
 
 # MC&S Logo for financial statement documents
 MCS_LOGO_PATH = BASE_DIR / "static" / "MCSlogo.png"
@@ -206,17 +213,6 @@ MYOB_CLIENT_SECRET = os.environ.get("MYOB_CLIENT_SECRET", "")
 # QuickBooks Online
 QBO_CLIENT_ID = os.environ.get("QBO_CLIENT_ID", "")
 QBO_CLIENT_SECRET = os.environ.get("QBO_CLIENT_SECRET", "")
-
-# Email Ingestion — Microsoft Graph API (preferred for M365/Outlook)
-MS_GRAPH_TENANT_ID = os.environ.get("MS_GRAPH_TENANT_ID", "")
-MS_GRAPH_CLIENT_ID = os.environ.get("MS_GRAPH_CLIENT_ID", "")
-MS_GRAPH_CLIENT_SECRET = os.environ.get("MS_GRAPH_CLIENT_SECRET", "")
-
-# Email Ingestion — IMAP fallback
-IMAP_HOST = os.environ.get("IMAP_HOST", "")
-IMAP_PORT = int(os.environ.get("IMAP_PORT", "993"))
-IMAP_USERNAME = os.environ.get("IMAP_USERNAME", "")
-IMAP_PASSWORD = os.environ.get("IMAP_PASSWORD", "")
 
 # AI Provider — Anthropic Claude (for bank statement extraction + transaction classification)
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")

@@ -289,9 +289,7 @@
                 {% if job.period_start %}
                 <span class="meta-badge"><i class="bi bi-calendar-range"></i> {{ job.period_start }} — {{ job.period_end }}</span>
                 {% endif %}
-                {% if job.source == "email" %}
-                <span class="meta-badge"><i class="bi bi-envelope"></i> Via Email</span>
-                {% elif job.source == "upload" %}
+                {% if job.source == "upload" %}
                 <span class="meta-badge"><i class="bi bi-upload"></i> Manual Upload</span>
                 {% endif %}
             </div>

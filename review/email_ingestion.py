@@ -1,26 +1,19 @@
 """
-Email Ingestion Service for Bank Statement Processing.
+AI Transaction Classification Service for Bank Statement Processing.
 
-Supports two modes:
-1. Microsoft Graph API (preferred for M365/Outlook)
-2. IMAP polling (fallback)
-
-Reads emails from bankstatements@mcands.com.au, extracts PDF attachments,
-and feeds them into the bank statement processing pipeline.
+Provides:
+- Learning database pattern matching (per-client and global)
+- AI-powered classification via Anthropic Claude API
+- Dynamic chart of accounts from database
+- Claude Vision PDF extraction (fallback for scanned PDFs)
 """
-import base64
-import email
-import imaplib
 import json
 import logging
 import os
 import re
-from datetime import datetime, timedelta
 from decimal import Decimal
 
-import requests
 from django.conf import settings
-from django.utils import timezone
 
 from .models import PendingTransaction, ReviewActivity, ReviewJob, TransactionPattern
 
@@ -28,244 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Client / Entity matching
-# ---------------------------------------------------------------------------
-
-def _match_entity_from_email(sender_email, subject, body=""):
-    """
-    Attempt to match an incoming email to a known Entity.
-    Tries multiple strategies:
-    1. Sender email matches client contact_email
-    2. Subject line contains entity name or ABN
-    3. Body contains entity name
-    Returns (Entity, Client) or (None, None).
-    """
-    from core.models import Client, Entity
-
-    # Strategy 1: Match sender email to client
-    clients = Client.objects.filter(contact_email__iexact=sender_email)
-    if clients.exists():
-        client = clients.first()
-        # Return the first active entity for this client
-        entity = client.entities.first()
-        if entity:
-            return entity, client
-
-    # Strategy 2: Search subject for entity name
-    entities = Entity.objects.select_related("client").all()
-    subject_lower = subject.lower() if subject else ""
-    body_lower = body.lower() if body else ""
-
-    for entity in entities:
-        name_lower = entity.entity_name.lower()
-        if name_lower in subject_lower or name_lower in body_lower:
-            return entity, entity.client
-
-    # Strategy 3: Search for ABN in subject or body
-    abn_pattern = re.compile(r"\b(\d{2}\s?\d{3}\s?\d{3}\s?\d{3})\b")
-    for text in [subject, body]:
-        if not text:
-            continue
-        matches = abn_pattern.findall(text)
-        for match in matches:
-            abn_clean = match.replace(" ", "")
-            try:
-                entity = Entity.objects.select_related("client").get(abn=abn_clean)
-                return entity, entity.client
-            except Entity.DoesNotExist:
-                continue
-
-    return None, None
-
-
-# ---------------------------------------------------------------------------
-# Microsoft Graph API email fetching
-# ---------------------------------------------------------------------------
-
-def _get_graph_access_token():
-    """Get an access token for Microsoft Graph API using client credentials."""
-    tenant_id = getattr(settings, "MS_GRAPH_TENANT_ID", "")
-    client_id = getattr(settings, "MS_GRAPH_CLIENT_ID", "")
-    client_secret = getattr(settings, "MS_GRAPH_CLIENT_SECRET", "")
-
-    if not all([tenant_id, client_id, client_secret]):
-        return None
-
-    url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
-    data = {
-        "grant_type": "client_credentials",
-        "client_id": client_id,
-        "client_secret": client_secret,
-        "scope": "https://graph.microsoft.com/.default",
-    }
-    resp = requests.post(url, data=data, timeout=15)
-    resp.raise_for_status()
-    return resp.json().get("access_token")
-
-
-def fetch_emails_graph(mailbox="bankstatements@mcands.com.au", max_emails=20):
-    """
-    Fetch unread emails with PDF attachments from the specified mailbox
-    using Microsoft Graph API.
-    Returns list of dicts: {sender, subject, body, attachments: [{name, content_bytes}]}
-    """
-    token = _get_graph_access_token()
-    if not token:
-        logger.warning("Microsoft Graph API not configured")
-        return []
-
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-    }
-
-    # Fetch unread messages
-    url = (
-        f"https://graph.microsoft.com/v1.0/users/{mailbox}/messages"
-        f"?$filter=isRead eq false and hasAttachments eq true"
-        f"&$top={max_emails}"
-        f"&$orderby=receivedDateTime desc"
-        f"&$select=id,subject,from,body,receivedDateTime"
-    )
-    resp = requests.get(url, headers=headers, timeout=30)
-    resp.raise_for_status()
-    messages = resp.json().get("value", [])
-
-    results = []
-    for msg in messages:
-        msg_id = msg["id"]
-        sender = msg.get("from", {}).get("emailAddress", {}).get("address", "")
-        subject = msg.get("subject", "")
-        body = msg.get("body", {}).get("content", "")
-
-        # Fetch attachments
-        att_url = (
-            f"https://graph.microsoft.com/v1.0/users/{mailbox}"
-            f"/messages/{msg_id}/attachments"
-        )
-        att_resp = requests.get(att_url, headers=headers, timeout=30)
-        att_resp.raise_for_status()
-        attachments = []
-
-        for att in att_resp.json().get("value", []):
-            name = att.get("name", "")
-            content_type = att.get("contentType", "")
-            if name.lower().endswith(".pdf") or "pdf" in content_type.lower():
-                content_b64 = att.get("contentBytes", "")
-                if content_b64:
-                    attachments.append({
-                        "name": name,
-                        "content_bytes": base64.b64decode(content_b64),
-                        "content_b64": content_b64,
-                    })
-
-        if attachments:
-            results.append({
-                "msg_id": msg_id,
-                "sender": sender,
-                "subject": subject,
-                "body": body,
-                "attachments": attachments,
-            })
-
-        # Mark as read
-        patch_url = (
-            f"https://graph.microsoft.com/v1.0/users/{mailbox}"
-            f"/messages/{msg_id}"
-        )
-        requests.patch(
-            patch_url, headers=headers,
-            json={"isRead": True}, timeout=10,
-        )
-
-    return results
-
-
-# ---------------------------------------------------------------------------
-# IMAP email fetching (fallback)
-# ---------------------------------------------------------------------------
-
-def fetch_emails_imap():
-    """
-    Fetch unread emails with PDF attachments via IMAP.
-    Returns same format as fetch_emails_graph.
-    """
-    host = getattr(settings, "IMAP_HOST", "")
-    port = getattr(settings, "IMAP_PORT", 993)
-    username = getattr(settings, "IMAP_USERNAME", "")
-    password = getattr(settings, "IMAP_PASSWORD", "")
-
-    if not all([host, username, password]):
-        logger.warning("IMAP not configured")
-        return []
-
-    results = []
-    try:
-        mail = imaplib.IMAP4_SSL(host, port)
-        mail.login(username, password)
-        mail.select("INBOX")
-
-        # Search for unread messages
-        status, msg_ids = mail.search(None, "UNSEEN")
-        if status != "OK":
-            return []
-
-        for msg_id in msg_ids[0].split()[:20]:  # Max 20
-            status, msg_data = mail.fetch(msg_id, "(RFC822)")
-            if status != "OK":
-                continue
-
-            raw_email = msg_data[0][1]
-            msg = email.message_from_bytes(raw_email)
-
-            sender = email.utils.parseaddr(msg.get("From", ""))[1]
-            subject = msg.get("Subject", "")
-            body = ""
-
-            # Extract body
-            if msg.is_multipart():
-                for part in msg.walk():
-                    if part.get_content_type() == "text/plain":
-                        body = part.get_payload(decode=True).decode("utf-8", errors="replace")
-                        break
-            else:
-                body = msg.get_payload(decode=True).decode("utf-8", errors="replace")
-
-            # Extract PDF attachments
-            attachments = []
-            if msg.is_multipart():
-                for part in msg.walk():
-                    filename = part.get_filename()
-                    if filename and filename.lower().endswith(".pdf"):
-                        content = part.get_payload(decode=True)
-                        if content:
-                            attachments.append({
-                                "name": filename,
-                                "content_bytes": content,
-                                "content_b64": base64.b64encode(content).decode("ascii"),
-                            })
-
-            if attachments:
-                results.append({
-                    "msg_id": msg_id.decode(),
-                    "sender": sender,
-                    "subject": subject,
-                    "body": body,
-                    "attachments": attachments,
-                })
-
-            # Mark as read (IMAP flag)
-            mail.store(msg_id, "+FLAGS", "\\Seen")
-
-        mail.logout()
-    except Exception as e:
-        logger.error(f"IMAP fetch failed: {e}")
-
-    return results
-
-
-# ---------------------------------------------------------------------------
-# PDF Transaction Extraction (Anthropic Claude)
+# PDF Transaction Extraction (Anthropic Claude Vision)
 # ---------------------------------------------------------------------------
 
 def _get_anthropic_client():
@@ -433,7 +189,7 @@ def classify_transactions(transactions, entity=None, is_gst_registered=True):
     """
     Classify a list of transactions using:
     1. Learning database (per-client patterns) — highest priority
-    2. OpenAI API with entity-type-specific chart of accounts — for unknown transactions
+    2. AI API with entity-type-specific chart of accounts — for unknown transactions
 
     For GST-registered clients, calculates GST component.
     For non-GST clients, all tax types default to BAS Excluded.
@@ -477,6 +233,11 @@ def classify_transactions(transactions, entity=None, is_gst_registered=True):
         ai_results = _ai_classify_batch(
             unknown_txns, is_gst_registered, entity_type=entity_type
         )
+        if len(ai_results) != len(unknown_indices):
+            logger.warning(
+                f"AI classification count mismatch: expected {len(unknown_indices)}, "
+                f"got {len(ai_results)}. Falling back to Suspense for unmatched."
+            )
         for idx, ai_result in zip(unknown_indices, ai_results):
             results[idx] = {
                 "index": idx,
@@ -491,6 +252,19 @@ def classify_transactions(transactions, entity=None, is_gst_registered=True):
                 "reasoning": ai_result.get("reasoning", ""),
                 "from_learning": False,
             }
+        # Fill any remaining unmatched indices with fallback
+        matched_indices = set(unknown_indices[:len(ai_results)])
+        for idx in unknown_indices:
+            if idx not in matched_indices:
+                results[idx] = {
+                    "index": idx,
+                    "account_code": "0000",
+                    "account_name": "Suspense",
+                    "tax_type": "BAS Excluded" if not is_gst_registered else "GST Free",
+                    "confidence": 0,
+                    "reasoning": "AI classification unavailable",
+                    "from_learning": False,
+                }
 
     return results
 
@@ -667,213 +441,3 @@ def _ai_classify_batch(transactions, is_gst_registered=True, batch_size=15, enti
                 })
 
     return all_results
-
-
-# ---------------------------------------------------------------------------
-# Main Processing Pipeline
-# ---------------------------------------------------------------------------
-
-def process_bank_statement_email(email_data):
-    """
-    Process a single bank statement email through the full pipeline:
-    1. Match to entity
-    2. Extract transactions from PDF
-    3. Classify with learning DB + AI
-    4. Calculate GST
-    5. Create ReviewJob + PendingTransactions
-
-    Args:
-        email_data: dict with sender, subject, body, attachments
-    Returns:
-        ReviewJob or None
-    """
-    sender = email_data.get("sender", "")
-    subject = email_data.get("subject", "")
-    body = email_data.get("body", "")
-    attachments = email_data.get("attachments", [])
-
-    if not attachments:
-        logger.warning(f"No PDF attachments in email from {sender}: {subject}")
-        return None
-
-    # Match to entity
-    entity, client = _match_entity_from_email(sender, subject, body)
-    client_name = entity.entity_name if entity else (
-        client.name if client else _extract_client_name(subject, sender)
-    )
-    is_gst_registered = entity.is_gst_registered if entity else True
-
-    logger.info(
-        f"Processing bank statement for {client_name} "
-        f"(GST registered: {is_gst_registered})"
-    )
-
-    # Process each PDF attachment
-    for attachment in attachments:
-        pdf_b64 = attachment.get("content_b64", "")
-        if not pdf_b64 and attachment.get("content_bytes"):
-            pdf_b64 = base64.b64encode(attachment["content_bytes"]).decode("ascii")
-
-        filename = attachment.get("name", "statement.pdf")
-
-        # Extract transactions
-        extracted = extract_transactions_from_pdf(pdf_b64, filename)
-        if not extracted or not extracted.get("transactions"):
-            logger.error(f"No transactions extracted from {filename}")
-            continue
-
-        transactions = extracted["transactions"]
-
-        # Classify transactions
-        classifications = classify_transactions(
-            transactions, entity=entity, is_gst_registered=is_gst_registered
-        )
-
-        # Create ReviewJob
-        job = ReviewJob.objects.create(
-            entity=entity,
-            client_name=client_name,
-            file_name=filename,
-            submitted_by=sender,
-            source="email",
-            total_transactions=len(transactions),
-            auto_coded_count=len(transactions),
-            flagged_count=sum(
-                1 for c in classifications if c and c.get("confidence", 0) < 5
-            ),
-            confirmed_count=0,
-            is_gst_registered=is_gst_registered,
-            bank_account_name=extracted.get("account_name", ""),
-            bsb=extracted.get("bsb", ""),
-            account_number=extracted.get("account_number", ""),
-            period_start=extracted.get("period_start", ""),
-            period_end=extracted.get("period_end", ""),
-            opening_balance=Decimal(str(extracted.get("opening_balance", 0))),
-            closing_balance=Decimal(str(extracted.get("closing_balance", 0))),
-        )
-
-        # Create PendingTransactions with GST calculations
-        for txn, cls in zip(transactions, classifications):
-            if cls is None:
-                cls = {
-                    "account_code": "0000",
-                    "account_name": "Suspense",
-                    "tax_type": "N-T",
-                    "confidence": 1,
-                    "reasoning": "",
-                    "from_learning": False,
-                }
-
-            amount = Decimal(str(txn.get("amount", 0)))
-            tax_type = cls.get("tax_type", "")
-
-            # Calculate GST
-            abs_amount = abs(amount)
-            if is_gst_registered and tax_type in ("GST on Income", "GST on Expenses"):
-                gst_amount = (abs_amount / Decimal("11")).quantize(Decimal("0.01"))
-                net_amount = (abs_amount - gst_amount).quantize(Decimal("0.01"))
-            else:
-                gst_amount = Decimal("0.00")
-                net_amount = abs_amount
-
-            # Auto-confirm high-confidence items from learning DB
-            is_auto_confirmed = (
-                cls.get("from_learning", False) and cls.get("confidence", 0) >= 5
-            )
-
-            PendingTransaction.objects.create(
-                job=job,
-                date=txn.get("date", ""),
-                description=txn.get("description", ""),
-                amount=amount,
-                gst_amount=gst_amount,
-                net_amount=net_amount,
-                ai_suggested_code=cls.get("account_code", ""),
-                ai_suggested_name=cls.get("account_name", ""),
-                ai_suggested_tax_type=tax_type,
-                ai_confidence=cls.get("confidence", 1),
-                ai_reasoning=cls.get("reasoning", ""),
-                from_learning=cls.get("from_learning", False),
-                is_confirmed=is_auto_confirmed,
-                confirmed_code=cls.get("account_code", "") if is_auto_confirmed else "",
-                confirmed_name=cls.get("account_name", "") if is_auto_confirmed else "",
-                confirmed_tax_type=tax_type if is_auto_confirmed else "",
-            )
-
-        # Update confirmed count for auto-confirmed items
-        job.confirmed_count = job.transactions.filter(is_confirmed=True).count()
-        if job.confirmed_count > 0:
-            job.status = "in_progress"
-        job.save()
-
-        # Log activity
-        ReviewActivity.objects.create(
-            activity_type="email_processed",
-            title="Bank statement processed",
-            description=(
-                f"{client_name} — {len(transactions)} transactions extracted, "
-                f"{job.confirmed_count} auto-confirmed"
-                f"{' (GST registered)' if is_gst_registered else ' (not GST registered)'}"
-            ),
-        )
-
-        logger.info(
-            f"Created review job {job.id} for {client_name}: "
-            f"{len(transactions)} transactions, {job.confirmed_count} auto-confirmed"
-        )
-
-        return job
-
-    return None
-
-
-def _extract_client_name(subject, sender):
-    """Extract a client name from the email subject or sender."""
-    # Try to extract from subject (e.g., "Bank Statement - Neri Family Trust")
-    patterns = [
-        r"bank\s*statement[s]?\s*[-–—:]\s*(.+)",
-        r"statement[s]?\s*[-–—:]\s*(.+)",
-        r"(.+?)\s*[-–—]\s*bank\s*statement",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, subject, re.IGNORECASE)
-        if match:
-            return match.group(1).strip()
-
-    # Fall back to sender email prefix
-    return sender.split("@")[0].replace(".", " ").title()
-
-
-# ---------------------------------------------------------------------------
-# Fetch and Process All New Emails
-# ---------------------------------------------------------------------------
-
-def process_all_new_emails():
-    """
-    Main entry point: fetch all new bank statement emails and process them.
-    Tries Microsoft Graph first, falls back to IMAP.
-    Returns list of created ReviewJobs.
-    """
-    # Try Graph API first
-    emails = fetch_emails_graph()
-    if not emails:
-        # Fall back to IMAP
-        emails = fetch_emails_imap()
-
-    if not emails:
-        logger.info("No new bank statement emails found")
-        return []
-
-    jobs = []
-    for email_data in emails:
-        try:
-            job = process_bank_statement_email(email_data)
-            if job:
-                jobs.append(job)
-        except Exception as e:
-            logger.error(
-                f"Failed to process email from {email_data.get('sender', '?')}: {e}",
-                exc_info=True,
-            )
-
-    return jobs
