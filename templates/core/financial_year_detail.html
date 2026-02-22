@@ -811,6 +811,19 @@
             </div>
         </div>
 
+        <!-- AI Classification Filter -->
+        {% if pending_review %}
+        <div class="d-flex align-items-center gap-2 mb-3" id="reviewFilterBar">
+            <label for="aiClassFilter" class="form-label mb-0 text-muted" style="font-size: 0.85rem; white-space: nowrap;">
+                <i class="bi bi-funnel"></i> Filter by AI Classification:
+            </label>
+            <select id="aiClassFilter" class="form-select form-select-sm" style="max-width: 300px; font-size: 0.85rem;">
+                <option value="">All Classifications</option>
+            </select>
+            <span id="filterCount" class="text-muted" style="font-size: 0.8rem;"></span>
+        </div>
+        {% endif %}
+
         <!-- Live notification area -->
         <div id="reviewNotification" class="alert alert-success alert-dismissible d-none mb-3" role="alert" style="font-size: 0.85rem;">
             <i class="bi bi-check-circle-fill me-1"></i>
@@ -1993,6 +2006,76 @@ document.querySelectorAll('.wp-note, .wp-status').forEach(el => {
             saveWorkpaperNote(this.dataset.code);
         });
     }
+});
+</script>
+
+<script>
+// ===== AI Classification Filter for Bank Statement Review =====
+document.addEventListener('DOMContentLoaded', function() {
+    const filterSelect = document.getElementById('aiClassFilter');
+    const filterCount = document.getElementById('filterCount');
+    const pendingTableBody = document.getElementById('pendingTableBody');
+    if (!filterSelect || !pendingTableBody) return;
+
+    // Build unique list of AI-suggested account names from pending rows
+    const rows = pendingTableBody.querySelectorAll('tr');
+    const classMap = {};  // name -> count
+
+    rows.forEach(function(row) {
+        const coaBtn = row.querySelector('.review-coa-btn');
+        if (coaBtn) {
+            const name = coaBtn.textContent.trim();
+            if (name && name !== 'Unclassified') {
+                classMap[name] = (classMap[name] || 0) + 1;
+            } else if (name === 'Unclassified' || !name) {
+                classMap['Unclassified'] = (classMap['Unclassified'] || 0) + 1;
+            }
+        }
+    });
+
+    // Sort by name and populate the dropdown
+    const sortedNames = Object.keys(classMap).sort(function(a, b) {
+        if (a === 'Unclassified') return 1;
+        if (b === 'Unclassified') return -1;
+        return a.localeCompare(b);
+    });
+
+    sortedNames.forEach(function(name) {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name + ' (' + classMap[name] + ')';
+        filterSelect.appendChild(opt);
+    });
+
+    // Filter handler
+    filterSelect.addEventListener('change', function() {
+        const selected = this.value;
+        let visibleCount = 0;
+        let totalCount = rows.length;
+
+        rows.forEach(function(row) {
+            const coaBtn = row.querySelector('.review-coa-btn');
+            let rowName = '';
+            if (coaBtn) {
+                rowName = coaBtn.textContent.trim();
+                if (!rowName) rowName = 'Unclassified';
+            }
+
+            if (!selected || rowName === selected) {
+                row.style.display = '';
+                visibleCount++;
+            } else {
+                row.style.display = 'none';
+            }
+        });
+
+        // Update count display
+        if (selected) {
+            filterCount.textContent = 'Showing ' + visibleCount + ' of ' + totalCount + ' transactions';
+        } else {
+            filterCount.textContent = '';
+        }
+    });
 });
 </script>
 {% endblock %}
