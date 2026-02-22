@@ -3,6 +3,7 @@ import openpyxl
 from decimal import Decimal, InvalidOperation
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
+from django_ratelimit.decorators import ratelimit
 from django.db.models import Q, Count, Sum
 from django.http import HttpResponse, JsonResponse
 from django.views.decorators.http import require_POST
@@ -3478,6 +3479,7 @@ def review_approve_all(request, pk):
 # ---------------------------------------------------------------------------
 @login_required
 @require_POST
+@ratelimit(key='user', rate='30/m', method='POST')
 def mark_notification_read(request, pk):
     """Mark a single activity log entry as read."""
     activity = get_object_or_404(ActivityLog, pk=pk, user=request.user)
@@ -3488,6 +3490,7 @@ def mark_notification_read(request, pk):
 
 @login_required
 @require_POST
+@ratelimit(key='user', rate='10/m', method='POST')
 def mark_all_notifications_read(request):
     """Mark all unread notifications as read for the current user."""
     ActivityLog.objects.filter(is_read=False, user=request.user).update(is_read=True)
@@ -3495,6 +3498,7 @@ def mark_all_notifications_read(request):
 
 
 @login_required
+@ratelimit(key='user', rate='30/m', method='GET')
 def notifications_api(request):
     """Return recent unread notifications as JSON for polling (scoped to current user)."""
     activities = (
@@ -3738,6 +3742,7 @@ def coa_search_api(request):
 # ============================================================
 
 @login_required
+@ratelimit(key='user', rate='10/m', method='POST')
 def xrm_search(request, pk):
     """
     Search XPM for clients matching this entity's name.
@@ -3819,6 +3824,7 @@ def xrm_search(request, pk):
 
 
 @login_required
+@ratelimit(key='user', rate='5/m', method='POST')
 def xrm_pull(request, pk):
     """Pull entity data from Xero Practice Manager for a single entity."""
     entity = get_entity_for_user(request, pk)

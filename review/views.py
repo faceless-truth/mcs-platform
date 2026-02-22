@@ -21,7 +21,7 @@ from django.views.decorators.http import require_POST
 from django_ratelimit.decorators import ratelimit
 
 from config.webhook_auth import verify_webhook
-from config.authorization import get_review_job_for_user
+from config.authorization import get_review_job_for_user, get_entity_for_user, get_financial_year_for_user
 from .models import PendingTransaction, ReviewActivity, ReviewJob, TransactionPattern
 
 logger = logging.getLogger(__name__)
@@ -460,6 +460,7 @@ def confirm_transaction(request, pk):
     Updates the local record and pushes to Airtable.
     """
     txn = get_object_or_404(PendingTransaction, pk=pk)
+    get_review_job_for_user(request, txn.job.pk)  # IDOR check
     try:
         data = json.loads(request.body)
     except (json.JSONDecodeError, ValueError):
@@ -534,7 +535,7 @@ def submit_review(request, pk):
     Saves patterns to the learning database.
     Marks the job as completed and batch-updates Airtable.
     """
-    job = get_object_or_404(ReviewJob, pk=pk)
+    job = get_review_job_for_user(request, pk)
 
     # Check all transactions are confirmed
     unconfirmed = job.transactions.filter(is_confirmed=False).count()
@@ -606,7 +607,7 @@ def accept_all_suggestions(request, pk):
     Accept all AI suggestions for unconfirmed transactions in a job.
     Calculates GST based on the suggested tax type.
     """
-    job = get_object_or_404(ReviewJob, pk=pk)
+    job = get_review_job_for_user(request, pk)
     unconfirmed = job.transactions.filter(is_confirmed=False)
     is_gst = job.is_gst_registered
 
@@ -681,13 +682,12 @@ def upload_bank_statement(request):
     except ValueError:
         pass
 
-    # Get entity for GST status
+    # Get entity for GST status (with IDOR check)
     entity = None
     is_gst = True
     if entity_id:
-        from core.models import Entity
         try:
-            entity = Entity.objects.get(pk=entity_id)
+            entity = get_entity_for_user(request, entity_id)
             is_gst = entity.is_gst_registered
             client_name = entity.entity_name
         except Exception:
@@ -829,8 +829,8 @@ def upload_bank_statement(request):
         balance_warning = None
         if user_opening_balance and user_opening_balance != Decimal('0') and entity and financial_year_id:
             try:
-                from core.models import FinancialYear, TrialBalanceLine
-                fy = FinancialYear.objects.get(pk=financial_year_id)
+                from core.models import TrialBalanceLine
+                fy = get_financial_year_for_user(request, financial_year_id)
                 # Look for bank account lines in the trial balance (common codes: 1-xxxx for bank accounts)
                 bank_tb_lines = TrialBalanceLine.objects.filter(
                     financial_year=fy,
@@ -1082,6 +1082,7 @@ def notify_new_review_job(request):
 
 @login_required
 @require_POST
+@ratelimit(key='user', rate='5/m', method='POST')
 def classify_batch(request, pk):
     """
     AJAX endpoint to classify a batch of unclassified transactions for a job.
@@ -1459,15 +1460,13 @@ def upload_preview(request):
     entity = None
     if financial_year_id:
         try:
-            from core.models import FinancialYear
-            fy = FinancialYear.objects.select_related('entity').get(pk=financial_year_id)
+            fy = get_financial_year_for_user(request, financial_year_id)
             entity = fy.entity
         except Exception:
             pass
     if not entity and entity_id:
         try:
-            from core.models import Entity
-            entity = Entity.objects.get(pk=entity_id)
+            entity = get_entity_for_user(request, entity_id)
         except Exception:
             pass
 
@@ -1487,6 +1486,7 @@ def upload_preview(request):
 # ---------------------------------------------------------------------------
 @login_required
 @require_POST
+@ratelimit(key='user', rate='10/m', method='POST')
 def confirm_import(request):
     """
     Receive the verified/edited transaction data from the preview page
@@ -1516,19 +1516,17 @@ def confirm_import(request):
     client_name = 'Unknown'
     if entity_id:
         try:
-            from core.models import Entity
-            entity = Entity.objects.get(pk=entity_id)
+            entity = get_entity_for_user(request, entity_id)
             is_gst = entity.is_gst_registered
             client_name = entity.entity_name
         except Exception:
             pass
 
-    # Validate financial year ownership if provided
+    # Validate financial year ownership if provided (with IDOR check)
     fy = None
     if financial_year_id:
         try:
-            from core.models import FinancialYear
-            fy = FinancialYear.objects.select_related('entity').get(pk=financial_year_id)
+            fy = get_financial_year_for_user(request, financial_year_id)
             # Ensure entity matches the financial year's entity
             if entity and fy.entity_id != entity.pk:
                 return JsonResponse({

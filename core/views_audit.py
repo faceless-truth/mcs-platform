@@ -13,6 +13,7 @@ from django.http import HttpResponse, JsonResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
 from django.views.decorators.http import require_POST
+from django_ratelimit.decorators import ratelimit
 from config.authorization import get_financial_year_for_user
 
 from .models import (
@@ -387,6 +388,7 @@ def resolve_risk_flag(request, pk):
 # ---------------------------------------------------------------------------
 @login_required
 @require_POST
+@ratelimit(key='user', rate='10/m', method='POST')
 def ai_analyse_flag(request, pk):
     """
     Run AI contextual analysis on a single risk flag.
@@ -419,6 +421,7 @@ def ai_analyse_flag(request, pk):
 # ---------------------------------------------------------------------------
 @login_required
 @require_POST
+@ratelimit(key='user', rate='3/m', method='POST')
 def ai_analyse_all_flags(request, pk):
     """
     Run batch AI analysis on all open flags for a financial year.
@@ -483,6 +486,7 @@ def ai_feedback_view(request, pk):
 # ---------------------------------------------------------------------------
 @login_required
 @require_POST
+@ratelimit(key='user', rate='5/m', method='POST')
 def ai_prioritise_flags(request, pk):
     """
     Run AI prioritisation to score flags by 'Likely ATO Interest'.
