@@ -37,13 +37,17 @@ class EntityForm(forms.ModelForm):
             "registration_date": forms.DateInput(attrs={"type": "date"}),
         }
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, user=None, **kwargs):
         super().__init__(*args, **kwargs)
         for name, field in self.fields.items():
             if isinstance(field.widget, forms.CheckboxInput):
                 field.widget.attrs["class"] = "form-check-input"
             else:
                 field.widget.attrs["class"] = "form-control"
+        # Only senior users can change assigned_accountant and xpm_client_id
+        if user and not user.is_senior:
+            self.fields.pop("assigned_accountant", None)
+            self.fields.pop("xpm_client_id", None)
 
 
 class FinancialYearForm(forms.ModelForm):
