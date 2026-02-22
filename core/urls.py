@@ -2,6 +2,7 @@
 from django.urls import path
 from . import views
 from . import views_audit
+from . import views_upgrades
 
 app_name = "core"
 
@@ -135,4 +136,34 @@ urlpatterns = [
     # XRM Pull (Xero Practice Manager) — now entity-level
     path("entities/<uuid:pk>/xrm-search/", views.xrm_search, name="xrm_search"),
     path("entities/<uuid:pk>/xrm-pull/", views.xrm_pull, name="xrm_pull"),
+
+    # ===== UPGRADE 1: Prior Year Comparatives Engine =====
+    path("years/<uuid:pk>/comparatives/populate/", views_upgrades.populate_comparatives, name="populate_comparatives"),
+    path("tb-line/<uuid:pk>/comparative/override/", views_upgrades.override_comparative, name="override_comparative"),
+    path("years/<uuid:pk>/comparatives/lock/", views_upgrades.lock_comparatives, name="lock_comparatives"),
+
+    # ===== UPGRADE 2: Document Version Control & Regeneration =====
+    path("years/<uuid:pk>/regenerate/", views_upgrades.regenerate_document, name="regenerate_document"),
+    path("years/<uuid:pk>/bulk-regenerate/", views_upgrades.bulk_regenerate, name="bulk_regenerate"),
+    path("documents/<uuid:doc_pk>/mark-final/", views_upgrades.mark_document_final, name="mark_document_final"),
+
+    # ===== UPGRADE 4: Trust Distribution Workflow =====
+    path("years/<uuid:pk>/distribution/", views_upgrades.trust_distribution, name="trust_distribution"),
+    path("years/<uuid:pk>/beneficiary-statement/<uuid:officer_pk>/", views_upgrades.generate_beneficiary_statement, name="generate_beneficiary_statement"),
+
+    # ===== UPGRADE 5: Partnership Profit Allocation =====
+    path("years/<uuid:pk>/partnership/", views_upgrades.partnership_allocation, name="partnership_allocation"),
+    path("years/<uuid:pk>/partner-statement/<uuid:officer_pk>/", views_upgrades.generate_partner_statement, name="generate_partner_statement"),
+
+    # ===== UPGRADE 6: Working Paper Notes =====
+    path("years/<uuid:pk>/workpaper-notes/", views_upgrades.workpaper_notes_api, name="workpaper_notes_api"),
+    path("years/<uuid:pk>/workpaper-notes/carry-forward/", views_upgrades.carry_forward_notes, name="carry_forward_notes"),
+    path("years/<uuid:pk>/workpaper-notes/export/", views_upgrades.export_workpaper_notes, name="export_workpaper_notes"),
+
+    # ===== UPGRADE 7: Bulk Entity Import =====
+    path("import/bulk/", views_upgrades.bulk_import_start, name="bulk_import_start"),
+    path("import/bulk/template/", views_upgrades.bulk_import_template, name="bulk_import_template"),
+    path("import/bulk/<uuid:pk>/map/", views_upgrades.bulk_import_map, name="bulk_import_map"),
+    path("import/bulk/<uuid:pk>/validate/", views_upgrades.bulk_import_validate, name="bulk_import_validate"),
+    path("import/bulk/<uuid:pk>/execute/", views_upgrades.bulk_import_execute, name="bulk_import_execute"),
 ]

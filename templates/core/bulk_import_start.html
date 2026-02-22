@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Bulk Entity Import — StatementHub{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
+        <li class="breadcrumb-item active">Bulk Import</li>
+    </ol>
+</nav>
+
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0"><i class="bi bi-cloud-upload"></i> Bulk Entity Import</h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted">
+                    Upload a CSV or Excel file to bulk-import entities into StatementHub.
+                    Each row will create a new entity with the mapped fields.
+                </p>
+
+                <div class="alert alert-info">
+                    <h6><i class="bi bi-info-circle"></i> Before you start</h6>
+                    <ul class="mb-0">
+                        <li>Download the <a href="{% url 'core:bulk_import_template' %}"><strong>import template</strong></a> for the correct format</li>
+                        <li>Required fields: <strong>Entity Name</strong> and <strong>Entity Type</strong></li>
+                        <li>Valid entity types: <code>company</code>, <code>trust</code>, <code>partnership</code>, <code>sole_trader</code>, <code>smsf</code></li>
+                        <li>Duplicate ABNs will be flagged during validation</li>
+                    </ul>
+                </div>
+
+                <form method="post" enctype="multipart/form-data">
+                    {% csrf_token %}
+                    <div class="mb-3">
+                        <label for="file" class="form-label fw-semibold">Select File</label>
+                        <input type="file" name="file" id="file" class="form-control" accept=".csv,.xlsx,.xls" required>
+                        <div class="form-text">Supported formats: .csv, .xlsx</div>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-upload"></i> Upload & Continue
+                        </button>
+                        <a href="{% url 'core:bulk_import_template' %}" class="btn btn-outline-secondary">
+                            <i class="bi bi-download"></i> Download Template
+                        </a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

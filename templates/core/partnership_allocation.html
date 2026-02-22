@@ -1,0 +1,226 @@
+{% extends "base.html" %}
+{% load humanize %}
+{% block title %}Partnership Allocation — {{ entity.entity_name }} {{ fy.year_label }} — StatementHub{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy.year_label }}</a></li>
+        <li class="breadcrumb-item active">Partnership Allocation</li>
+    </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-start mb-4">
+    <div>
+        <h4 class="mb-1"><i class="bi bi-people-fill"></i> Partnership Profit Allocation</h4>
+        <p class="text-muted mb-0">{{ entity.entity_name }} — {{ fy.year_label }}</p>
+    </div>
+    <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-secondary btn-sm">
+        <i class="bi bi-arrow-left"></i> Back to Financial Year
+    </a>
+</div>
+
+<!-- Net Profit Section -->
+<div class="card mb-4">
+    <div class="card-header bg-primary text-white">
+        <h6 class="mb-0"><i class="bi bi-calculator"></i> Profit Available for Distribution</h6>
+    </div>
+    <div class="card-body">
+        <form method="post" action="{% url 'core:partnership_allocation' pk=fy.pk %}">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="update_profit">
+            <div class="row g-3">
+                <div class="col-md-3">
+                    <label class="form-label fw-semibold">Net Profit</label>
+                    <div class="input-group">
+                        <span class="input-group-text">$</span>
+                        <input type="number" step="0.01" name="net_profit" value="{{ alloc.net_profit }}" class="form-control fw-bold">
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Total Salary Allowances</label>
+                    <div class="input-group">
+                        <span class="input-group-text">$</span>
+                        <input type="number" step="0.01" name="total_salary_allowances" value="{{ alloc.total_salary_allowances }}" class="form-control">
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Total Interest on Capital</label>
+                    <div class="input-group">
+                        <span class="input-group-text">$</span>
+                        <input type="number" step="0.01" name="total_interest_on_capital" value="{{ alloc.total_interest_on_capital }}" class="form-control">
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label fw-semibold">Residual Profit</label>
+                    <div class="input-group">
+                        <span class="input-group-text">$</span>
+                        <input type="number" step="0.01" value="{{ alloc.residual_profit }}" class="form-control" disabled>
+                    </div>
+                </div>
+            </div>
+            <div class="row g-3 mt-2">
+                <div class="col-md-12">
+                    <label class="form-label">Notes</label>
+                    <textarea name="notes" class="form-control" rows="2">{{ alloc.notes }}</textarea>
+                </div>
+            </div>
+            <div class="mt-3">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-check-lg"></i> Save Profit Details
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Partner Shares -->
+<div class="card mb-4">
+    <div class="card-header bg-success text-white">
+        <h6 class="mb-0"><i class="bi bi-pie-chart"></i> Partner Profit Shares</h6>
+    </div>
+    <div class="card-body">
+        {% if partners %}
+        <form method="post" action="{% url 'core:partnership_allocation' pk=fy.pk %}">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="save_shares">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Partner</th>
+                            <th style="width: 140px;">Salary Allowance</th>
+                            <th style="width: 140px;">Interest on Capital</th>
+                            <th style="width: 120px;">Residual %</th>
+                            <th class="text-end">Residual Amount</th>
+                            <th class="text-end fw-bold">Total Share</th>
+                            <th style="width: 60px;">Statement</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for partner in partners %}
+                        <tr>
+                            <td>
+                                <strong>{{ partner.full_name }}</strong>
+                                {% if partner.profit_share_percentage %}
+                                <br><small class="text-muted">Agreement: {{ partner.profit_share_percentage }}%</small>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <div class="input-group input-group-sm">
+                                    <span class="input-group-text">$</span>
+                                    <input type="number" step="0.01" name="salary_{{ partner.pk }}"
+                                           value="{% for s in shares %}{% if s.partner_id == partner.pk %}{{ s.salary_allowance }}{% endif %}{% endfor %}"
+                                           class="form-control form-control-sm">
+                                </div>
+                            </td>
+                            <td>
+                                <div class="input-group input-group-sm">
+                                    <span class="input-group-text">$</span>
+                                    <input type="number" step="0.01" name="interest_{{ partner.pk }}"
+                                           value="{% for s in shares %}{% if s.partner_id == partner.pk %}{{ s.interest_on_capital }}{% endif %}{% endfor %}"
+                                           class="form-control form-control-sm">
+                                </div>
+                            </td>
+                            <td>
+                                <div class="input-group input-group-sm">
+                                    <input type="number" step="0.0001" min="0" max="100"
+                                           name="residual_pct_{{ partner.pk }}"
+                                           value="{% for s in shares %}{% if s.partner_id == partner.pk %}{{ s.residual_share_pct }}{% endif %}{% endfor %}"
+                                           class="form-control form-control-sm">
+                                    <span class="input-group-text">%</span>
+                                </div>
+                            </td>
+                            {% for s in shares %}{% if s.partner_id == partner.pk %}
+                            <td class="text-end">${{ s.residual_share_amount|floatformat:2|intcomma }}</td>
+                            <td class="text-end fw-bold">${{ s.total_share|floatformat:2|intcomma }}</td>
+                            {% endif %}{% endfor %}
+                            {% if not share_map %}
+                            <td class="text-end text-muted">—</td>
+                            <td class="text-end text-muted">—</td>
+                            {% endif %}
+                            <td class="text-center">
+                                <a href="{% url 'core:generate_partner_statement' pk=fy.pk officer_pk=partner.pk %}"
+                                   class="btn btn-sm btn-outline-primary" title="Generate Statement">
+                                    <i class="bi bi-file-earmark-text"></i>
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Capital Accounts -->
+            <h6 class="mt-4 mb-3"><i class="bi bi-bank"></i> Capital Accounts</h6>
+            <div class="table-responsive">
+                <table class="table table-sm table-bordered align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Partner</th>
+                            <th class="text-end">Opening Balance</th>
+                            <th style="width: 140px;">Contributions</th>
+                            <th style="width: 140px;">Drawings</th>
+                            <th class="text-end">Profit Share</th>
+                            <th class="text-end fw-bold">Closing Balance</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for partner in partners %}
+                        <tr>
+                            <td>{{ partner.full_name }}</td>
+                            {% with ca=capital_map %}
+                            {% for c_pk, c_obj in capital_map.items %}{% if c_pk == partner.pk %}
+                            <td class="text-end">${{ c_obj.opening_balance|floatformat:2|intcomma }}</td>
+                            {% endif %}{% endfor %}
+                            {% endwith %}
+                            {% if not capital_map %}
+                            <td class="text-end text-muted">$0.00</td>
+                            {% endif %}
+                            <td>
+                                <div class="input-group input-group-sm">
+                                    <span class="input-group-text">$</span>
+                                    <input type="number" step="0.01" name="contributions_{{ partner.pk }}"
+                                           value="{% for c_pk, c_obj in capital_map.items %}{% if c_pk == partner.pk %}{{ c_obj.capital_contributions }}{% endif %}{% endfor %}"
+                                           class="form-control form-control-sm">
+                                </div>
+                            </td>
+                            <td>
+                                <div class="input-group input-group-sm">
+                                    <span class="input-group-text">$</span>
+                                    <input type="number" step="0.01" name="drawings_{{ partner.pk }}"
+                                           value="{% for c_pk, c_obj in capital_map.items %}{% if c_pk == partner.pk %}{{ c_obj.drawings }}{% endif %}{% endfor %}"
+                                           class="form-control form-control-sm">
+                                </div>
+                            </td>
+                            {% for c_pk, c_obj in capital_map.items %}{% if c_pk == partner.pk %}
+                            <td class="text-end">${{ c_obj.profit_share|floatformat:2|intcomma }}</td>
+                            <td class="text-end fw-bold">${{ c_obj.closing_balance|floatformat:2|intcomma }}</td>
+                            {% endif %}{% endfor %}
+                            {% if not capital_map %}
+                            <td class="text-end text-muted">—</td>
+                            <td class="text-end text-muted">—</td>
+                            {% endif %}
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="mt-3">
+                <button type="submit" class="btn btn-success">
+                    <i class="bi bi-check-lg"></i> Save Partner Shares & Capital Accounts
+                </button>
+            </div>
+        </form>
+        {% else %}
+        <div class="text-center py-4 text-muted">
+            <p><i class="bi bi-people"></i> No partners found.</p>
+            <p>Add partners under <a href="{% url 'core:entity_officers' pk=entity.pk %}">Entity Officers</a> first.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{% endblock %}

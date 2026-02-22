@@ -310,7 +310,7 @@ def financial_year_detail(request, pk):
     tb_lines = fy.trial_balance_lines.select_related("mapped_line_item").all()
     adjustments = fy.adjusting_journals.all()
     unmapped_count = tb_lines.filter(mapped_line_item__isnull=True).count()
-    documents = fy.generated_documents.all()
+    documents = fy.generated_documents.all().order_by('-version', '-generated_at')
 
     # Calculate totals
     total_debit = tb_lines.aggregate(total=Sum("debit"))["total"] or Decimal("0")
@@ -386,9 +386,17 @@ def financial_year_detail(request, pk):
                     'description': flag.description[:120],
                 })
 
-    # Annotate TB lines with risk flag info for template highlighting
+    # Annotate TB lines with risk flag info and variance calculations
     for line in tb_lines:
         line.risk_flags_list = flagged_accounts.get(line.account_code, [])
+        # Variance calculations for Prior Year Comparatives Engine
+        current_net = (line.debit or Decimal('0')) - (line.credit or Decimal('0'))
+        prior_net = (line.prior_debit or Decimal('0')) - (line.prior_credit or Decimal('0'))
+        line.variance_amount = current_net - prior_net
+        if prior_net != 0:
+            line.variance_percentage = round(((current_net - prior_net) / abs(prior_net)) * 100, 1)
+        else:
+            line.variance_percentage = None
 
     # Depreciation assets
     depreciation_assets = DepreciationAsset.objects.filter(financial_year=fy)
@@ -509,6 +517,16 @@ def financial_year_status(request, pk):
         fy.reviewed_by = request.user
     if new_status == "finalised":
         fy.finalised_at = timezone.now()
+        # Lock comparatives and mark final documents
+        fy.trial_balance_lines.update(comparatives_locked=True)
+        # Lock and mark the latest version of each document type as final
+        from django.db.models import Max
+        for doc_type in fy.generated_documents.values_list('document_type', flat=True).distinct():
+            latest = fy.generated_documents.filter(document_type=doc_type).order_by('-version').first()
+            if latest:
+                latest.status = 'final'
+                latest.is_locked = True
+                latest.save(update_fields=['status', 'is_locked'])
     fy.save()
 
     _log_action(

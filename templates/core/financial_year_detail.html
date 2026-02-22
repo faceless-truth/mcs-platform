@@ -247,6 +247,11 @@
         </button>
     </li>
     <li class="nav-item">
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-workpapers" type="button">
+            <i class="bi bi-pencil-square"></i> Workpapers
+        </button>
+    </li>
+    <li class="nav-item">
         <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-docs" type="button">
             <i class="bi bi-file-earmark"></i> Documents ({{ documents.count }})
         </button>
@@ -276,6 +281,16 @@
                     {% endif %}
                 </small>
             </div>
+            <div class="d-flex gap-2">
+                {% if not fy.is_locked %}
+                <form method="post" action="{% url 'core:populate_comparatives' pk=fy.pk %}" class="d-inline">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-sm btn-outline-info" title="Auto-populate prior year comparatives">
+                        <i class="bi bi-arrow-repeat"></i> Populate Comparatives
+                    </button>
+                </form>
+                {% endif %}
+            </div>
         </div>
         <div class="table-responsive">
             <table class="table table-sm mb-0" style="font-size: 0.88rem;">
@@ -283,17 +298,19 @@
                     <tr class="border-bottom border-2 border-dark">
                         <th style="width: 80px;"></th>
                         <th></th>
-                        <th class="text-end" style="width: 130px;">{{ current_year }}<br><small class="fw-normal text-muted">$ Dr</small></th>
-                        <th class="text-end" style="width: 130px;">{{ current_year }}<br><small class="fw-normal text-muted">$ Cr</small></th>
-                        <th class="text-end" style="width: 130px;">{{ prior_year }}<br><small class="fw-normal text-muted">$ Dr</small></th>
-                        <th class="text-end" style="width: 130px;">{{ prior_year }}<br><small class="fw-normal text-muted">$ Cr</small></th>
+                        <th class="text-end" style="width: 120px;">{{ current_year }}<br><small class="fw-normal text-muted">$ Dr</small></th>
+                        <th class="text-end" style="width: 120px;">{{ current_year }}<br><small class="fw-normal text-muted">$ Cr</small></th>
+                        <th class="text-end" style="width: 120px;">{{ prior_year }}<br><small class="fw-normal text-muted">$ Dr</small></th>
+                        <th class="text-end" style="width: 120px;">{{ prior_year }}<br><small class="fw-normal text-muted">$ Cr</small></th>
+                        <th class="text-end" style="width: 100px;">Variance<br><small class="fw-normal text-muted">$</small></th>
+                        <th class="text-end" style="width: 70px;">Var<br><small class="fw-normal text-muted">%</small></th>
                         <th style="width: 30px;"></th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for section_name, lines in tb_sections.items %}
                     <tr>
-                        <td colspan="7" class="pt-3 pb-1 border-0">
+                        <td colspan="9" class="pt-3 pb-1 border-0">
                             <strong class="text-dark" style="font-size: 0.95rem;">{{ section_name }}</strong>
                         </td>
                     </tr>
@@ -315,8 +332,10 @@
                         </td>
                         <td class="text-end">{% if line.debit and line.debit != 0 %}{{ line.debit|floatformat:2|intcomma }}{% endif %}</td>
                         <td class="text-end">{% if line.credit and line.credit != 0 %}{{ line.credit|floatformat:2|intcomma }}{% endif %}</td>
-                        <td class="text-end text-muted">{% if line.prior_debit and line.prior_debit != 0 %}{{ line.prior_debit|floatformat:2|intcomma }}{% endif %}</td>
+                        <td class="text-end text-muted">{% if line.prior_debit and line.prior_debit != 0 %}{{ line.prior_debit|floatformat:2|intcomma }}{% endif %}{% if line.prior_balance_override %}<i class="bi bi-pencil-fill text-info ms-1" style="font-size:0.65rem;" title="Manually overridden"></i>{% endif %}{% if line.reclassified %}<i class="bi bi-arrow-left-right text-warning ms-1" style="font-size:0.65rem;" title="Reclassified from prior year"></i>{% endif %}</td>
                         <td class="text-end text-muted">{% if line.prior_credit and line.prior_credit != 0 %}{{ line.prior_credit|floatformat:2|intcomma }}{% endif %}</td>
+                        <td class="text-end {% if line.variance_amount > 0 %}text-success{% elif line.variance_amount < 0 %}text-danger{% endif %}" style="font-size:0.82rem;">{% if line.variance_amount %}{{ line.variance_amount|floatformat:0|intcomma }}{% endif %}</td>
+                        <td class="text-end {% if line.variance_percentage and line.variance_percentage > 20 or line.variance_percentage and line.variance_percentage < -20 %}fw-bold text-danger{% endif %}" style="font-size:0.82rem;">{% if line.variance_percentage != None %}{{ line.variance_percentage }}%{% else %}—{% endif %}</td>
                         <td>
                             {% if line.mapped_line_item %}
                             <i class="bi bi-check-circle-fill text-success" style="font-size: 0.7rem;" title="{{ line.mapped_line_item.line_item_label }}"></i>
@@ -335,6 +354,8 @@
                         <td class="text-end text-muted">{{ total_prior_debit|floatformat:2|intcomma }}</td>
                         <td class="text-end text-muted">{{ total_prior_credit|floatformat:2|intcomma }}</td>
                         <td></td>
+                        <td></td>
+                        <td></td>
                     </tr>
                     {% if total_debit != total_credit %}
                     <tr class="fw-bold">
@@ -345,8 +366,7 @@
                                 ${{ total_credit|floatformat:2|intcomma }}
                             </span>
                         </td>
-                        <td colspan="2"></td>
-                        <td></td>
+                        <td colspan="5"></td>
                     </tr>
                     {% endif %}
                 </tfoot>
@@ -944,30 +964,138 @@
         {% endif %}
     </div>
 
-    <!-- ===== DOCUMENTS TAB ===== -->
-    <div class="tab-pane fade p-3" id="tab-docs">
-        {% for doc in documents %}
-        <div class="d-flex justify-content-between align-items-center border-bottom py-2">
+    <!-- ===== WORKPAPER NOTES TAB ===== -->
+    <div class="tab-pane fade p-3" id="tab-workpapers">
+        <div class="d-flex justify-content-between align-items-center mb-3">
             <div>
-                <i class="bi bi-file-earmark-word text-primary"></i>
-                {{ doc.file_format|upper }} &mdash; Generated {{ doc.generated_at|date:"d M Y H:i" }}
-                by {{ doc.generated_by.get_full_name|default:"System" }}
+                <h6 class="mb-0"><i class="bi bi-pencil-square"></i> Working Paper Notes</h6>
+                <small class="text-muted" id="wp-summary">Loading...</small>
             </div>
             <div class="d-flex gap-2">
-                <a href="{{ doc.file.url }}" class="btn btn-sm btn-outline-primary" download>
-                    <i class="bi bi-download"></i> Download
+                {% if fy.prior_year %}
+                <form method="post" action="{% url 'core:carry_forward_notes' pk=fy.pk %}" class="d-inline">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-sm btn-outline-info">
+                        <i class="bi bi-arrow-repeat"></i> Carry Forward from {{ prior_year }}
+                    </button>
+                </form>
+                {% endif %}
+                <a href="{% url 'core:export_workpaper_notes' pk=fy.pk %}" class="btn btn-sm btn-outline-dark">
+                    <i class="bi bi-download"></i> Export All Notes
                 </a>
+            </div>
+        </div>
+
+        {% if tb_lines %}
+        <div class="table-responsive" style="max-height: 600px; overflow-y: auto;">
+            <table class="table table-sm table-hover align-middle" style="font-size: 0.88rem;">
+                <thead class="table-light sticky-top">
+                    <tr>
+                        <th style="width: 80px;">Code</th>
+                        <th>Account</th>
+                        <th class="text-end" style="width: 110px;">Balance</th>
+                        <th style="width: 80px;">Status</th>
+                        <th style="width: 350px;">Preparer Note</th>
+                        <th style="width: 250px;">Reviewer Note</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for line in tb_lines %}
+                    <tr data-account="{{ line.account_code }}">
+                        <td><code class="text-muted">{{ line.account_code }}</code></td>
+                        <td>{{ line.account_name }}</td>
+                        <td class="text-end">${{ line.closing_balance|floatformat:2|intcomma }}</td>
+                        <td>
+                            <select class="form-select form-select-sm wp-status" data-code="{{ line.account_code }}" data-type="preparer" style="font-size:0.78rem;">
+                                <option value="blank">Blank</option>
+                                <option value="in_progress">In Progress</option>
+                                <option value="completed">Completed</option>
+                            </select>
+                        </td>
+                        <td>
+                            <textarea class="form-control form-control-sm wp-note" data-code="{{ line.account_code }}" data-type="preparer" rows="1" placeholder="Preparer note..." style="font-size:0.82rem;"></textarea>
+                        </td>
+                        <td>
+                            <textarea class="form-control form-control-sm wp-note" data-code="{{ line.account_code }}" data-type="reviewer" rows="1" placeholder="Reviewer note..." style="font-size:0.82rem;"></textarea>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-4 text-muted">
+            <p>Import a trial balance first to enable working paper notes.</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- ===== DOCUMENTS TAB (Version Controlled) ===== -->
+    <div class="tab-pane fade p-3" id="tab-docs">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h6 class="mb-0"><i class="bi bi-file-earmark-ruled"></i> Documents &amp; Versions</h6>
+            <div class="d-flex gap-2">
+                {% if tb_lines %}
+                <a href="{% url 'core:regenerate_document' pk=fy.pk %}?type=financial_statements&format=docx" class="btn btn-sm btn-primary">
+                    <i class="bi bi-arrow-repeat"></i> Regenerate Statements
+                </a>
+                {% if entity.entity_type == 'trust' %}
+                <a href="{% url 'core:regenerate_document' pk=fy.pk %}?type=distribution_minutes&format=docx" class="btn btn-sm btn-outline-primary">
+                    <i class="bi bi-arrow-repeat"></i> Regenerate Minutes
+                </a>
+                {% endif %}
+                <form method="post" action="{% url 'core:bulk_regenerate' pk=fy.pk %}" class="d-inline">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-sm btn-outline-warning" onclick="return confirm('Regenerate all documents?')">
+                        <i class="bi bi-arrow-clockwise"></i> Bulk Regenerate
+                    </button>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+
+        {% for doc in documents %}
+        <div class="d-flex justify-content-between align-items-center border-bottom py-2 {% if doc.superseded_by %}opacity-50{% endif %}">
+            <div>
+                <i class="bi {% if doc.file_format == 'pdf' %}bi-file-earmark-pdf text-danger{% else %}bi-file-earmark-word text-primary{% endif %}"></i>
+                <span class="badge {% if doc.status == 'final' %}bg-success{% else %}bg-secondary{% endif %} me-1">{{ doc.get_status_display }}</span>
+                <strong>{{ doc.get_document_type_display }}</strong>
+                <span class="badge bg-dark">v{{ doc.version }}</span>
+                &mdash; {{ doc.generated_at|date:"d M Y H:i" }}
+                by {{ doc.generated_by.get_full_name|default:"System" }}
+                {% if doc.is_locked %}<i class="bi bi-lock-fill text-success ms-1" title="Locked (finalised)"></i>{% endif %}
+                {% if doc.superseded_by %}<small class="text-muted ms-1">(superseded)</small>{% endif %}
+                {% if doc.change_summary %}
+                <br><small class="text-muted"><i class="bi bi-chat-left-text"></i> {{ doc.change_summary }}</small>
+                {% endif %}
+            </div>
+            <div class="d-flex gap-1">
+                <a href="{{ doc.file.url }}" class="btn btn-sm btn-outline-primary" download title="Download">
+                    <i class="bi bi-download"></i>
+                </a>
+                {% if doc.status != 'final' and not doc.is_locked %}
+                <form method="post" action="{% url 'core:mark_document_final' doc_pk=doc.pk %}" class="d-inline">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-sm btn-outline-success" title="Mark as Final">
+                        <i class="bi bi-check-circle"></i>
+                    </button>
+                </form>
+                {% endif %}
+                {% if not doc.is_locked %}
                 <form method="post" action="{% url 'core:delete_document' pk=doc.pk %}" class="d-inline" onsubmit="return confirm('Delete this document?')">
                     {% csrf_token %}
-                    <button type="submit" class="btn btn-sm btn-outline-danger">
+                    <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete">
                         <i class="bi bi-trash"></i>
                     </button>
                 </form>
+                {% endif %}
             </div>
         </div>
         {% empty %}
         <div class="text-center py-4 text-muted">
-            <p>No documents generated yet.</p>
+            <i class="bi bi-file-earmark" style="font-size: 2.5rem;"></i>
+            <p class="mt-2">No documents generated yet.</p>
+            <p class="small">Generate financial statements from the header buttons above.</p>
         </div>
         {% endfor %}
     </div>
@@ -1785,6 +1913,76 @@ document.querySelectorAll('.period-option').forEach(opt => {
         document.querySelectorAll('.period-option').forEach(o => o.classList.remove('active'));
         this.classList.add('active');
     });
+});
+
+// ===== WORKPAPER NOTES: Auto-save on blur =====
+const wpApiUrl = "{% url 'core:workpaper_notes_api' pk=fy.pk %}";
+const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '{{ csrf_token }}';
+
+// Load existing notes
+fetch(wpApiUrl)
+    .then(r => r.json())
+    .then(data => {
+        if (data.notes) {
+            data.notes.forEach(n => {
+                const row = document.querySelector(`tr[data-account="${n.account_code}"]`);
+                if (!row) return;
+                const pNote = row.querySelector('textarea[data-type="preparer"]');
+                const rNote = row.querySelector('textarea[data-type="reviewer"]');
+                const sSel = row.querySelector('select[data-type="preparer"]');
+                if (pNote && n.preparer_note) pNote.value = n.preparer_note;
+                if (rNote && n.reviewer_note) rNote.value = n.reviewer_note;
+                if (sSel && n.status) sSel.value = n.status;
+            });
+        }
+        updateWpSummary(data.notes || []);
+    })
+    .catch(err => console.error('WP load error:', err));
+
+function updateWpSummary(notes) {
+    const total = notes.length;
+    const completed = notes.filter(n => n.status === 'completed').length;
+    const el = document.getElementById('wp-summary');
+    if (el) el.textContent = `${completed} of ${total} accounts completed`;
+}
+
+function saveWorkpaperNote(code) {
+    const row = document.querySelector(`tr[data-account="${code}"]`);
+    if (!row) return;
+    const pNote = row.querySelector('textarea[data-type="preparer"]');
+    const rNote = row.querySelector('textarea[data-type="reviewer"]');
+    const sSel = row.querySelector('select[data-type="preparer"]');
+    const payload = {
+        account_code: code,
+        preparer_note: pNote ? pNote.value : '',
+        reviewer_note: rNote ? rNote.value : '',
+        status: sSel ? sSel.value : 'blank'
+    };
+    fetch(wpApiUrl, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+        body: JSON.stringify(payload)
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.ok) {
+            row.style.backgroundColor = '#d4edda';
+            setTimeout(() => row.style.backgroundColor = '', 800);
+        }
+    })
+    .catch(err => console.error('WP save error:', err));
+}
+
+// Attach blur handlers
+document.querySelectorAll('.wp-note, .wp-status').forEach(el => {
+    el.addEventListener('change', function() {
+        saveWorkpaperNote(this.dataset.code);
+    });
+    if (el.tagName === 'TEXTAREA') {
+        el.addEventListener('blur', function() {
+            saveWorkpaperNote(this.dataset.code);
+        });
+    }
 });
 </script>
 {% endblock %}

@@ -592,6 +592,31 @@ class TrialBalanceLine(models.Model):
         default=False,
         help_text="True if this line was created by an adjusting journal entry",
     )
+    # --- Prior Year Comparatives Engine fields ---
+    prior_closing_balance = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Prior year closing balance (auto-populated or manually overridden)",
+    )
+    prior_balance_override = models.BooleanField(
+        default=False,
+        help_text="True if prior year balance was manually overridden (Year 1 onboarding)",
+    )
+    prior_mapped_line_item = models.ForeignKey(
+        AccountMapping,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="prior_trial_balance_lines",
+        help_text="Prior year mapping (for reclassification tracking)",
+    )
+    reclassified = models.BooleanField(
+        default=False,
+        help_text="True if account mapping changed between years (triggers note disclosure)",
+    )
+    comparatives_locked = models.BooleanField(
+        default=False,
+        help_text="Locked when the current year is finalised",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -599,6 +624,23 @@ class TrialBalanceLine(models.Model):
 
     def __str__(self):
         return f"{self.account_code} - {self.account_name}: {self.closing_balance}"
+
+    @property
+    def variance_amount(self):
+        """Dollar variance: current net minus prior net."""
+        from decimal import Decimal
+        current = self.debit - self.credit
+        prior = self.prior_debit - self.prior_credit
+        return current - prior
+
+    @property
+    def variance_percentage(self):
+        """Percentage variance from prior year. Returns None if prior is zero."""
+        from decimal import Decimal
+        prior = self.prior_debit - self.prior_credit
+        if prior == 0:
+            return None
+        return ((self.variance_amount) / abs(prior) * 100).quantize(Decimal('0.1'))
 
 
 # ---------------------------------------------------------------------------
@@ -916,7 +958,19 @@ class FinancialStatementTemplate(models.Model):
 # Generated Document
 # ---------------------------------------------------------------------------
 class GeneratedDocument(models.Model):
-    """A generated financial statement document (Word/PDF)."""
+    """A generated financial statement document (Word/PDF) with version control."""
+
+    class DocumentStatus(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        FINAL = "final", "Final"
+
+    class DocumentType(models.TextChoices):
+        FINANCIAL_STATEMENTS = "financial_statements", "Financial Statements"
+        DISTRIBUTION_MINUTES = "distribution_minutes", "Distribution Minutes"
+        BENEFICIARY_STATEMENT = "beneficiary_statement", "Beneficiary Statement"
+        PARTNER_STATEMENT = "partner_statement", "Partner Statement"
+        WORKPAPER_NOTES = "workpaper_notes", "Working Paper Notes"
+        OTHER = "other", "Other"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     financial_year = models.ForeignKey(
@@ -924,6 +978,33 @@ class GeneratedDocument(models.Model):
     )
     file = models.FileField(upload_to="generated/")
     file_format = models.CharField(max_length=10, default="docx")
+    document_type = models.CharField(
+        max_length=30,
+        choices=DocumentType.choices,
+        default=DocumentType.FINANCIAL_STATEMENTS,
+    )
+    version = models.IntegerField(
+        default=1,
+        help_text="Version number (auto-incremented on regeneration)",
+    )
+    status = models.CharField(
+        max_length=10,
+        choices=DocumentStatus.choices,
+        default=DocumentStatus.DRAFT,
+    )
+    change_summary = models.TextField(
+        blank=True, default="",
+        help_text="Summary of what changed from the previous version",
+    )
+    is_locked = models.BooleanField(
+        default=False,
+        help_text="Locked when financial year is finalised - becomes the definitive version",
+    )
+    superseded_by = models.ForeignKey(
+        'self', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='supersedes',
+        help_text="Points to the newer version that replaced this one",
+    )
     generated_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -936,7 +1017,15 @@ class GeneratedDocument(models.Model):
         ordering = ["-generated_at"]
 
     def __str__(self):
-        return f"{self.financial_year} - {self.file_format.upper()} ({self.generated_at:%Y-%m-%d})"
+        status_label = f" [{self.get_status_display()}]" if self.status else ""
+        return (
+            f"{self.financial_year} - {self.get_document_type_display()} "
+            f"v{self.version}{status_label} ({self.generated_at:%Y-%m-%d})"
+        )
+
+    @property
+    def version_label(self):
+        return f"v{self.version}"
 
 
 # ---------------------------------------------------------------------------
@@ -1610,3 +1699,428 @@ class BankAccount(models.Model):
         if self.account_number:
             parts.append(f"Acc {self.account_number}")
         return " ".join(parts) or "Unknown Account"
+
+
+# ---------------------------------------------------------------------------
+# Trust Distribution (Upgrade 4)
+# ---------------------------------------------------------------------------
+class TrustDistribution(models.Model):
+    """
+    Trust distribution workspace for a financial year.
+    Tracks distributable income, streaming categories, and corpus.
+    One per trust financial year.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    financial_year = models.OneToOneField(
+        FinancialYear, on_delete=models.CASCADE, related_name="trust_distribution"
+    )
+    # Income components
+    accounting_profit = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Accounting profit from the income statement",
+    )
+    taxable_income = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Taxable income after tax adjustments",
+    )
+    distributable_income = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Total distributable income for the year",
+    )
+    # Streaming categories
+    capital_gains = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Capital gains component",
+    )
+    franked_dividends = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Franked dividends component",
+    )
+    foreign_income = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Foreign income component",
+    )
+    other_income = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Other income component",
+    )
+    corpus = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Trust corpus (capital) amount",
+    )
+    # Reconciliation adjustments
+    reconciliation_adjustments = models.JSONField(
+        default=list, blank=True,
+        help_text="List of adjustment items: [{label, amount}]",
+    )
+    # Status
+    is_fully_allocated = models.BooleanField(
+        default=False,
+        help_text="True when 100% of distributable income is allocated to beneficiaries",
+    )
+    notes = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Trust Distribution"
+        verbose_name_plural = "Trust Distributions"
+
+    def __str__(self):
+        return f"Distribution - {self.financial_year}"
+
+    @property
+    def total_streaming(self):
+        return self.capital_gains + self.franked_dividends + self.foreign_income + self.other_income
+
+    @property
+    def allocation_percentage(self):
+        """Total percentage allocated across all beneficiaries."""
+        total = self.allocations.aggregate(
+            total=models.Sum('percentage')
+        )['total'] or 0
+        return total
+
+
+class BeneficiaryAllocation(models.Model):
+    """
+    Allocation of trust distribution to a specific beneficiary.
+    Links to EntityOfficer (beneficiary) and tracks per-stream amounts.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    distribution = models.ForeignKey(
+        TrustDistribution, on_delete=models.CASCADE, related_name="allocations"
+    )
+    beneficiary = models.ForeignKey(
+        EntityOfficer, on_delete=models.CASCADE, related_name="trust_allocations",
+        help_text="The beneficiary receiving this allocation",
+    )
+    # Allocation method
+    percentage = models.DecimalField(
+        max_digits=7, decimal_places=4, default=0,
+        help_text="Percentage of distributable income (0-100)",
+    )
+    fixed_amount = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True,
+        help_text="Fixed dollar amount (alternative to percentage)",
+    )
+    # Per-stream breakdown (calculated)
+    allocated_capital_gains = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+    )
+    allocated_franked_dividends = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+    )
+    allocated_foreign_income = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+    )
+    allocated_other_income = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+    )
+    total_distribution = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Total distribution to this beneficiary",
+    )
+    # Section 100A warning
+    section_100a_flag = models.BooleanField(
+        default=False,
+        help_text="Flagged for Section 100A review (reimbursement arrangement risk)",
+    )
+    section_100a_notes = models.TextField(
+        blank=True, default="",
+        help_text="Notes regarding Section 100A assessment",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["beneficiary__full_name"]
+        unique_together = ["distribution", "beneficiary"]
+
+    def __str__(self):
+        return f"{self.beneficiary.full_name}: {self.percentage}% of {self.distribution}"
+
+    def calculate_allocation(self):
+        """Calculate per-stream amounts based on percentage."""
+        dist = self.distribution
+        pct = self.percentage / 100
+        self.allocated_capital_gains = (dist.capital_gains * pct).quantize(
+            __import__('decimal').Decimal('0.01')
+        )
+        self.allocated_franked_dividends = (dist.franked_dividends * pct).quantize(
+            __import__('decimal').Decimal('0.01')
+        )
+        self.allocated_foreign_income = (dist.foreign_income * pct).quantize(
+            __import__('decimal').Decimal('0.01')
+        )
+        self.allocated_other_income = (dist.other_income * pct).quantize(
+            __import__('decimal').Decimal('0.01')
+        )
+        self.total_distribution = (
+            self.allocated_capital_gains + self.allocated_franked_dividends +
+            self.allocated_foreign_income + self.allocated_other_income
+        )
+
+
+# ---------------------------------------------------------------------------
+# Partnership Profit Allocation (Upgrade 5)
+# ---------------------------------------------------------------------------
+class PartnershipAllocation(models.Model):
+    """
+    Partnership profit allocation workspace for a financial year.
+    One per partnership financial year.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    financial_year = models.OneToOneField(
+        FinancialYear, on_delete=models.CASCADE, related_name="partnership_allocation"
+    )
+    net_profit = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Net profit available for distribution",
+    )
+    total_salary_allowances = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+    )
+    total_interest_on_capital = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+    )
+    residual_profit = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Profit remaining after salary allowances and interest on capital",
+    )
+    notes = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Partnership Allocation"
+
+    def __str__(self):
+        return f"Partnership Allocation - {self.financial_year}"
+
+
+class PartnerShare(models.Model):
+    """Individual partner's share of the partnership profit."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    allocation = models.ForeignKey(
+        PartnershipAllocation, on_delete=models.CASCADE, related_name="partner_shares"
+    )
+    partner = models.ForeignKey(
+        EntityOfficer, on_delete=models.CASCADE, related_name="partnership_shares",
+    )
+    salary_allowance = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+    )
+    interest_on_capital = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+    )
+    residual_share_pct = models.DecimalField(
+        max_digits=7, decimal_places=4, default=0,
+        help_text="Percentage share of residual profit",
+    )
+    residual_share_amount = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+    )
+    total_share = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Total profit share for this partner",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["partner__full_name"]
+        unique_together = ["allocation", "partner"]
+
+    def __str__(self):
+        return f"{self.partner.full_name}: ${self.total_share}"
+
+    def calculate_share(self):
+        """Calculate total share from components."""
+        from decimal import Decimal
+        residual = self.allocation.residual_profit
+        self.residual_share_amount = (
+            residual * self.residual_share_pct / 100
+        ).quantize(Decimal('0.01'))
+        self.total_share = (
+            self.salary_allowance + self.interest_on_capital + self.residual_share_amount
+        )
+
+
+class PartnerCapitalAccount(models.Model):
+    """
+    Capital account tracking per partner per financial year.
+    Rolls forward annually.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    financial_year = models.ForeignKey(
+        FinancialYear, on_delete=models.CASCADE, related_name="partner_capital_accounts"
+    )
+    partner = models.ForeignKey(
+        EntityOfficer, on_delete=models.CASCADE, related_name="capital_accounts",
+    )
+    opening_balance = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+    )
+    capital_contributions = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+    )
+    drawings = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+    )
+    profit_share = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Populated from PartnerShare.total_share",
+    )
+    closing_balance = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["partner__full_name"]
+        unique_together = ["financial_year", "partner"]
+
+    def __str__(self):
+        return f"{self.partner.full_name} Capital: ${self.closing_balance}"
+
+    def calculate_closing(self):
+        self.closing_balance = (
+            self.opening_balance + self.capital_contributions
+            - self.drawings + self.profit_share
+        )
+
+
+# ---------------------------------------------------------------------------
+# Working Paper Notes (Upgrade 6)
+# ---------------------------------------------------------------------------
+class WorkpaperNote(models.Model):
+    """
+    Account-level working paper notes attached to trial balance lines.
+    Supports preparer notes, reviewer notes, carry-forward, and status tracking.
+    """
+
+    class NoteStatus(models.TextChoices):
+        BLANK = "blank", "Blank"
+        IN_PROGRESS = "in_progress", "In Progress"
+        COMPLETED = "completed", "Completed"
+
+    class NoteType(models.TextChoices):
+        PREPARER = "preparer", "Preparer Note"
+        REVIEWER = "reviewer", "Reviewer Note"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    financial_year = models.ForeignKey(
+        FinancialYear, on_delete=models.CASCADE, related_name="workpaper_notes"
+    )
+    account_code = models.CharField(
+        max_length=20,
+        help_text="Trial balance account code this note is attached to",
+    )
+    account_name = models.CharField(max_length=255, blank=True, default="")
+    note_type = models.CharField(
+        max_length=10,
+        choices=NoteType.choices,
+        default=NoteType.PREPARER,
+    )
+    status = models.CharField(
+        max_length=15,
+        choices=NoteStatus.choices,
+        default=NoteStatus.BLANK,
+    )
+    content = models.TextField(
+        blank=True, default="",
+        help_text="Working paper note content",
+    )
+    is_carried_forward = models.BooleanField(
+        default=False,
+        help_text="True if this note was carried forward from the prior year",
+    )
+    source_year_label = models.CharField(
+        max_length=20, blank=True, default="",
+        help_text="Year label of the source note if carried forward",
+    )
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="workpaper_notes",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["account_code", "note_type"]
+        indexes = [
+            models.Index(fields=["financial_year", "account_code"]),
+        ]
+
+    def __str__(self):
+        return f"[{self.get_note_type_display()}] {self.account_code} - {self.get_status_display()}"
+
+
+# ---------------------------------------------------------------------------
+# Bulk Entity Import (Upgrade 7)
+# ---------------------------------------------------------------------------
+class EntityImportJob(models.Model):
+    """
+    Tracks a bulk entity import job from CSV/Excel.
+    """
+
+    class ImportStatus(models.TextChoices):
+        PENDING = "pending", "Pending"
+        VALIDATING = "validating", "Validating"
+        VALIDATED = "validated", "Validated"
+        IMPORTING = "importing", "Importing"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    file = models.FileField(upload_to="imports/")
+    original_filename = models.CharField(max_length=255)
+    status = models.CharField(
+        max_length=20,
+        choices=ImportStatus.choices,
+        default=ImportStatus.PENDING,
+    )
+    # Column mapping (user-defined)
+    column_mapping = models.JSONField(
+        default=dict, blank=True,
+        help_text="Maps spreadsheet columns to StatementHub fields",
+    )
+    # Results
+    total_rows = models.IntegerField(default=0)
+    created_count = models.IntegerField(default=0)
+    skipped_count = models.IntegerField(default=0)
+    error_count = models.IntegerField(default=0)
+    validation_errors = models.JSONField(
+        default=list, blank=True,
+        help_text="List of validation errors: [{row, field, message}]",
+    )
+    # Metadata
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="entity_import_jobs",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Import: {self.original_filename} ({self.get_status_display()})"
+
+    @property
+    def progress_percentage(self):
+        if self.total_rows == 0:
+            return 0
+        return int((self.created_count + self.skipped_count + self.error_count) / self.total_rows * 100)
