@@ -272,3 +272,6 @@ QBO_CLIENT_SECRET = os.environ.get("QBO_CLIENT_SECRET", "")
 
 # AI Provider — Anthropic Claude (for bank statement extraction + transaction classification)
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+
+# django-ratelimit: Use X-Forwarded-For header for IP detection behind reverse proxy (Nginx)
+RATELIMIT_IP_META_KEY = "HTTP_X_FORWARDED_FOR"
