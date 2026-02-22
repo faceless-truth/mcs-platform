@@ -103,6 +103,23 @@ class Entity(models.Model):
         null=True,
         blank=True,
         related_name="assigned_entities",
+        help_text="Legacy field — use primary_accountant instead.",
+    )
+    primary_accountant = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="primary_entities",
+        help_text="The accountant primarily responsible for this entity's work.",
+    )
+    reviewer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="review_entities",
+        help_text="The senior accountant or partner who reviews this entity's work.",
     )
     entity_name = models.CharField(max_length=255)
     entity_type = models.CharField(max_length=20, choices=EntityType.choices)
@@ -1047,6 +1064,7 @@ class AuditLog(models.Model):
         MAPPING_CHANGE = "mapping_change", "Mapping Changed"
         USER_CHANGE = "user_change", "User Modified"
         TEMPLATE_CHANGE = "template_change", "Template Modified"
+        AI_FEEDBACK = "ai_feedback", "AI Feedback"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(
@@ -1227,6 +1245,16 @@ class RiskFlag(models.Model):
     ato_interest_reasoning = models.TextField(
         blank=True, default="",
         help_text="AI reasoning for the ATO interest score"
+    )
+
+    # --- AI Feedback Loop fields ---
+    ai_feedback = models.CharField(
+        max_length=30, blank=True, default="",
+        help_text="User feedback on AI analysis: correct, partially_correct, incorrect, irrelevant"
+    )
+    ai_feedback_notes = models.TextField(
+        blank=True, default="",
+        help_text="User notes explaining the feedback/correction"
     )
 
     class Meta:

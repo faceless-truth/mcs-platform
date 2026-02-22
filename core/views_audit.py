@@ -247,13 +247,36 @@ def risk_flags_view(request, pk):
 
     # Summary counts (unfiltered)
     all_flags = fy.risk_flags.all()
+    total_flags_count = all_flags.count()
     open_flags = all_flags.filter(status="open")
-    critical_count = open_flags.filter(severity="CRITICAL").count()
-    high_count = open_flags.filter(severity="HIGH").count()
-    medium_count = open_flags.filter(severity="MEDIUM").count()
-    low_count = open_flags.filter(severity="LOW").count()
-    resolved_count = all_flags.filter(status__in=["resolved", "auto_resolved"]).count()
+    total_open = open_flags.count()
+
+    # Per-severity total counts
+    critical_count = all_flags.filter(severity="CRITICAL").count()
+    high_count = all_flags.filter(severity="HIGH").count()
+    medium_count = all_flags.filter(severity="MEDIUM").count()
+    low_count = all_flags.filter(severity="LOW").count()
+
+    # Per-severity open counts
+    critical_open = open_flags.filter(severity="CRITICAL").count()
+    high_open = open_flags.filter(severity="HIGH").count()
+    medium_open = open_flags.filter(severity="MEDIUM").count()
+    low_open = open_flags.filter(severity="LOW").count()
+    medium_low_open = medium_open + low_open
+
+    # Per-severity resolved counts
+    resolved_flags = all_flags.filter(status__in=["resolved", "auto_resolved"])
+    resolved_count = resolved_flags.count()
+    critical_resolved = resolved_flags.filter(severity="CRITICAL").count()
+    high_resolved = resolved_flags.filter(severity="HIGH").count()
+    medium_resolved = resolved_flags.filter(severity="MEDIUM").count()
+    low_resolved = resolved_flags.filter(severity="LOW").count()
+
     reviewed_count = all_flags.filter(status="reviewed").count()
+
+    # Progress percentages
+    resolution_pct = round((resolved_count / total_flags_count) * 100) if total_flags_count > 0 else 0
+    open_pct = 100 - resolution_pct
 
     # Tier breakdown
     tier1_count = all_flags.filter(tier=1).count()
@@ -283,14 +306,30 @@ def risk_flags_view(request, pk):
         "financial_year": fy,
         "entity": fy.entity,
         "flags": flag_list,
-        "total_flags": all_flags.count(),
-        "total_open": open_flags.count(),
+        "total_flags": total_flags_count,
+        "total_open": total_open,
+        # Per-severity totals
         "critical_count": critical_count,
         "high_count": high_count,
         "medium_count": medium_count,
         "low_count": low_count,
+        # Per-severity open
+        "critical_open": critical_open,
+        "high_open": high_open,
+        "medium_open": medium_open,
+        "low_open": low_open,
+        "medium_low_open": medium_low_open,
+        # Per-severity resolved
         "resolved_count": resolved_count,
+        "critical_resolved": critical_resolved,
+        "high_resolved": high_resolved,
+        "medium_resolved": medium_resolved,
+        "low_resolved": low_resolved,
         "reviewed_count": reviewed_count,
+        # Progress
+        "resolution_pct": resolution_pct,
+        "open_pct": open_pct,
+        # Tier breakdown
         "tier1_count": tier1_count,
         "tier2_count": tier2_count,
         "tier3_count": tier3_count,
@@ -375,47 +414,67 @@ def ai_analyse_flag(request, pk):
 
 
 # ---------------------------------------------------------------------------
-# AI Risk Analysis — All Flags for FY
+# AI Batch Analysis — All Flags for FY (uses batch_analyse_flags)
 # ---------------------------------------------------------------------------
 @login_required
 @require_POST
 def ai_analyse_all_flags(request, pk):
     """
-    Run AI contextual analysis on all open/reviewed flags for a financial year.
+    Run batch AI analysis on all open flags for a financial year.
+    Uses the batch engine with caching and materiality-aware prompts.
     """
     fy = get_object_or_404(FinancialYear, pk=pk)
-    flags = fy.risk_flags.filter(status__in=["open", "reviewed"])
-
-    analysed = 0
-    errors = 0
+    force = request.POST.get("force", "") == "1"
 
     try:
-        from core.ai_service import analyse_risk_flag
+        from core.ai_service import batch_analyse_flags
+        result = batch_analyse_flags(fy, force=force)
 
-        for flag in flags:
-            # Skip if already analysed with same data
-            if flag.ai_explanation and flag.ai_data_hash:
-                current_hash = _compute_flag_hash(flag)
-                if current_hash == flag.ai_data_hash:
-                    continue
+        if result.get("success"):
+            msg = f"AI batch analysis complete: {result['analysed']} analysed"
+            if result.get('skipped'):
+                msg += f", {result['skipped']} cached (skipped)"
+            if result.get('errors'):
+                msg += f", {result['errors']} error(s)"
+            messages.success(request, msg)
+        else:
+            messages.warning(request, "Batch analysis returned no results.")
 
-            try:
-                result = analyse_risk_flag(flag)
-                if result.get("success"):
-                    flag.ai_explanation = result["explanation"]
-                    flag.ai_suggested_action = result["suggested_action"]
-                    flag.ai_data_hash = result.get("data_hash", "")
-                    flag.save()
-                    analysed += 1
-            except Exception:
-                errors += 1
-
-        messages.success(request, f"AI analysis complete: {analysed} flag(s) analysed, {errors} error(s).")
-
-    except ImportError:
-        messages.error(request, "AI service not available. Check configuration.")
+    except Exception as e:
+        logger.exception("AI batch analysis error")
+        messages.error(request, f"AI batch analysis error: {str(e)}")
 
     return redirect("core:risk_flags", pk=pk)
+
+
+# ---------------------------------------------------------------------------
+# AI Feedback — Record user corrections on AI analysis
+# ---------------------------------------------------------------------------
+@login_required
+@require_POST
+def ai_feedback_view(request, pk):
+    """
+    Record user feedback on an AI analysis result.
+    Stores the feedback for future prompt improvement.
+    """
+    flag = get_object_or_404(RiskFlag, pk=pk)
+    feedback_type = request.POST.get("feedback_type", "")
+    user_notes = request.POST.get("feedback_notes", "").strip()
+
+    valid_types = ["correct", "partially_correct", "incorrect", "irrelevant"]
+    if feedback_type not in valid_types:
+        messages.error(request, "Invalid feedback type.")
+        return redirect("core:risk_flags", pk=flag.financial_year.pk)
+
+    try:
+        from core.ai_service import record_feedback
+        record_feedback(flag, feedback_type, user_notes, request.user)
+        messages.success(request, f"Feedback recorded for: {flag.title}")
+    except Exception as e:
+        logger.exception("AI feedback error")
+        messages.error(request, f"Error recording feedback: {str(e)}")
+
+    return redirect("core:risk_flags", pk=flag.financial_year.pk)
 
 
 # ---------------------------------------------------------------------------

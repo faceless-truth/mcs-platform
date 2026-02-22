@@ -501,47 +501,99 @@ def financial_year_status(request, pk):
 
     # Finalisation Gate: enforce risk engine completion and flag resolution
     if new_status == "finalised":
-        # Gate 1: Risk engine must have been run at least once
+        override_reason = request.POST.get("override_reason", "").strip()
+        force_override = request.POST.get("force_override") == "1"
+
+        # Gate 1: HARD BLOCK — Risk engine must have been run at least once
         total_flags = fy.risk_flags.count()
         if total_flags == 0:
             messages.error(
                 request,
-                "Cannot finalise: the Risk Engine has not been run for this financial year. "
-                "Please run the Risk Engine from the Audit Risk tab before finalising."
+                "BLOCKED: The Risk Engine has not been run for this financial year. "
+                "This is a mandatory step. Please run the Risk Engine from the Audit Risk tab."
             )
             return redirect("core:financial_year_detail", pk=pk)
 
-        # Gate 2: No CRITICAL flags can remain open
+        # Gate 2: HARD BLOCK — No CRITICAL flags can remain open (no override)
         critical_open = fy.risk_flags.filter(status="open", severity="CRITICAL").count()
         if critical_open > 0:
             messages.error(
                 request,
-                f"Cannot finalise: {critical_open} CRITICAL risk flag(s) remain unresolved. "
-                f"All critical flags must be resolved before finalisation."
+                f"BLOCKED: {critical_open} CRITICAL risk flag(s) remain unresolved. "
+                f"Critical flags cannot be overridden — they must be resolved before finalisation. "
+                f"These include Division 7A breaches, solvency issues, and TB imbalances."
             )
             return redirect("core:financial_year_detail", pk=pk)
 
-        # Gate 3: No HIGH flags can remain open
+        # Gate 3: WARN — HIGH flags can be overridden with a reason logged to audit trail
         high_open = fy.risk_flags.filter(status="open", severity="HIGH").count()
         if high_open > 0:
-            messages.error(
-                request,
-                f"Cannot finalise: {high_open} HIGH severity risk flag(s) remain unresolved. "
-                f"All high-severity flags must be resolved before finalisation."
-            )
-            return redirect("core:financial_year_detail", pk=pk)
+            if not force_override or not override_reason:
+                messages.warning(
+                    request,
+                    f"WARNING: {high_open} HIGH severity risk flag(s) remain unresolved. "
+                    f"You may override this gate by providing a reason. "
+                    f"This will be logged to the audit trail for partner review."
+                )
+                # Set a session flag so the template can show the override form
+                request.session["finalisation_gate_warn"] = {
+                    "high_open": high_open,
+                    "fy_pk": pk,
+                }
+                return redirect("core:financial_year_detail", pk=pk)
+            else:
+                # Override accepted — log to audit trail
+                _log_action(
+                    request, "finalisation_override",
+                    f"Finalisation gate overridden for {high_open} HIGH flags. "
+                    f"Reason: {override_reason}",
+                    fy
+                )
+                # Mark the HIGH flags as reviewed with override note
+                fy.risk_flags.filter(status="open", severity="HIGH").update(
+                    status="reviewed",
+                    resolution_notes=f"Overridden at finalisation by {request.user.get_full_name()}. "
+                                     f"Reason: {override_reason}",
+                    resolved_at=timezone.now(),
+                    resolved_by=request.user,
+                )
+                # Clear the session flag
+                request.session.pop("finalisation_gate_warn", None)
 
-        # Gate 4: MEDIUM/LOW flags must be at least reviewed (not open)
+        # Gate 4: WARN — MEDIUM/LOW flags can be overridden with a reason
         open_medium_low = fy.risk_flags.filter(
             status="open", severity__in=["MEDIUM", "LOW"]
         ).count()
         if open_medium_low > 0:
-            messages.error(
-                request,
-                f"Cannot finalise: {open_medium_low} open risk flag(s) remain. "
-                f"All flags must be resolved or reviewed (with notes) before finalisation."
-            )
-            return redirect("core:financial_year_detail", pk=pk)
+            if not force_override or not override_reason:
+                messages.warning(
+                    request,
+                    f"WARNING: {open_medium_low} MEDIUM/LOW risk flag(s) remain open. "
+                    f"You may override this gate by providing a reason."
+                )
+                request.session["finalisation_gate_warn"] = {
+                    "medium_low_open": open_medium_low,
+                    "fy_pk": pk,
+                }
+                return redirect("core:financial_year_detail", pk=pk)
+            else:
+                # Override accepted — log to audit trail
+                _log_action(
+                    request, "finalisation_override",
+                    f"Finalisation gate overridden for {open_medium_low} MEDIUM/LOW flags. "
+                    f"Reason: {override_reason}",
+                    fy
+                )
+                fy.risk_flags.filter(
+                    status="open", severity__in=["MEDIUM", "LOW"]
+                ).update(
+                    status="reviewed",
+                    resolution_notes=f"Overridden at finalisation by {request.user.get_full_name()}. "
+                                     f"Reason: {override_reason}",
+                    resolved_at=timezone.now(),
+                    resolved_by=request.user,
+                )
+                request.session.pop("finalisation_gate_warn", None)
 
     old_status = fy.status
     fy.status = new_status

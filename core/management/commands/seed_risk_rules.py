@@ -160,7 +160,7 @@ RISK_RULES = [
             "Director/shareholder loan balance of {total} for {entity_name}. "
             "Verify that minimum annual repayments have been made per the loan agreement."
         ),
-        "severity": "HIGH",
+        "severity": "CRITICAL",
         "tier": 2,
         "applicable_entities": ["company"],
         "trigger_config": {
@@ -182,7 +182,7 @@ RISK_RULES = [
             "Accounts with keywords suggesting private expenses paid by the company detected "
             "for {entity_name}. Total: {total}. These may constitute Div 7A payments or FBT liabilities."
         ),
-        "severity": "HIGH",
+        "severity": "CRITICAL",
         "tier": 2,
         "applicable_entities": ["company"],
         "trigger_config": {
@@ -205,7 +205,7 @@ RISK_RULES = [
             "Intercompany loan accounts totalling {total} detected for {entity_name}. "
             "Loans between related entities may trigger Div 7A through interposed entity provisions."
         ),
-        "severity": "HIGH",
+        "severity": "CRITICAL",
         "tier": 2,
         "applicable_entities": ["company"],
         "trigger_config": {
@@ -228,7 +228,7 @@ RISK_RULES = [
             "Trust distribution receivable or unpaid present entitlement detected for {entity_name}. "
             "Unpaid present entitlements from a trust to a company may trigger Div 7A."
         ),
-        "severity": "HIGH",
+        "severity": "CRITICAL",
         "tier": 2,
         "applicable_entities": ["company", "trust"],
         "trigger_config": {
@@ -252,7 +252,7 @@ RISK_RULES = [
             "Director/shareholder loans of {total} detected for {entity_name}. "
             "Verify that benchmark interest has been charged at the ATO rate."
         ),
-        "severity": "MEDIUM",
+        "severity": "CRITICAL",
         "tier": 2,
         "applicable_entities": ["company"],
         "trigger_config": {
@@ -278,7 +278,7 @@ RISK_RULES = [
             "Total wages/salaries of {wages} with super expense of {super_total} for {entity_name}. "
             "Expected super at {sg_rate} is {expected}. Potential shortfall of {shortfall}."
         ),
-        "severity": "CRITICAL",
+        "severity": "HIGH",
         "tier": 2,
         "applicable_entities": ["company", "trust", "partnership", "sole_trader"],
         "trigger_config": {
@@ -348,7 +348,7 @@ RISK_RULES = [
             "Superannuation expense of {total} for {entity_name}. "
             "Verify payments were made to compliant funds within statutory deadlines."
         ),
-        "severity": "MEDIUM",
+        "severity": "HIGH",
         "tier": 2,
         "applicable_entities": ["company", "trust", "partnership"],
         "trigger_config": {
@@ -588,7 +588,7 @@ RISK_RULES = [
             "Accumulated losses detected for {entity_name}. "
             "Retained earnings/accumulated losses may exceed the entity's paid-up capital."
         ),
-        "severity": "HIGH",
+        "severity": "CRITICAL",
         "tier": 2,
         "applicable_entities": ["company"],
         "trigger_config": {
@@ -640,7 +640,7 @@ RISK_RULES = [
             "Motor vehicle expenses of {expense_total} represent {ratio} of revenue ({revenue}) "
             "for {entity_name}. ATO benchmark is {benchmark}."
         ),
-        "severity": "MEDIUM",
+        "severity": "LOW",
         "tier": 2,
         "applicable_entities": ["company", "trust", "partnership", "sole_trader"],
         "trigger_config": {
@@ -663,7 +663,7 @@ RISK_RULES = [
             "Travel expenses of {expense_total} represent {ratio} of revenue ({revenue}) "
             "for {entity_name}. ATO benchmark is {benchmark}."
         ),
-        "severity": "MEDIUM",
+        "severity": "LOW",
         "tier": 2,
         "applicable_entities": ["company", "trust", "partnership", "sole_trader"],
         "trigger_config": {
@@ -685,7 +685,7 @@ RISK_RULES = [
             "Entertainment expenses of {expense_total} represent {ratio} of revenue ({revenue}) "
             "for {entity_name}. ATO benchmark is {benchmark}."
         ),
-        "severity": "MEDIUM",
+        "severity": "LOW",
         "tier": 2,
         "applicable_entities": ["company", "trust", "partnership", "sole_trader"],
         "trigger_config": {
@@ -707,7 +707,7 @@ RISK_RULES = [
             "Contractor payments of {expense_total} represent {ratio} of revenue ({revenue}) "
             "for {entity_name}. ATO benchmark is {benchmark}."
         ),
-        "severity": "MEDIUM",
+        "severity": "LOW",
         "tier": 2,
         "applicable_entities": ["company", "trust", "partnership", "sole_trader"],
         "trigger_config": {
@@ -775,7 +775,7 @@ RISK_RULES = [
             "Bad debt expense of {total} detected for {entity_name}. "
             "Verify that bad debts have been properly written off before year end."
         ),
-        "severity": "MEDIUM",
+        "severity": "LOW",
         "tier": 2,
         "applicable_entities": ["company", "trust", "partnership", "sole_trader"],
         "trigger_config": {
@@ -873,7 +873,7 @@ RISK_RULES = [
             "Capital gain or asset disposal account detected for {entity_name} totalling {total}. "
             "Review CGT event classification and available concessions."
         ),
-        "severity": "HIGH",
+        "severity": "MEDIUM",
         "tier": 2,
         "applicable_entities": ["company", "trust", "partnership", "sole_trader", "smsf"],
         "trigger_config": {
@@ -922,7 +922,7 @@ RISK_RULES = [
             "Property-related disposal or sale detected for {entity_name}. "
             "Review CGT event, GST margin scheme eligibility, and withholding obligations."
         ),
-        "severity": "HIGH",
+        "severity": "MEDIUM",
         "tier": 2,
         "applicable_entities": ["company", "trust", "partnership", "sole_trader", "smsf"],
         "trigger_config": {
@@ -1002,7 +1002,7 @@ RISK_RULES = [
             "Trust net income of {net_income} for {entity_name} but no distribution "
             "resolution recorded. Undistributed income may be taxed at the top marginal rate."
         ),
-        "severity": "CRITICAL",
+        "severity": "HIGH",
         "tier": 2,
         "applicable_entities": ["trust"],
         "trigger_config": {
@@ -1050,7 +1050,7 @@ RISK_RULES = [
             "Verify that the trust deed for {entity_name} grants the trustee adequate "
             "powers to make the intended distributions, including streaming of capital gains."
         ),
-        "severity": "MEDIUM",
+        "severity": "HIGH",
         "tier": 2,
         "applicable_entities": ["trust"],
         "trigger_config": {
@@ -1074,7 +1074,7 @@ RISK_RULES = [
             "Trust has a tax loss for {entity_name}. Trust losses are subject to the "
             "trust loss provisions and may not be deductible in future years."
         ),
-        "severity": "MEDIUM",
+        "severity": "HIGH",
         "tier": 2,
         "applicable_entities": ["trust"],
         "trigger_config": {
@@ -1378,7 +1378,7 @@ RISK_RULES = [
             "Suspense account balance of {total} detected for {entity_name}. "
             "All suspense items must be cleared before finalisation."
         ),
-        "severity": "HIGH",
+        "severity": "MEDIUM",
         "tier": 2,
         "applicable_entities": ["company", "trust", "partnership", "sole_trader", "smsf"],
         "trigger_config": {
@@ -1401,7 +1401,7 @@ RISK_RULES = [
             "{count} account(s) in the trial balance for {entity_name} are not mapped "
             "to the standard chart of accounts. These will not appear in the financial statements."
         ),
-        "severity": "HIGH",
+        "severity": "LOW",
         "tier": 2,
         "applicable_entities": ["company", "trust", "partnership", "sole_trader", "smsf"],
         "trigger_config": {
@@ -1423,7 +1423,7 @@ RISK_RULES = [
             "{count} revenue account(s) have unexpected debit balances for {entity_name}. "
             "Revenue accounts should normally have credit balances."
         ),
-        "severity": "MEDIUM",
+        "severity": "LOW",
         "tier": 2,
         "applicable_entities": ["company", "trust", "partnership", "sole_trader", "smsf"],
         "trigger_config": {
@@ -1445,7 +1445,7 @@ RISK_RULES = [
             "{count} asset account(s) have unexpected credit balances for {entity_name}. "
             "Asset accounts should normally have debit balances."
         ),
-        "severity": "MEDIUM",
+        "severity": "LOW",
         "tier": 2,
         "applicable_entities": ["company", "trust", "partnership", "sole_trader", "smsf"],
         "trigger_config": {
@@ -1491,7 +1491,7 @@ RISK_RULES = [
             "Prior year adjustment accounts detected for {entity_name} totalling {total}. "
             "Review the nature and disclosure requirements."
         ),
-        "severity": "MEDIUM",
+        "severity": "LOW",
         "tier": 2,
         "applicable_entities": ["company", "trust", "partnership", "sole_trader", "smsf"],
         "trigger_config": {
@@ -1539,7 +1539,7 @@ RISK_RULES = [
             "Income tax provision of {total} for {entity_name}. "
             "Verify the provision is correctly calculated based on taxable income."
         ),
-        "severity": "MEDIUM",
+        "severity": "LOW",
         "tier": 2,
         "applicable_entities": ["company", "smsf"],
         "trigger_config": {
@@ -1586,7 +1586,7 @@ RISK_RULES = [
     # -----------------------------------------------------------------------
     {
         "rule_id": "SMSF-01",
-        "category": "general",
+        "category": "smsf",
         "title": "SMSF — sole purpose test",
         "description": (
             "Review whether all investments and expenditure for {entity_name} satisfy "
@@ -1609,7 +1609,7 @@ RISK_RULES = [
     },
     {
         "rule_id": "SMSF-02",
-        "category": "general",
+        "category": "smsf",
         "title": "SMSF — non-concessional contribution cap",
         "description": (
             "Non-concessional contributions detected for {entity_name} totalling {total}. "
@@ -1632,7 +1632,7 @@ RISK_RULES = [
     },
     {
         "rule_id": "SMSF-03",
-        "category": "general",
+        "category": "smsf",
         "title": "SMSF — LRBA (limited recourse borrowing)",
         "description": (
             "Borrowing or LRBA-related accounts detected for {entity_name} totalling {total}. "
@@ -1657,7 +1657,7 @@ RISK_RULES = [
     },
     {
         "rule_id": "SMSF-04",
-        "category": "general",
+        "category": "smsf",
         "title": "SMSF — pension payments compliance",
         "description": (
             "Pension payments detected for {entity_name} totalling {total}. "
@@ -1682,13 +1682,13 @@ RISK_RULES = [
     },
     {
         "rule_id": "SMSF-05",
-        "category": "general",
+        "category": "smsf",
         "title": "SMSF — investment strategy review",
         "description": (
             "Annual review of the investment strategy for {entity_name} is required. "
             "Verify the strategy is documented and investments are consistent with it."
         ),
-        "severity": "MEDIUM",
+        "severity": "HIGH",
         "tier": 2,
         "applicable_entities": ["smsf"],
         "trigger_config": {

@@ -215,85 +215,22 @@ def _sync_from_airtable():
 @login_required
 def review_dashboard(request):
     """
-    Dashboard view showing audit risk alerts, pending reviews,
-    unfinalised client files, and recent activity.
+    Personalised dashboard showing staff-specific workload:
+    My Entities, My Open Flags, My Pending Reviews, practice-wide metrics,
+    and recent activity.
     """
     from core.models import (
         Client, Entity, FinancialYear, RiskFlag, AuditLog,
     )
     from django.db.models import Q, Count
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
 
     # Sync from Airtable if configured
     if _airtable_configured():
         _sync_from_airtable()
 
-    # --- Pending bank statement reviews ---
-    pending_jobs = ReviewJob.objects.filter(
-        status__in=["awaiting_review", "in_progress"]
-    ).order_by("-received_at")
-
-    completed_jobs = ReviewJob.objects.filter(
-        status="completed"
-    ).order_by("-completed_at")[:5]
-
-    activities = ReviewActivity.objects.all().order_by("-created_at")[:10]
-
-    # Learning stats
-    total_patterns = TransactionPattern.objects.count()
-
-    # --- Audit Risk Alerts ---
-    # Get clients that have open risk flags, grouped by client with severity counts
     user = request.user
-    if user.is_admin:
-        client_qs = Client.objects.filter(is_active=True)
-    else:
-        client_qs = Client.objects.filter(
-            Q(assigned_accountant=user) & Q(is_active=True)
-        )
-
-    # Find financial years with open risk flags
-    flagged_years = (
-        FinancialYear.objects.filter(
-            entity__client__in=client_qs,
-            risk_flags__status="open",
-        )
-        .select_related("entity", "entity__client")
-        .distinct()
-    )
-
-    risk_alerts = []
-    for fy in flagged_years:
-        open_flags = fy.risk_flags.filter(status="open")
-        high_count = open_flags.filter(severity__in=["HIGH", "CRITICAL"]).count()
-        medium_count = open_flags.filter(severity="MEDIUM").count()
-        low_count = open_flags.filter(severity="LOW").count()
-        total_flags = open_flags.count()
-        if total_flags > 0:
-            risk_alerts.append({
-                "client_name": fy.entity.entity_name,
-                "entity_name": fy.entity.entity_name,
-                "year_label": fy.year_label,
-                "financial_year": fy,
-                "high_count": high_count,
-                "medium_count": medium_count,
-                "low_count": low_count,
-                "total_flags": total_flags,
-            })
-    # Sort by high count descending
-    risk_alerts.sort(key=lambda x: (x["high_count"], x["total_flags"]), reverse=True)
-
-    # --- Unfinalised Client Files ---
-    unfinalised_years = (
-        FinancialYear.objects.filter(
-            entity__client__in=client_qs,
-            status__in=["draft", "in_review", "reviewed"],
-        )
-        .select_related("entity", "entity__client")
-        .order_by("-end_date")[:10]
-    )
-
-    # --- Recent Activity (from AuditLog) ---
-    recent_audit_logs = AuditLog.objects.all().order_by("-timestamp")[:10]
 
     # --- Time-based greeting (Melbourne time) ---
     from datetime import datetime
@@ -308,15 +245,173 @@ def review_dashboard(request):
         greeting = "Good evening"
     first_name = request.user.first_name or request.user.username.capitalize()
 
+    # --- MY ENTITIES (assigned as primary_accountant or reviewer) ---
+    my_entities = Entity.objects.filter(
+        is_archived=False
+    ).filter(
+        Q(primary_accountant=user) | Q(reviewer=user)
+    ).select_related("primary_accountant", "reviewer").distinct()
+
+    my_entity_count = my_entities.count()
+    my_primary_count = Entity.objects.filter(
+        is_archived=False, primary_accountant=user
+    ).count()
+    my_review_count = Entity.objects.filter(
+        is_archived=False, reviewer=user
+    ).count()
+
+    # --- MY UNFINALISED FINANCIAL YEARS ---
+    my_unfinalised_years = (
+        FinancialYear.objects.filter(
+            entity__in=my_entities,
+            status__in=["draft", "in_review", "reviewed"],
+        )
+        .select_related("entity", "entity__primary_accountant", "entity__reviewer")
+        .order_by("-end_date")[:15]
+    )
+
+    # --- MY OPEN RISK FLAGS ---
+    my_open_flags = (
+        RiskFlag.objects.filter(
+            financial_year__entity__in=my_entities,
+            status__in=["open", "reviewed"],
+        )
+        .select_related("financial_year", "financial_year__entity")
+        .order_by("-severity", "-created_at")[:20]
+    )
+
+    # Group risk flags by entity for display
+    risk_alerts = []
+    flagged_years = (
+        FinancialYear.objects.filter(
+            entity__in=my_entities,
+            risk_flags__status="open",
+        )
+        .select_related("entity")
+        .distinct()
+    )
+    for fy in flagged_years:
+        open_flags = fy.risk_flags.filter(status="open")
+        critical_count = open_flags.filter(severity="CRITICAL").count()
+        high_count = open_flags.filter(severity__in=["HIGH", "CRITICAL"]).count()
+        medium_count = open_flags.filter(severity="MEDIUM").count()
+        low_count = open_flags.filter(severity="LOW").count()
+        total_flags = open_flags.count()
+        if total_flags > 0:
+            risk_alerts.append({
+                "entity_name": fy.entity.entity_name,
+                "year_label": fy.year_label,
+                "financial_year": fy,
+                "critical_count": critical_count,
+                "high_count": high_count,
+                "medium_count": medium_count,
+                "low_count": low_count,
+                "total_flags": total_flags,
+            })
+    risk_alerts.sort(key=lambda x: (x["critical_count"], x["high_count"], x["total_flags"]), reverse=True)
+
+    # --- PENDING BANK STATEMENT REVIEWS ---
+    pending_jobs = ReviewJob.objects.filter(
+        status__in=["awaiting_review", "in_progress"]
+    ).order_by("-received_at")
+    if not user.is_admin:
+        pending_jobs = pending_jobs.filter(
+            Q(entity__primary_accountant=user) | Q(entity__reviewer=user)
+        )
+
+    completed_jobs = ReviewJob.objects.filter(
+        status="completed"
+    ).order_by("-completed_at")[:5]
+
+    activities = ReviewActivity.objects.all().order_by("-created_at")[:10]
+    total_patterns = TransactionPattern.objects.count()
+
+    # --- PRACTICE-WIDE METRICS (admin only) ---
+    practice_metrics = None
+    if user.is_admin:
+        total_entities = Entity.objects.filter(is_archived=False).count()
+        total_unfinalised = FinancialYear.objects.filter(
+            status__in=["draft", "in_review", "reviewed"]
+        ).count()
+        total_open_flags = RiskFlag.objects.filter(status="open").count()
+        total_critical_flags = RiskFlag.objects.filter(
+            status="open", severity="CRITICAL"
+        ).count()
+        total_pending_reviews = ReviewJob.objects.filter(
+            status__in=["awaiting_review", "in_progress"]
+        ).count()
+        unassigned_entities = Entity.objects.filter(
+            is_archived=False, primary_accountant__isnull=True
+        ).count()
+
+        # Staff workload summary
+        staff_workload = []
+        for staff in User.objects.filter(is_active=True):
+            p_count = Entity.objects.filter(
+                is_archived=False, primary_accountant=staff
+            ).count()
+            r_count = Entity.objects.filter(
+                is_archived=False, reviewer=staff
+            ).count()
+            open_flags_count = RiskFlag.objects.filter(
+                financial_year__entity__primary_accountant=staff,
+                status="open"
+            ).count()
+            if p_count > 0 or r_count > 0:
+                staff_workload.append({
+                    "name": staff.get_full_name() or staff.username,
+                    "primary": p_count,
+                    "review": r_count,
+                    "open_flags": open_flags_count,
+                })
+        staff_workload.sort(key=lambda x: x["primary"], reverse=True)
+
+        practice_metrics = {
+            "total_entities": total_entities,
+            "total_unfinalised": total_unfinalised,
+            "total_open_flags": total_open_flags,
+            "total_critical_flags": total_critical_flags,
+            "total_pending_reviews": total_pending_reviews,
+            "unassigned_entities": unassigned_entities,
+            "staff_workload": staff_workload,
+        }
+
+    # --- RECENT ACTIVITY (from AuditLog) ---
+    recent_audit_logs = AuditLog.objects.all().order_by("-timestamp")[:10]
+
+    # For admins, also show all unfinalised years (not just mine)
+    if user.is_admin:
+        all_unfinalised_years = (
+            FinancialYear.objects.filter(
+                status__in=["draft", "in_review", "reviewed"],
+            )
+            .select_related("entity", "entity__primary_accountant", "entity__reviewer")
+            .order_by("-end_date")[:15]
+        )
+    else:
+        all_unfinalised_years = my_unfinalised_years
+
     context = {
         "greeting": greeting,
         "first_name": first_name,
+        # My workload
+        "my_entity_count": my_entity_count,
+        "my_primary_count": my_primary_count,
+        "my_review_count": my_review_count,
+        "my_unfinalised_years": my_unfinalised_years,
+        "my_open_flags_count": my_open_flags.count(),
+        # Risk alerts
+        "risk_alerts": risk_alerts,
+        # Bank statement reviews
         "pending_jobs": pending_jobs,
         "completed_jobs": completed_jobs,
         "activities": activities,
         "total_patterns": total_patterns,
-        "risk_alerts": risk_alerts,
-        "unfinalised_years": unfinalised_years,
+        # Unfinalised files
+        "unfinalised_years": all_unfinalised_years,
+        # Practice metrics (admin only)
+        "practice_metrics": practice_metrics,
+        # Recent activity
         "recent_audit_logs": recent_audit_logs,
     }
     return render(request, "review/dashboard.html", context)

@@ -1370,3 +1370,211 @@ def bulk_import_execute(request, pk):
         f"Import complete: {created} entities created, {skipped} skipped, {errors} errors."
     )
     return redirect("core:entity_list")
+
+
+# ---------------------------------------------------------------------------
+# Entity Assignment Management
+# ---------------------------------------------------------------------------
+@login_required
+def entity_assignments(request):
+    """
+    View and manage primary_accountant and reviewer assignments for all entities.
+    Supports filtering by entity type, assignment status, and staff member.
+    """
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+
+    entities = Entity.objects.filter(is_archived=False).select_related(
+        "primary_accountant", "reviewer"
+    ).order_by("entity_name")
+
+    # Filters
+    entity_type_filter = request.GET.get("entity_type", "")
+    assignment_filter = request.GET.get("assignment", "")
+    staff_filter = request.GET.get("staff", "")
+
+    if entity_type_filter:
+        entities = entities.filter(entity_type=entity_type_filter)
+    if assignment_filter == "unassigned":
+        entities = entities.filter(primary_accountant__isnull=True)
+    elif assignment_filter == "no_reviewer":
+        entities = entities.filter(reviewer__isnull=True)
+    elif assignment_filter == "fully_assigned":
+        entities = entities.filter(
+            primary_accountant__isnull=False, reviewer__isnull=False
+        )
+    if staff_filter:
+        entities = entities.filter(
+            Q(primary_accountant_id=staff_filter) | Q(reviewer_id=staff_filter)
+        )
+
+    # Staff list for dropdowns
+    staff_members = User.objects.filter(is_active=True).order_by("first_name", "last_name")
+
+    # Summary stats
+    total_entities = Entity.objects.filter(is_archived=False).count()
+    unassigned_count = Entity.objects.filter(
+        is_archived=False, primary_accountant__isnull=True
+    ).count()
+    no_reviewer_count = Entity.objects.filter(
+        is_archived=False, reviewer__isnull=True
+    ).count()
+
+    # Staff workload summary
+    workload = []
+    for staff in staff_members:
+        primary_count = Entity.objects.filter(
+            is_archived=False, primary_accountant=staff
+        ).count()
+        review_count = Entity.objects.filter(
+            is_archived=False, reviewer=staff
+        ).count()
+        if primary_count > 0 or review_count > 0:
+            workload.append({
+                "user": staff,
+                "primary_count": primary_count,
+                "review_count": review_count,
+                "total": primary_count + review_count,
+            })
+    workload.sort(key=lambda x: x["total"], reverse=True)
+
+    context = {
+        "entities": entities,
+        "staff_members": staff_members,
+        "total_entities": total_entities,
+        "unassigned_count": unassigned_count,
+        "no_reviewer_count": no_reviewer_count,
+        "workload": workload,
+        "entity_type_filter": entity_type_filter,
+        "assignment_filter": assignment_filter,
+        "staff_filter": staff_filter,
+        "entity_type_choices": Entity.EntityType.choices,
+    }
+    return render(request, "core/entity_assignments.html", context)
+
+
+@login_required
+@require_POST
+def bulk_assign_entities(request):
+    """
+    Bulk assign primary_accountant and/or reviewer to selected entities.
+    Accepts a list of entity IDs and the staff member to assign.
+    """
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+
+    entity_ids = request.POST.getlist("entity_ids")
+    primary_accountant_id = request.POST.get("primary_accountant_id", "")
+    reviewer_id = request.POST.get("reviewer_id", "")
+    action = request.POST.get("assign_action", "set")  # set or clear
+
+    if not entity_ids:
+        messages.warning(request, "No entities selected.")
+        return redirect("core:entity_assignments")
+
+    entities = Entity.objects.filter(pk__in=entity_ids, is_archived=False)
+    count = entities.count()
+
+    if action == "clear":
+        clear_primary = request.POST.get("clear_primary") == "1"
+        clear_reviewer = request.POST.get("clear_reviewer") == "1"
+        update_fields = {}
+        if clear_primary:
+            update_fields["primary_accountant"] = None
+        if clear_reviewer:
+            update_fields["reviewer"] = None
+        if update_fields:
+            entities.update(**update_fields)
+            cleared = ", ".join(k.replace("_", " ") for k in update_fields.keys())
+            messages.success(request, f"Cleared {cleared} on {count} entities.")
+            _log_action(
+                request, "bulk_assign",
+                f"Cleared {cleared} on {count} entities",
+            )
+    else:
+        updates = {}
+        if primary_accountant_id:
+            try:
+                pa = User.objects.get(pk=primary_accountant_id, is_active=True)
+                updates["primary_accountant"] = pa
+            except User.DoesNotExist:
+                messages.error(request, "Selected primary accountant not found.")
+                return redirect("core:entity_assignments")
+
+        if reviewer_id:
+            try:
+                rev = User.objects.get(pk=reviewer_id, is_active=True)
+                updates["reviewer"] = rev
+            except User.DoesNotExist:
+                messages.error(request, "Selected reviewer not found.")
+                return redirect("core:entity_assignments")
+
+        if not updates:
+            messages.warning(request, "No staff member selected for assignment.")
+            return redirect("core:entity_assignments")
+
+        entities.update(**updates)
+        assigned_roles = []
+        if "primary_accountant" in updates:
+            assigned_roles.append(f"Primary: {updates['primary_accountant'].get_full_name()}")
+        if "reviewer" in updates:
+            assigned_roles.append(f"Reviewer: {updates['reviewer'].get_full_name()}")
+
+        messages.success(
+            request,
+            f"Assigned {', '.join(assigned_roles)} to {count} entities."
+        )
+        _log_action(
+            request, "bulk_assign",
+            f"Bulk assigned {', '.join(assigned_roles)} to {count} entities",
+        )
+
+    return redirect("core:entity_assignments")
+
+
+@login_required
+@require_POST
+def update_entity_assignment(request, pk):
+    """
+    Update the primary_accountant and/or reviewer for a single entity (inline edit).
+    """
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+
+    entity = get_object_or_404(Entity, pk=pk)
+    primary_id = request.POST.get("primary_accountant_id", "")
+    reviewer_id = request.POST.get("reviewer_id", "")
+
+    changed = []
+    if primary_id:
+        try:
+            entity.primary_accountant = User.objects.get(pk=primary_id, is_active=True)
+            changed.append("primary accountant")
+        except User.DoesNotExist:
+            pass
+    elif "primary_accountant_id" in request.POST:
+        entity.primary_accountant = None
+        changed.append("primary accountant (cleared)")
+
+    if reviewer_id:
+        try:
+            entity.reviewer = User.objects.get(pk=reviewer_id, is_active=True)
+            changed.append("reviewer")
+        except User.DoesNotExist:
+            pass
+    elif "reviewer_id" in request.POST:
+        entity.reviewer = None
+        changed.append("reviewer (cleared)")
+
+    if changed:
+        entity.save()
+        messages.success(
+            request,
+            f"Updated {', '.join(changed)} for {entity.entity_name}."
+        )
+
+    # Return to the referring page or assignments page
+    next_url = request.POST.get("next", "")
+    if next_url:
+        return redirect(next_url)
+    return redirect("core:entity_assignments")

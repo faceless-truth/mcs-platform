@@ -17,33 +17,58 @@
         font-size: 0.95rem;
         color: #6c757d;
     }
-    .risk-card {
+    .metric-card {
         background: white;
         border-radius: 12px;
         padding: 20px;
         box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-        border-left: 4px solid #dc3545;
+        text-align: center;
+        transition: all 0.2s;
+    }
+    .metric-card:hover {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+        transform: translateY(-1px);
+    }
+    .metric-card .metric-value {
+        font-size: 2rem;
+        font-weight: 700;
+        line-height: 1;
+    }
+    .metric-card .metric-label {
+        font-size: 0.82rem;
+        color: #6c757d;
+        margin-top: 4px;
+    }
+    .risk-card {
+        background: white;
+        border-radius: 12px;
+        padding: 16px 20px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
         transition: all 0.2s;
         text-decoration: none;
         color: inherit;
         display: block;
-        margin-bottom: 12px;
+        margin-bottom: 10px;
     }
     .risk-card:hover {
         box-shadow: 0 4px 12px rgba(0,0,0,0.12);
         transform: translateY(-1px);
         color: inherit;
     }
-    .risk-card .client-name {
+    .risk-card.has-critical { border-left: 4px solid #dc3545; }
+    .risk-card.has-high { border-left: 4px solid #fd7e14; }
+    .risk-card.has-medium { border-left: 4px solid #ffc107; }
+    .risk-card.has-low { border-left: 4px solid #0dcaf0; }
+    .risk-card .entity-name {
         font-weight: 600;
-        font-size: 1.05rem;
+        font-size: 1rem;
         color: #1a1a2e;
     }
     .risk-card .meta {
         font-size: 0.82rem;
         color: #6c757d;
     }
-    .no-risks {
+    .no-data-box {
         text-align: center;
         padding: 30px;
         background: white;
@@ -56,9 +81,7 @@
         box-shadow: 0 1px 3px rgba(0,0,0,0.08);
         overflow: hidden;
     }
-    .wip-table table {
-        margin-bottom: 0;
-    }
+    .wip-table table { margin-bottom: 0; }
     .wip-table th {
         background: #f8f9fa;
         font-size: 0.82rem;
@@ -72,14 +95,12 @@
         vertical-align: middle;
         font-size: 0.9rem;
     }
-    .wip-table .client-link {
+    .wip-table .entity-link {
         text-decoration: none;
         color: #1a1a2e;
         font-weight: 600;
     }
-    .wip-table .client-link:hover {
-        color: #0d6efd;
-    }
+    .wip-table .entity-link:hover { color: #0d6efd; }
     .sidebar-widget {
         background: white;
         border-radius: 12px;
@@ -95,9 +116,7 @@
         padding: 10px 0;
         border-bottom: 1px solid #f0f0f0;
     }
-    .activity-item:last-child {
-        border-bottom: none;
-    }
+    .activity-item:last-child { border-bottom: none; }
     .activity-icon {
         width: 34px;
         height: 34px;
@@ -114,6 +133,24 @@
         color: #1a1a2e;
         margin-bottom: 16px;
     }
+    .practice-metric {
+        text-align: center;
+        padding: 12px 8px;
+    }
+    .practice-metric .pm-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+        line-height: 1;
+    }
+    .practice-metric .pm-label {
+        font-size: 0.75rem;
+        color: #6c757d;
+        margin-top: 2px;
+    }
+    .workload-table th, .workload-table td {
+        font-size: 0.85rem;
+        padding: 8px 12px;
+    }
 </style>
 {% endblock %}
 
@@ -124,37 +161,139 @@
     <div class="datetime" id="liveClock"></div>
 </div>
 
-<div class="row g-4 mt-2">
-    <!-- Centre Column: Audit Alerts + Unfinalised Clients -->
-    <div class="col-lg-8 mx-auto">
+<!-- MY WORKLOAD SUMMARY CARDS -->
+<div class="row g-3 mt-2 mb-4">
+    <div class="col-md-3">
+        <div class="metric-card border-start border-4 border-primary">
+            <div class="metric-value text-primary">{{ my_entity_count }}</div>
+            <div class="metric-label">My Entities</div>
+            <div style="font-size: 0.72rem; color: #adb5bd; margin-top: 2px;">
+                {{ my_primary_count }} primary &middot; {{ my_review_count }} reviewer
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="metric-card border-start border-4 border-warning">
+            <div class="metric-value text-warning">{{ my_unfinalised_years|length }}</div>
+            <div class="metric-label">My Open Files</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="metric-card border-start border-4 border-danger">
+            <div class="metric-value text-danger">{{ my_open_flags_count }}</div>
+            <div class="metric-label">My Open Risk Flags</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="metric-card border-start border-4 border-info">
+            <div class="metric-value text-info">{{ pending_jobs|length }}</div>
+            <div class="metric-label">Pending Bank Reviews</div>
+        </div>
+    </div>
+</div>
 
-        <!-- Audit Risk Alerts -->
+{% if practice_metrics %}
+<!-- PRACTICE-WIDE METRICS (Admin Only) -->
+<div class="card border-0 shadow-sm mb-4">
+    <div class="card-header bg-white fw-bold py-2">
+        <i class="bi bi-graph-up text-primary"></i> Practice Overview
+    </div>
+    <div class="card-body py-2">
+        <div class="row">
+            <div class="col practice-metric">
+                <div class="pm-value text-dark">{{ practice_metrics.total_entities }}</div>
+                <div class="pm-label">Total Entities</div>
+            </div>
+            <div class="col practice-metric">
+                <div class="pm-value text-warning">{{ practice_metrics.total_unfinalised }}</div>
+                <div class="pm-label">Unfinalised</div>
+            </div>
+            <div class="col practice-metric">
+                <div class="pm-value text-danger">{{ practice_metrics.total_open_flags }}</div>
+                <div class="pm-label">Open Flags</div>
+            </div>
+            <div class="col practice-metric">
+                <div class="pm-value" style="color: #dc3545;">{{ practice_metrics.total_critical_flags }}</div>
+                <div class="pm-label">Critical Flags</div>
+            </div>
+            <div class="col practice-metric">
+                <div class="pm-value text-info">{{ practice_metrics.total_pending_reviews }}</div>
+                <div class="pm-label">Pending Reviews</div>
+            </div>
+            <div class="col practice-metric">
+                <div class="pm-value text-secondary">{{ practice_metrics.unassigned_entities }}</div>
+                <div class="pm-label">Unassigned</div>
+            </div>
+        </div>
+
+        {% if practice_metrics.staff_workload %}
+        <hr class="my-2">
+        <div class="section-header" style="font-size: 0.9rem; margin-bottom: 8px;">
+            <i class="bi bi-people"></i> Staff Workload
+        </div>
+        <table class="table table-sm workload-table mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Staff Member</th>
+                    <th class="text-center">Primary</th>
+                    <th class="text-center">Reviewer</th>
+                    <th class="text-center">Open Flags</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for w in practice_metrics.staff_workload %}
+                <tr>
+                    <td class="fw-bold">{{ w.name }}</td>
+                    <td class="text-center"><span class="badge bg-primary rounded-pill">{{ w.primary }}</span></td>
+                    <td class="text-center"><span class="badge bg-info rounded-pill">{{ w.review }}</span></td>
+                    <td class="text-center">
+                        {% if w.open_flags > 0 %}
+                        <span class="badge bg-danger rounded-pill">{{ w.open_flags }}</span>
+                        {% else %}
+                        <span class="badge bg-success rounded-pill">0</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+<div class="row g-4">
+    <!-- Main Column -->
+    <div class="col-lg-8">
+
+        <!-- MY RISK ALERTS -->
         <div class="d-flex justify-content-between align-items-center mb-3">
             <div class="section-header mb-0">
-                <i class="bi bi-shield-exclamation text-danger"></i> Audit Risk Alerts
+                <i class="bi bi-shield-exclamation text-danger"></i> My Risk Alerts
             </div>
             {% if risk_alerts %}
             <span class="badge bg-danger rounded-pill px-3">
-                {{ risk_alerts|length }} client{{ risk_alerts|length|pluralize }} with risks
+                {{ risk_alerts|length }} entit{{ risk_alerts|length|pluralize:"y,ies" }} with risks
             </span>
             {% endif %}
         </div>
 
         {% for alert in risk_alerts %}
-        <a href="{% url 'core:financial_year_detail' pk=alert.financial_year.pk %}" class="risk-card">
+        <a href="{% url 'core:risk_flags' pk=alert.financial_year.pk %}" class="risk-card {% if alert.critical_count %}has-critical{% elif alert.high_count %}has-high{% elif alert.medium_count %}has-medium{% else %}has-low{% endif %}">
             <div class="d-flex justify-content-between align-items-start">
                 <div>
-                    <div class="client-name">{{ alert.entity_name }}</div>
+                    <div class="entity-name">{{ alert.entity_name }}</div>
                     <div class="meta mt-1">
-                        <i class="bi bi-building"></i> {{ alert.entity_name }}
-                        <span class="mx-1">&middot;</span>
                         <i class="bi bi-calendar3"></i> {{ alert.year_label }}
                     </div>
                 </div>
                 <div class="text-end">
-                    <div class="d-flex gap-2 justify-content-end">
-                        {% if alert.high_count %}
-                        <span class="badge bg-danger rounded-pill px-2 py-1">{{ alert.high_count }} HIGH</span>
+                    <div class="d-flex gap-2 justify-content-end flex-wrap">
+                        {% if alert.critical_count %}
+                        <span class="badge bg-danger rounded-pill px-2 py-1">{{ alert.critical_count }} CRITICAL</span>
+                        {% endif %}
+                        {% if alert.high_count and alert.high_count != alert.critical_count %}
+                        <span class="badge rounded-pill px-2 py-1" style="background: #fd7e14;">{{ alert.high_count|add:"-"|add:alert.critical_count }} HIGH</span>
                         {% endif %}
                         {% if alert.medium_count %}
                         <span class="badge bg-warning text-dark rounded-pill px-2 py-1">{{ alert.medium_count }} MEDIUM</span>
@@ -170,43 +309,46 @@
             </div>
         </a>
         {% empty %}
-        <div class="no-risks mb-4">
+        <div class="no-data-box mb-4">
             <i class="bi bi-shield-check text-success" style="font-size: 2.5rem;"></i>
-            <h6 class="mt-2 text-muted">No open audit risks</h6>
-            <p class="text-muted small mb-0">All client files are clear.</p>
+            <h6 class="mt-2 text-muted">No open risk flags</h6>
+            <p class="text-muted small mb-0">All your entities are clear.</p>
         </div>
         {% endfor %}
 
-        <!-- Unfinalised Client Files -->
+        <!-- MY UNFINALISED FILES -->
         <div class="section-header mt-4">
-            <i class="bi bi-folder2-open text-primary"></i> Unfinalised Client Files
-            {% if unfinalised_years %}
-            <span class="badge bg-primary rounded-pill ms-1">{{ unfinalised_years|length }}</span>
+            <i class="bi bi-folder2-open text-primary"></i> My Unfinalised Files
+            {% if my_unfinalised_years %}
+            <span class="badge bg-primary rounded-pill ms-1">{{ my_unfinalised_years|length }}</span>
             {% endif %}
         </div>
 
-        {% if unfinalised_years %}
+        {% if my_unfinalised_years %}
         <div class="wip-table">
             <table class="table table-hover mb-0">
                 <thead>
                     <tr>
-                        <th class="ps-3">Client</th>
-                        <th>Entity</th>
+                        <th class="ps-3">Entity</th>
+                        <th>Type</th>
                         <th>Period</th>
                         <th class="text-center">Status</th>
+                        <th class="text-center">My Role</th>
                         <th class="text-end pe-3">Last Updated</th>
                         <th></th>
                     </tr>
                 </thead>
                 <tbody>
-                    {% for fy in unfinalised_years %}
+                    {% for fy in my_unfinalised_years %}
                     <tr>
                         <td class="ps-3">
-                            <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="client-link">
+                            <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="entity-link">
                                 {{ fy.entity.entity_name }}
                             </a>
                         </td>
-                        <td>{{ fy.entity.entity_name }}</td>
+                        <td>
+                            <span class="badge bg-secondary" style="font-size: 0.72rem;">{{ fy.entity.get_entity_type_display }}</span>
+                        </td>
                         <td>{{ fy.year_label }}</td>
                         <td class="text-center">
                             {% if fy.status == 'draft' %}
@@ -215,6 +357,15 @@
                             <span class="badge bg-warning text-dark rounded-pill px-2">In Review</span>
                             {% elif fy.status == 'reviewed' %}
                             <span class="badge bg-info text-dark rounded-pill px-2">Reviewed</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">
+                            {% if fy.entity.primary_accountant_id == request.user.pk and fy.entity.reviewer_id == request.user.pk %}
+                            <span class="badge bg-primary rounded-pill" style="font-size: 0.7rem;">Primary + Reviewer</span>
+                            {% elif fy.entity.primary_accountant_id == request.user.pk %}
+                            <span class="badge bg-primary rounded-pill" style="font-size: 0.7rem;">Primary</span>
+                            {% elif fy.entity.reviewer_id == request.user.pk %}
+                            <span class="badge bg-info rounded-pill" style="font-size: 0.7rem;">Reviewer</span>
                             {% endif %}
                         </td>
                         <td class="text-end pe-3">
@@ -231,17 +382,84 @@
             </table>
         </div>
         {% else %}
-        <div class="no-risks">
+        <div class="no-data-box">
             <i class="bi bi-check-circle text-success" style="font-size: 2.5rem;"></i>
-            <h6 class="mt-2 text-muted">All client files are finalised</h6>
+            <h6 class="mt-2 text-muted">All your files are finalised</h6>
+        </div>
+        {% endif %}
+
+        {% if pending_jobs %}
+        <!-- PENDING BANK STATEMENT REVIEWS -->
+        <div class="section-header mt-4">
+            <i class="bi bi-bank text-info"></i> Pending Bank Statement Reviews
+            <span class="badge bg-info rounded-pill ms-1">{{ pending_jobs|length }}</span>
+        </div>
+        <div class="wip-table">
+            <table class="table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th class="ps-3">Entity</th>
+                        <th>Received</th>
+                        <th class="text-center">Transactions</th>
+                        <th class="text-center">Status</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for job in pending_jobs %}
+                    <tr>
+                        <td class="ps-3 fw-bold">{{ job.entity.entity_name|default:"Unknown" }}</td>
+                        <td><small class="text-muted">{{ job.received_at|timesince }} ago</small></td>
+                        <td class="text-center">
+                            <span class="badge bg-secondary rounded-pill">{{ job.transactions.count }}</span>
+                        </td>
+                        <td class="text-center">
+                            {% if job.status == 'awaiting_review' %}
+                            <span class="badge bg-warning text-dark rounded-pill px-2">Awaiting Review</span>
+                            {% else %}
+                            <span class="badge bg-info rounded-pill px-2">In Progress</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <a href="{% url 'review:review_detail' pk=job.pk %}" class="btn btn-sm btn-outline-primary py-0 px-2">
+                                Review
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
         </div>
         {% endif %}
 
     </div>
 
-    <!-- Right Column: Recent Activity -->
+    <!-- Right Sidebar -->
     <div class="col-lg-4">
-        <div class="sidebar-widget" style="max-height: 600px; overflow-y: auto;">
+
+        <!-- Quick Actions -->
+        <div class="sidebar-widget">
+            <h6 class="fw-bold"><i class="bi bi-lightning-charge"></i> Quick Actions</h6>
+            <div class="d-grid gap-2">
+                <a href="{% url 'core:entity_list' %}" class="btn btn-sm btn-outline-primary text-start">
+                    <i class="bi bi-building me-1"></i> View All Entities
+                </a>
+                <a href="{% url 'core:entity_create' %}" class="btn btn-sm btn-outline-success text-start">
+                    <i class="bi bi-plus-circle me-1"></i> Create Entity
+                </a>
+                {% if request.user.is_admin %}
+                <a href="{% url 'core:entity_assignments' %}" class="btn btn-sm btn-outline-info text-start">
+                    <i class="bi bi-people me-1"></i> Entity Assignments
+                </a>
+                <a href="{% url 'core:bulk_import_start' %}" class="btn btn-sm btn-outline-secondary text-start">
+                    <i class="bi bi-cloud-upload me-1"></i> Bulk Import
+                </a>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Recent Activity -->
+        <div class="sidebar-widget" style="max-height: 500px; overflow-y: auto;">
             <h6 class="fw-bold"><i class="bi bi-activity"></i> Recent Activity</h6>
 
             {% for activity in activities %}
@@ -294,6 +512,17 @@
             <p class="text-muted text-center py-3" style="font-size: 0.85rem;">No recent activity.</p>
             {% endif %}
         </div>
+
+        <!-- AI Learning Stats -->
+        {% if total_patterns > 0 %}
+        <div class="sidebar-widget">
+            <h6 class="fw-bold"><i class="bi bi-robot"></i> AI Learning</h6>
+            <div class="text-center py-2">
+                <div style="font-size: 1.5rem; font-weight: 700; color: #6f42c1;">{{ total_patterns|intcomma }}</div>
+                <small class="text-muted">Transaction patterns learned</small>
+            </div>
+        </div>
+        {% endif %}
     </div>
 </div>
 

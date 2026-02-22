@@ -27,53 +27,132 @@
     </div>
 </div>
 
-<!-- Summary Cards -->
+<!-- Traffic Light Summary Header -->
+<div class="card mb-4 border-0 shadow-sm" id="traffic-light-header">
+    <div class="card-body py-3">
+        <div class="d-flex align-items-center justify-content-between">
+            <!-- Overall Health Indicator -->
+            <div class="d-flex align-items-center gap-3">
+                {% if critical_open > 0 %}
+                <div class="d-flex align-items-center gap-2">
+                    <div style="width: 48px; height: 48px; border-radius: 50%; background: #dc3545; display: flex; align-items: center; justify-content: center;">
+                        <i class="bi bi-x-lg text-white" style="font-size: 1.4rem;"></i>
+                    </div>
+                    <div>
+                        <div class="fw-bold text-danger" style="font-size: 1.1rem;">Cannot Finalise</div>
+                        <small class="text-muted">Critical flags must be resolved</small>
+                    </div>
+                </div>
+                {% elif high_open > 0 %}
+                <div class="d-flex align-items-center gap-2">
+                    <div style="width: 48px; height: 48px; border-radius: 50%; background: #fd7e14; display: flex; align-items: center; justify-content: center;">
+                        <i class="bi bi-exclamation-triangle text-white" style="font-size: 1.4rem;"></i>
+                    </div>
+                    <div>
+                        <div class="fw-bold" style="font-size: 1.1rem; color: #fd7e14;">Override Required</div>
+                        <small class="text-muted">High flags need resolution or override</small>
+                    </div>
+                </div>
+                {% elif medium_low_open > 0 %}
+                <div class="d-flex align-items-center gap-2">
+                    <div style="width: 48px; height: 48px; border-radius: 50%; background: #ffc107; display: flex; align-items: center; justify-content: center;">
+                        <i class="bi bi-exclamation-circle text-dark" style="font-size: 1.4rem;"></i>
+                    </div>
+                    <div>
+                        <div class="fw-bold text-warning" style="font-size: 1.1rem;">Review Needed</div>
+                        <small class="text-muted">Medium/Low flags remain open</small>
+                    </div>
+                </div>
+                {% else %}
+                <div class="d-flex align-items-center gap-2">
+                    <div style="width: 48px; height: 48px; border-radius: 50%; background: #198754; display: flex; align-items: center; justify-content: center;">
+                        <i class="bi bi-check-lg text-white" style="font-size: 1.4rem;"></i>
+                    </div>
+                    <div>
+                        <div class="fw-bold text-success" style="font-size: 1.1rem;">Ready to Finalise</div>
+                        <small class="text-muted">All flags resolved or reviewed</small>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- Open vs Resolved Progress -->
+            <div class="text-center" style="min-width: 200px;">
+                <div class="d-flex justify-content-between mb-1">
+                    <small class="text-muted">Open: <strong class="text-danger">{{ total_open }}</strong></small>
+                    <small class="text-muted">Resolved: <strong class="text-success">{{ resolved_count }}</strong></small>
+                </div>
+                <div class="progress" style="height: 10px;">
+                    {% if total_flags > 0 %}
+                    <div class="progress-bar bg-success" role="progressbar" style="width: {{ resolution_pct }}%" title="{{ resolution_pct }}% resolved"></div>
+                    <div class="progress-bar bg-danger" role="progressbar" style="width: {{ open_pct }}%" title="{{ open_pct }}% open"></div>
+                    {% endif %}
+                </div>
+                <small class="text-muted">{{ resolution_pct }}% resolved of {{ total_flags }} flags</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Severity Breakdown Cards -->
 <div class="row g-3 mb-4">
-    <div class="col-md-2">
+    <div class="col">
         <div class="card border-0 shadow-sm border-start border-4 border-danger">
             <div class="card-body text-center py-3">
                 <div style="font-size: 1.6rem; font-weight: 700; color: #dc3545;">{{ critical_count }}</div>
                 <small class="text-muted">Critical</small>
+                <div class="mt-1">
+                    <span class="badge bg-danger">{{ critical_open }} open</span>
+                    <span class="badge bg-success">{{ critical_resolved }} resolved</span>
+                </div>
             </div>
         </div>
     </div>
-    <div class="col-md-2">
-        <div class="card border-0 shadow-sm border-start border-4" style="border-color: #e74c3c !important;">
+    <div class="col">
+        <div class="card border-0 shadow-sm border-start border-4" style="border-color: #fd7e14 !important;">
             <div class="card-body text-center py-3">
-                <div style="font-size: 1.6rem; font-weight: 700; color: #e74c3c;">{{ high_count }}</div>
+                <div style="font-size: 1.6rem; font-weight: 700; color: #fd7e14;">{{ high_count }}</div>
                 <small class="text-muted">High</small>
+                <div class="mt-1">
+                    <span class="badge" style="background: #fd7e14;">{{ high_open }} open</span>
+                    <span class="badge bg-success">{{ high_resolved }} resolved</span>
+                </div>
             </div>
         </div>
     </div>
-    <div class="col-md-2">
+    <div class="col">
         <div class="card border-0 shadow-sm border-start border-4 border-warning">
             <div class="card-body text-center py-3">
                 <div style="font-size: 1.6rem; font-weight: 700; color: #ffc107;">{{ medium_count }}</div>
                 <small class="text-muted">Medium</small>
+                <div class="mt-1">
+                    <span class="badge bg-warning text-dark">{{ medium_open }} open</span>
+                    <span class="badge bg-success">{{ medium_resolved }} resolved</span>
+                </div>
             </div>
         </div>
     </div>
-    <div class="col-md-2">
+    <div class="col">
         <div class="card border-0 shadow-sm border-start border-4 border-info">
             <div class="card-body text-center py-3">
                 <div style="font-size: 1.6rem; font-weight: 700; color: #0dcaf0;">{{ low_count }}</div>
                 <small class="text-muted">Low</small>
+                <div class="mt-1">
+                    <span class="badge bg-info text-dark">{{ low_open }} open</span>
+                    <span class="badge bg-success">{{ low_resolved }} resolved</span>
+                </div>
             </div>
         </div>
     </div>
-    <div class="col-md-2">
-        <div class="card border-0 shadow-sm border-start border-4 border-success">
-            <div class="card-body text-center py-3">
-                <div style="font-size: 1.6rem; font-weight: 700; color: #198754;">{{ resolved_count }}</div>
-                <small class="text-muted">Resolved</small>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-2">
+    <div class="col">
         <div class="card border-0 shadow-sm border-start border-4 border-dark">
             <div class="card-body text-center py-3">
                 <div style="font-size: 1.6rem; font-weight: 700; color: #1a1a2e;">{{ total_flags }}</div>
                 <small class="text-muted">Total</small>
+                <div class="mt-1">
+                    <span class="badge bg-dark">{{ total_open }} open</span>
+                    <span class="badge bg-success">{{ resolved_count }} done</span>
+                </div>
             </div>
         </div>
     </div>
@@ -269,6 +348,29 @@
                     {% if flag.ato_interest_reasoning %}
                     <p class="mb-0 mt-1 text-muted"><small><strong>ATO Interest Reasoning:</strong> {{ flag.ato_interest_reasoning }}</small></p>
                     {% endif %}
+
+                    <!-- AI Feedback Controls -->
+                    <div class="mt-2 d-flex align-items-center gap-2">
+                        <small class="text-muted me-1">Was this helpful?</small>
+                        {% if flag.ai_feedback %}
+                        <span class="badge {% if flag.ai_feedback == 'correct' %}bg-success{% elif flag.ai_feedback == 'partially_correct' %}bg-warning text-dark{% elif flag.ai_feedback == 'incorrect' %}bg-danger{% else %}bg-secondary{% endif %}">
+                            <i class="bi bi-chat-dots"></i> {{ flag.ai_feedback|title }}
+                        </span>
+                        {% if flag.ai_feedback_notes %}
+                        <small class="text-muted">"{{ flag.ai_feedback_notes|truncatewords:15 }}"</small>
+                        {% endif %}
+                        {% else %}
+                        <button type="button" class="btn btn-sm btn-outline-success py-0 px-2" data-bs-toggle="modal" data-bs-target="#feedbackModal{{ flag.pk|slugify }}" title="AI analysis was correct">
+                            <i class="bi bi-hand-thumbs-up"></i>
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-warning py-0 px-2" data-bs-toggle="modal" data-bs-target="#feedbackModal{{ flag.pk|slugify }}" onclick="document.getElementById('fb-type-{{ flag.pk|slugify }}').value='partially_correct'" title="Partially correct">
+                            <i class="bi bi-hand-thumbs-up"></i>/<i class="bi bi-hand-thumbs-down"></i>
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-danger py-0 px-2" data-bs-toggle="modal" data-bs-target="#feedbackModal{{ flag.pk|slugify }}" onclick="document.getElementById('fb-type-{{ flag.pk|slugify }}').value='incorrect'" title="AI analysis was incorrect">
+                            <i class="bi bi-hand-thumbs-down"></i>
+                        </button>
+                        {% endif %}
+                    </div>
                 </div>
                 {% endif %}
 
@@ -337,6 +439,62 @@
                 <div class="modal-footer">
                     <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
                     <button type="submit" class="btn btn-sm btn-success"><i class="bi bi-check-lg"></i> Resolve Flag</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- AI Feedback Modal -->
+{% if item.has_ai and not flag.ai_feedback %}
+<div class="modal fade" id="feedbackModal{{ flag.pk|slugify }}" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="post" action="{% url 'core:ai_feedback' pk=flag.pk %}">
+                {% csrf_token %}
+                <input type="hidden" name="feedback_type" id="fb-type-{{ flag.pk|slugify }}" value="correct">
+                <div class="modal-header">
+                    <h6 class="modal-title fw-bold"><i class="bi bi-robot text-primary"></i> AI Feedback: {{ flag.title|truncatewords:8 }}</h6>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted" style="font-size: 0.88rem;">How accurate was the AI analysis for this flag?</p>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Feedback Type</label>
+                        <div class="d-flex gap-2 flex-wrap">
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="feedback_type_radio" value="correct" id="fb-correct-{{ flag.pk|slugify }}" checked
+                                    onchange="document.getElementById('fb-type-{{ flag.pk|slugify }}').value='correct'">
+                                <label class="form-check-label text-success" for="fb-correct-{{ flag.pk|slugify }}"><i class="bi bi-check-circle"></i> Correct</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="feedback_type_radio" value="partially_correct" id="fb-partial-{{ flag.pk|slugify }}"
+                                    onchange="document.getElementById('fb-type-{{ flag.pk|slugify }}').value='partially_correct'">
+                                <label class="form-check-label text-warning" for="fb-partial-{{ flag.pk|slugify }}"><i class="bi bi-exclamation-circle"></i> Partially Correct</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="feedback_type_radio" value="incorrect" id="fb-incorrect-{{ flag.pk|slugify }}"
+                                    onchange="document.getElementById('fb-type-{{ flag.pk|slugify }}').value='incorrect'">
+                                <label class="form-check-label text-danger" for="fb-incorrect-{{ flag.pk|slugify }}"><i class="bi bi-x-circle"></i> Incorrect</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="feedback_type_radio" value="irrelevant" id="fb-irrelevant-{{ flag.pk|slugify }}"
+                                    onchange="document.getElementById('fb-type-{{ flag.pk|slugify }}').value='irrelevant'">
+                                <label class="form-check-label text-secondary" for="fb-irrelevant-{{ flag.pk|slugify }}"><i class="bi bi-dash-circle"></i> Irrelevant</label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label fw-bold">Correction Notes <small class="text-muted">(optional)</small></label>
+                        <textarea name="feedback_notes" class="form-control" rows="3"
+                            placeholder="If incorrect or partially correct, explain what was wrong or missing..."></textarea>
+                        <small class="text-muted">Your feedback improves future AI analysis accuracy.</small>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-send"></i> Submit Feedback</button>
                 </div>
             </form>
         </div>

@@ -75,6 +75,7 @@ urlpatterns = [
     path("years/<uuid:pk>/ai-analyse-all/", views_audit.ai_analyse_all_flags, name="ai_analyse_all_flags"),
     path("years/<uuid:pk>/ai-prioritise/", views_audit.ai_prioritise_flags, name="ai_prioritise_flags"),
     path("years/<uuid:pk>/risk-report/", views_audit.generate_risk_report, name="generate_risk_report"),
+    path("risk-flags/<uuid:pk>/ai-feedback/", views_audit.ai_feedback_view, name="ai_feedback"),
 
     # Associates (now entity-level)
     path("entities/<uuid:entity_pk>/associates/create/", views.associate_create, name="associate_create"),
@@ -171,4 +172,9 @@ urlpatterns = [
     path("import/bulk/<uuid:pk>/map/", views_upgrades.bulk_import_map, name="bulk_import_map"),
     path("import/bulk/<uuid:pk>/validate/", views_upgrades.bulk_import_validate, name="bulk_import_validate"),
     path("import/bulk/<uuid:pk>/execute/", views_upgrades.bulk_import_execute, name="bulk_import_execute"),
+
+    # ===== ENTITY ASSIGNMENTS (Sprint 2) =====
+    path("assignments/", views_upgrades.entity_assignments, name="entity_assignments"),
+    path("assignments/bulk-assign/", views_upgrades.bulk_assign_entities, name="bulk_assign_entities"),
+    path("entities/<uuid:pk>/assign/", views_upgrades.update_entity_assignment, name="update_entity_assignment"),
 ]
