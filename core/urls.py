@@ -67,9 +67,14 @@ urlpatterns = [
     # Audit Library
     path("audit-library/", views_audit.audit_library, name="audit_library"),
 
-    # Risk Flags
+    # Risk Flags & Risk Engine
     path("years/<uuid:pk>/risk-flags/", views_audit.risk_flags_view, name="risk_flags"),
     path("risk-flags/<uuid:pk>/resolve/", views_audit.resolve_risk_flag, name="resolve_risk_flag"),
+    path("years/<uuid:pk>/run-risk-engine/", views_audit.run_risk_engine_view, name="run_risk_engine"),
+    path("risk-flags/<uuid:pk>/ai-analyse/", views_audit.ai_analyse_flag, name="ai_analyse_flag"),
+    path("years/<uuid:pk>/ai-analyse-all/", views_audit.ai_analyse_all_flags, name="ai_analyse_all_flags"),
+    path("years/<uuid:pk>/ai-prioritise/", views_audit.ai_prioritise_flags, name="ai_prioritise_flags"),
+    path("years/<uuid:pk>/risk-report/", views_audit.generate_risk_report, name="generate_risk_report"),
 
     # Associates (now entity-level)
     path("entities/<uuid:entity_pk>/associates/create/", views.associate_create, name="associate_create"),

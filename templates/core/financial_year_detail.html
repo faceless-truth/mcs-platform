@@ -511,9 +511,19 @@
                 <span class="badge bg-success ms-1">No Issues</span>
                 {% endif %}
             </h6>
-            <a href="{% url 'core:risk_flags' pk=fy.pk %}" class="btn btn-outline-primary btn-sm">
-                <i class="bi bi-arrow-clockwise"></i> Run Audit Check
-            </a>
+            <div class="d-flex gap-2">
+                {% if not fy.is_locked %}
+                <form method="post" action="{% url 'core:run_risk_engine' pk=fy.pk %}">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-primary btn-sm">
+                        <i class="bi bi-cpu"></i> Run Risk Engine
+                    </button>
+                </form>
+                {% endif %}
+                <a href="{% url 'core:risk_flags' pk=fy.pk %}" class="btn btn-outline-primary btn-sm">
+                    <i class="bi bi-shield-exclamation"></i> View All Flags
+                </a>
+            </div>
         </div>
 
         {% if risk_flags %}

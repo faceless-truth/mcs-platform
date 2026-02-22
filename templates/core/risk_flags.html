@@ -5,146 +5,365 @@
 <div class="d-flex justify-content-between align-items-center mb-3">
     <div>
         <h4 class="fw-bold mb-1">
-            <i class="bi bi-shield-exclamation text-danger"></i> Risk Flags
+            <i class="bi bi-shield-exclamation text-danger"></i> Risk Engine &amp; Audit Flags
         </h4>
         <p class="text-muted mb-0">
-            {{ financial_year.entity.entity_name }} &middot; {{ financial_year.year_label }}
+            {{ entity.entity_name }} &middot; {{ financial_year.year_label }}
+            &middot; <span class="badge bg-{% if financial_year.status == 'finalised' %}success{% elif financial_year.status == 'reviewed' %}primary{% elif financial_year.status == 'in_review' %}warning text-dark{% else %}secondary{% endif %}">{{ financial_year.get_status_display }}</span>
         </p>
     </div>
-    <a href="{% url 'core:financial_year_detail' pk=financial_year.pk %}" class="btn btn-outline-secondary btn-sm">
-        <i class="bi bi-arrow-left"></i> Back to Workspace
-    </a>
+    <div class="d-flex gap-2">
+        {% if not financial_year.is_locked %}
+        <form method="post" action="{% url 'core:run_risk_engine' pk=financial_year.pk %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-primary btn-sm">
+                <i class="bi bi-cpu"></i> Run Risk Engine
+            </button>
+        </form>
+        {% endif %}
+        <a href="{% url 'core:financial_year_detail' pk=financial_year.pk %}" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-arrow-left"></i> Back to Workspace
+        </a>
+    </div>
 </div>
 
-<!-- Summary -->
+<!-- Summary Cards -->
 <div class="row g-3 mb-4">
-    <div class="col-md-3">
+    <div class="col-md-2">
         <div class="card border-0 shadow-sm border-start border-4 border-danger">
             <div class="card-body text-center py-3">
-                <div style="font-size: 1.8rem; font-weight: 700; color: #dc3545;">{{ high_count }}</div>
-                <small class="text-muted">High / Critical</small>
+                <div style="font-size: 1.6rem; font-weight: 700; color: #dc3545;">{{ critical_count }}</div>
+                <small class="text-muted">Critical</small>
             </div>
         </div>
     </div>
-    <div class="col-md-3">
+    <div class="col-md-2">
+        <div class="card border-0 shadow-sm border-start border-4" style="border-color: #e74c3c !important;">
+            <div class="card-body text-center py-3">
+                <div style="font-size: 1.6rem; font-weight: 700; color: #e74c3c;">{{ high_count }}</div>
+                <small class="text-muted">High</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2">
         <div class="card border-0 shadow-sm border-start border-4 border-warning">
             <div class="card-body text-center py-3">
-                <div style="font-size: 1.8rem; font-weight: 700; color: #ffc107;">{{ medium_count }}</div>
+                <div style="font-size: 1.6rem; font-weight: 700; color: #ffc107;">{{ medium_count }}</div>
                 <small class="text-muted">Medium</small>
             </div>
         </div>
     </div>
-    <div class="col-md-3">
+    <div class="col-md-2">
         <div class="card border-0 shadow-sm border-start border-4 border-info">
             <div class="card-body text-center py-3">
-                <div style="font-size: 1.8rem; font-weight: 700; color: #0dcaf0;">{{ low_count }}</div>
+                <div style="font-size: 1.6rem; font-weight: 700; color: #0dcaf0;">{{ low_count }}</div>
                 <small class="text-muted">Low</small>
             </div>
         </div>
     </div>
-    <div class="col-md-3">
+    <div class="col-md-2">
+        <div class="card border-0 shadow-sm border-start border-4 border-success">
+            <div class="card-body text-center py-3">
+                <div style="font-size: 1.6rem; font-weight: 700; color: #198754;">{{ resolved_count }}</div>
+                <small class="text-muted">Resolved</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2">
         <div class="card border-0 shadow-sm border-start border-4 border-dark">
             <div class="card-body text-center py-3">
-                <div style="font-size: 1.8rem; font-weight: 700; color: #1a1a2e;">{{ total_open }}</div>
-                <small class="text-muted">Total Open</small>
+                <div style="font-size: 1.6rem; font-weight: 700; color: #1a1a2e;">{{ total_flags }}</div>
+                <small class="text-muted">Total</small>
             </div>
         </div>
     </div>
 </div>
 
-<!-- Filters -->
+<!-- Tier Breakdown -->
+<div class="row g-3 mb-4">
+    <div class="col-md-4">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body py-2 d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-bar-chart text-primary"></i> <strong>Tier 1</strong> Variance Analysis</span>
+                <span class="badge bg-primary rounded-pill">{{ tier1_count }}</span>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body py-2 d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-clipboard-check text-success"></i> <strong>Tier 2</strong> ATO Compliance</span>
+                <span class="badge bg-success rounded-pill">{{ tier2_count }}</span>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body py-2 d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-robot text-info"></i> <strong>Tier 3</strong> AI Contextual</span>
+                <span class="badge bg-info rounded-pill">{{ tier3_count }}</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Filters & AI Actions -->
 <div class="card mb-4">
     <div class="card-body py-2">
-        <form method="get" class="row g-2 align-items-center">
-            <div class="col-md-4">
-                <select name="severity" class="form-select form-select-sm">
-                    <option value="">All Severities</option>
-                    <option value="CRITICAL" {% if severity_filter == 'CRITICAL' %}selected{% endif %}>Critical</option>
-                    <option value="HIGH" {% if severity_filter == 'HIGH' %}selected{% endif %}>High</option>
-                    <option value="MEDIUM" {% if severity_filter == 'MEDIUM' %}selected{% endif %}>Medium</option>
-                    <option value="LOW" {% if severity_filter == 'LOW' %}selected{% endif %}>Low</option>
-                </select>
+        <div class="row g-2 align-items-center">
+            <div class="col-md-8">
+                <form method="get" class="row g-2 align-items-center">
+                    <div class="col-auto">
+                        <select name="severity" class="form-select form-select-sm">
+                            <option value="">All Severities</option>
+                            <option value="CRITICAL" {% if severity_filter == 'CRITICAL' %}selected{% endif %}>Critical</option>
+                            <option value="HIGH" {% if severity_filter == 'HIGH' %}selected{% endif %}>High</option>
+                            <option value="MEDIUM" {% if severity_filter == 'MEDIUM' %}selected{% endif %}>Medium</option>
+                            <option value="LOW" {% if severity_filter == 'LOW' %}selected{% endif %}>Low</option>
+                        </select>
+                    </div>
+                    <div class="col-auto">
+                        <select name="status" class="form-select form-select-sm">
+                            <option value="">All Statuses</option>
+                            <option value="open" {% if status_filter == 'open' %}selected{% endif %}>Open</option>
+                            <option value="reviewed" {% if status_filter == 'reviewed' %}selected{% endif %}>Reviewed</option>
+                            <option value="resolved" {% if status_filter == 'resolved' %}selected{% endif %}>Resolved</option>
+                            <option value="auto_resolved" {% if status_filter == 'auto_resolved' %}selected{% endif %}>Auto-Resolved</option>
+                        </select>
+                    </div>
+                    <div class="col-auto">
+                        <select name="tier" class="form-select form-select-sm">
+                            <option value="">All Tiers</option>
+                            <option value="1" {% if tier_filter == '1' %}selected{% endif %}>Tier 1 — Variance</option>
+                            <option value="2" {% if tier_filter == '2' %}selected{% endif %}>Tier 2 — Compliance</option>
+                            <option value="3" {% if tier_filter == '3' %}selected{% endif %}>Tier 3 — AI</option>
+                        </select>
+                    </div>
+                    {% if categories_in_use %}
+                    <div class="col-auto">
+                        <select name="category" class="form-select form-select-sm">
+                            <option value="">All Categories</option>
+                            {% for cat_val, cat_label in categories_in_use %}
+                            <option value="{{ cat_val }}" {% if category_filter == cat_val %}selected{% endif %}>{{ cat_label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    {% endif %}
+                    <div class="col-auto">
+                        <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-funnel"></i> Filter</button>
+                        <a href="{% url 'core:risk_flags' pk=financial_year.pk %}" class="btn btn-sm btn-outline-secondary">Clear</a>
+                    </div>
+                </form>
             </div>
-            <div class="col-md-4">
-                <select name="status" class="form-select form-select-sm">
-                    <option value="">All Statuses</option>
-                    <option value="open" {% if status_filter == 'open' %}selected{% endif %}>Open</option>
-                    <option value="resolved" {% if status_filter == 'resolved' %}selected{% endif %}>Resolved</option>
-                    <option value="dismissed" {% if status_filter == 'dismissed' %}selected{% endif %}>Dismissed</option>
-                </select>
+            <div class="col-md-4 text-end">
+                {% if total_open > 0 and not financial_year.is_locked %}
+                <div class="btn-group btn-group-sm">
+                    <form method="post" action="{% url 'core:ai_analyse_all_flags' pk=financial_year.pk %}" class="d-inline">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-outline-info" title="Run AI analysis on all open flags">
+                            <i class="bi bi-robot"></i> AI Analyse All
+                        </button>
+                    </form>
+                    <form method="post" action="{% url 'core:ai_prioritise_flags' pk=financial_year.pk %}" class="d-inline ms-1">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-outline-warning" title="Score all flags by ATO interest">
+                            <i class="bi bi-sort-numeric-down"></i> ATO Prioritise
+                        </button>
+                    </form>
+                </div>
+                {% endif %}
+                <a href="{% url 'core:generate_risk_report' pk=financial_year.pk %}" class="btn btn-sm btn-outline-dark ms-1" title="Download AI Risk Summary Report">
+                    <i class="bi bi-file-earmark-word"></i> Risk Report
+                </a>
             </div>
-            <div class="col-md-4">
-                <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-funnel"></i> Filter</button>
-                <a href="{% url 'core:risk_flags' pk=financial_year.pk %}" class="btn btn-sm btn-outline-secondary">Clear</a>
-            </div>
-        </form>
+        </div>
     </div>
 </div>
 
 <!-- Flags List -->
-{% for flag in flags %}
+{% for item in flags %}
+{% with flag=item.flag %}
 <div class="card mb-3 border-start border-4
-    {% if flag.severity == 'CRITICAL' or flag.severity == 'HIGH' %}border-danger
+    {% if flag.severity == 'CRITICAL' %}border-danger
+    {% elif flag.severity == 'HIGH' %}border-danger
     {% elif flag.severity == 'MEDIUM' %}border-warning
     {% else %}border-info{% endif %}
-    {% if flag.status == 'resolved' %}opacity-50{% endif %}">
+    {% if flag.status == 'resolved' or flag.status == 'auto_resolved' %}opacity-60{% endif %}"
+    style="{% if flag.status == 'resolved' or flag.status == 'auto_resolved' %}opacity: 0.6;{% endif %}">
     <div class="card-body">
         <div class="d-flex justify-content-between align-items-start">
-            <div>
-                <h6 class="fw-bold mb-1">
-                    {{ flag.title }}
-                    <span class="badge ms-1
-                        {% if flag.severity == 'CRITICAL' or flag.severity == 'HIGH' %}bg-danger
+            <div class="flex-grow-1">
+                <!-- Title Row -->
+                <div class="d-flex align-items-center gap-2 mb-1">
+                    <h6 class="fw-bold mb-0">{{ flag.title }}</h6>
+                    <span class="badge
+                        {% if flag.severity == 'CRITICAL' %}bg-danger
+                        {% elif flag.severity == 'HIGH' %}bg-danger
                         {% elif flag.severity == 'MEDIUM' %}bg-warning text-dark
                         {% else %}bg-info text-dark{% endif %}">
                         {{ flag.severity }}
                     </span>
+                    <span class="badge bg-secondary">Tier {{ flag.tier }}</span>
                     {% if flag.status == 'resolved' %}
-                    <span class="badge bg-success ms-1">Resolved</span>
-                    {% elif flag.status == 'dismissed' %}
-                    <span class="badge bg-secondary ms-1">Dismissed</span>
+                    <span class="badge bg-success">Resolved</span>
+                    {% elif flag.status == 'auto_resolved' %}
+                    <span class="badge bg-success">Auto-Resolved</span>
+                    {% elif flag.status == 'reviewed' %}
+                    <span class="badge bg-primary">Reviewed</span>
                     {% endif %}
-                </h6>
+                    {% if flag.ato_interest_score %}
+                    <span class="badge {% if flag.ato_interest_score >= 7 %}bg-danger{% elif flag.ato_interest_score >= 4 %}bg-warning text-dark{% else %}bg-secondary{% endif %}" title="ATO Interest Score: {{ flag.ato_interest_score }}/10">
+                        <i class="bi bi-eye"></i> ATO {{ flag.ato_interest_score }}/10
+                    </span>
+                    {% endif %}
+                </div>
+
+                <!-- Description -->
                 <p class="text-muted mb-1" style="font-size: 0.88rem;">{{ flag.description }}</p>
-                {% if flag.rule %}
-                <small class="text-info"><i class="bi bi-book"></i> Rule: {{ flag.rule.rule_id }} — {{ flag.rule.title }}</small>
-                {% endif %}
+
+                <!-- Rule & Legislation -->
+                <div class="mb-1">
+                    <small class="text-info"><i class="bi bi-tag"></i> {{ flag.rule_id }}</small>
+                    {% if flag.legislation_ref %}
+                    <small class="text-muted ms-2"><i class="bi bi-book"></i> {{ flag.legislation_ref }}</small>
+                    {% endif %}
+                </div>
+
+                <!-- Affected Accounts -->
                 {% if flag.affected_accounts %}
-                <div class="mt-1">
+                <div class="mb-1">
                     <small class="text-muted">Affected: </small>
                     {% for acc in flag.affected_accounts %}
                     <code class="text-primary" style="font-size: 0.75rem;">{{ acc }}</code>
                     {% endfor %}
                 </div>
                 {% endif %}
+
+                <!-- Calculated Values -->
+                {% if flag.calculated_values %}
+                <div class="mb-1">
+                    {% for key, val in flag.calculated_values.items %}
+                    <small class="text-muted me-3"><strong>{{ key }}:</strong> {{ val }}</small>
+                    {% endfor %}
+                </div>
+                {% endif %}
+
+                <!-- Recommended Action -->
+                {% if flag.recommended_action %}
+                <div class="mt-1 p-2 bg-light rounded" style="font-size: 0.82rem;">
+                    <i class="bi bi-lightbulb text-warning"></i> <strong>Recommended:</strong> {{ flag.recommended_action }}
+                </div>
+                {% endif %}
+
+                <!-- AI Analysis (if available) -->
+                {% if item.has_ai %}
+                <div class="mt-2 p-2 rounded" style="font-size: 0.85rem; background: #f0f7ff; border-left: 3px solid #0d6efd;">
+                    <div class="d-flex align-items-center mb-1">
+                        <i class="bi bi-robot text-primary me-1"></i>
+                        <strong class="text-primary">AI Analysis</strong>
+                    </div>
+                    <p class="mb-1">{{ flag.ai_explanation }}</p>
+                    {% if flag.ai_suggested_action %}
+                    <p class="mb-0"><strong>Suggested Action:</strong> {{ flag.ai_suggested_action }}</p>
+                    {% endif %}
+                    {% if flag.ato_interest_reasoning %}
+                    <p class="mb-0 mt-1 text-muted"><small><strong>ATO Interest Reasoning:</strong> {{ flag.ato_interest_reasoning }}</small></p>
+                    {% endif %}
+                </div>
+                {% endif %}
+
+                <!-- Resolution Notes -->
                 {% if flag.resolution_notes %}
                 <div class="mt-2 p-2 bg-light rounded" style="font-size: 0.82rem;">
-                    <strong>Resolution:</strong> {{ flag.resolution_notes }}
+                    <i class="bi bi-check-circle text-success"></i> <strong>Resolution:</strong> {{ flag.resolution_notes }}
                     {% if flag.resolved_by %}
                     <span class="text-muted">— {{ flag.resolved_by.get_full_name|default:flag.resolved_by.username }}, {{ flag.resolved_at|date:"d/m/Y" }}</span>
                     {% endif %}
                 </div>
                 {% endif %}
             </div>
-            {% if flag.status == 'open' %}
-            <div class="ms-3">
-                <form method="post" action="{% url 'core:resolve_risk_flag' pk=flag.pk %}" class="d-inline">
+
+            <!-- Action Buttons -->
+            {% if flag.status == 'open' or flag.status == 'reviewed' %}
+            <div class="ms-3 d-flex flex-column gap-1">
+                <!-- Resolve Button (opens modal) -->
+                <button type="button" class="btn btn-sm btn-outline-success" data-bs-toggle="modal" data-bs-target="#resolveModal{{ flag.pk|slugify }}" title="Resolve with notes">
+                    <i class="bi bi-check-lg"></i> Resolve
+                </button>
+                {% if flag.status == 'open' %}
+                <!-- Mark Reviewed -->
+                <form method="post" action="{% url 'core:resolve_risk_flag' pk=flag.pk %}">
                     {% csrf_token %}
-                    <input type="hidden" name="resolution_notes" value="Resolved by {{ request.user.get_full_name|default:request.user.username }}">
-                    <button type="submit" class="btn btn-sm btn-outline-success" title="Resolve">
-                        <i class="bi bi-check-lg"></i> Resolve
+                    <input type="hidden" name="new_status" value="reviewed">
+                    <button type="submit" class="btn btn-sm btn-outline-primary w-100" title="Mark as reviewed">
+                        <i class="bi bi-eye"></i> Review
                     </button>
                 </form>
+                {% endif %}
+                {% if not item.has_ai %}
+                <!-- AI Analyse Single -->
+                <form method="post" action="{% url 'core:ai_analyse_flag' pk=flag.pk %}">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-sm btn-outline-info w-100" title="Run AI analysis">
+                        <i class="bi bi-robot"></i> AI
+                    </button>
+                </form>
+                {% endif %}
             </div>
             {% endif %}
         </div>
     </div>
 </div>
+
+<!-- Resolve Modal -->
+{% if flag.status == 'open' or flag.status == 'reviewed' %}
+<div class="modal fade" id="resolveModal{{ flag.pk|slugify }}" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="post" action="{% url 'core:resolve_risk_flag' pk=flag.pk %}">
+                {% csrf_token %}
+                <input type="hidden" name="new_status" value="resolved">
+                <div class="modal-header">
+                    <h6 class="modal-title fw-bold">Resolve: {{ flag.title }}</h6>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted" style="font-size: 0.88rem;">{{ flag.description }}</p>
+                    <label class="form-label fw-bold">Resolution Notes <span class="text-danger">*</span></label>
+                    <textarea name="resolution_notes" class="form-control" rows="4" required
+                        placeholder="Describe how this risk was addressed (minimum 5 words)..."></textarea>
+                    <small class="text-muted">Minimum 5 words required. Be specific about the action taken.</small>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-sm btn-success"><i class="bi bi-check-lg"></i> Resolve Flag</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endwith %}
 {% empty %}
 <div class="text-center py-5">
     <i class="bi bi-shield-check text-success" style="font-size: 3rem;"></i>
     <h5 class="mt-3 text-muted">No risk flags</h5>
-    <p class="text-muted">{% if severity_filter or status_filter %}Try adjusting your filters.{% else %}No risk flags have been raised for this financial year.{% endif %}</p>
+    <p class="text-muted">
+        {% if severity_filter or status_filter or tier_filter or category_filter %}
+            Try adjusting your filters.
+        {% else %}
+            No risk flags have been raised for this financial year.
+            {% if not financial_year.is_locked %}
+            <br>
+            <form method="post" action="{% url 'core:run_risk_engine' pk=financial_year.pk %}" class="d-inline mt-2">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-primary mt-2">
+                    <i class="bi bi-cpu"></i> Run Risk Engine Now
+                </button>
+            </form>
+            {% endif %}
+        {% endif %}
+    </p>
 </div>
 {% endfor %}
 {% endblock %}

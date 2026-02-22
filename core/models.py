@@ -1207,6 +1207,28 @@ class RiskFlag(models.Model):
     resolved_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    # --- Sprint 1: AI Tier 3 fields ---
+    ai_explanation = models.TextField(
+        blank=True, default="",
+        help_text="AI-generated plain-English explanation of this risk"
+    )
+    ai_suggested_action = models.TextField(
+        blank=True, default="",
+        help_text="AI-generated recommended action for the accountant"
+    )
+    ai_data_hash = models.CharField(
+        max_length=32, blank=True, default="",
+        help_text="MD5 hash of flag data at time of AI analysis (cache key)"
+    )
+    ato_interest_score = models.IntegerField(
+        null=True, blank=True,
+        help_text="AI-scored likelihood of ATO interest (1-10)"
+    )
+    ato_interest_reasoning = models.TextField(
+        blank=True, default="",
+        help_text="AI reasoning for the ATO interest score"
+    )
+
     class Meta:
         ordering = ["-created_at"]
         indexes = [

@@ -499,15 +499,47 @@ def financial_year_status(request, pk):
         messages.error(request, "Only senior accountants can mark as reviewed.")
         return redirect("core:financial_year_detail", pk=pk)
 
-    # Audit risk enforcement: cannot finalise with open risk flags
+    # Finalisation Gate: enforce risk engine completion and flag resolution
     if new_status == "finalised":
-        open_risk_count = fy.risk_flags.filter(status="open").count()
-        if open_risk_count > 0:
+        # Gate 1: Risk engine must have been run at least once
+        total_flags = fy.risk_flags.count()
+        if total_flags == 0:
             messages.error(
                 request,
-                f"Cannot finalise: {open_risk_count} open audit risk flag(s) remain. "
-                f"All risk flags must be resolved (with a minimum 5-word description) "
-                f"before finalisation."
+                "Cannot finalise: the Risk Engine has not been run for this financial year. "
+                "Please run the Risk Engine from the Audit Risk tab before finalising."
+            )
+            return redirect("core:financial_year_detail", pk=pk)
+
+        # Gate 2: No CRITICAL flags can remain open
+        critical_open = fy.risk_flags.filter(status="open", severity="CRITICAL").count()
+        if critical_open > 0:
+            messages.error(
+                request,
+                f"Cannot finalise: {critical_open} CRITICAL risk flag(s) remain unresolved. "
+                f"All critical flags must be resolved before finalisation."
+            )
+            return redirect("core:financial_year_detail", pk=pk)
+
+        # Gate 3: No HIGH flags can remain open
+        high_open = fy.risk_flags.filter(status="open", severity="HIGH").count()
+        if high_open > 0:
+            messages.error(
+                request,
+                f"Cannot finalise: {high_open} HIGH severity risk flag(s) remain unresolved. "
+                f"All high-severity flags must be resolved before finalisation."
+            )
+            return redirect("core:financial_year_detail", pk=pk)
+
+        # Gate 4: MEDIUM/LOW flags must be at least reviewed (not open)
+        open_medium_low = fy.risk_flags.filter(
+            status="open", severity__in=["MEDIUM", "LOW"]
+        ).count()
+        if open_medium_low > 0:
+            messages.error(
+                request,
+                f"Cannot finalise: {open_medium_low} open risk flag(s) remain. "
+                f"All flags must be resolved or reviewed (with notes) before finalisation."
             )
             return redirect("core:financial_year_detail", pk=pk)
 
