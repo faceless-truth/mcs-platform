@@ -189,6 +189,11 @@ SESSION_ENGINE = os.environ.get(
 # Webhook secret for n8n integration (set in .env)
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
 
+# Reverse proxy support — trust X-Forwarded-Proto header from the proxy so
+# Django can detect HTTPS correctly.  Without this, SECURE_SSL_REDIRECT
+# creates infinite redirect loops when the app sits behind nginx / Cloudflare.
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
 # Security settings (enforced in production)
 if not DEBUG:
     SECURE_BROWSER_XSS_FILTER = True
