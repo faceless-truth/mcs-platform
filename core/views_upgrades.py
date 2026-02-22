@@ -3,19 +3,21 @@ MCS Platform - Upgrade Views
 Implements views for:
   1. Prior Year Comparatives Engine
   2. Document Version Control & Regeneration
-  4. Trust Distribution Workflow
-  5. Partnership Profit Allocation Module
-  6. Working Paper Notes per Account
-  7. Bulk Entity Import / Onboarding Tool
+  3. Trust Distribution Workflow
+  4. Partnership Profit Allocation Module
+  5. Working Paper Notes per Account
+  6. Bulk Entity Import / Onboarding Tool
 """
 import io
 import csv
 import json
+import logging
 import openpyxl
 from collections import OrderedDict
 from decimal import Decimal, InvalidOperation
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
+from django.core.exceptions import PermissionDenied
 from django.core.files.base import ContentFile
 from django.db import transaction
 from django.db.models import Sum, Q
@@ -32,6 +34,8 @@ from .models import (
     WorkpaperNote, EntityImportJob,
 )
 from config.authorization import get_financial_year_for_user
+
+logger = logging.getLogger(__name__)
 
 
 def _log_action(request, action, description, obj=None):
@@ -141,6 +145,9 @@ def override_comparative(request, pk):
     line = get_object_or_404(TrialBalanceLine, pk=pk)
     fy = line.financial_year
 
+    # Authorization: verify user has access to this financial year's entity
+    get_financial_year_for_user(request, fy.pk)
+
     if fy.is_locked or line.comparatives_locked:
         return JsonResponse({"error": "Comparatives are locked."}, status=403)
 
@@ -187,13 +194,14 @@ def lock_comparatives(request, pk):
 # ============================================================================
 
 @login_required
+@require_POST
 def regenerate_document(request, pk):
     """
     Regenerate a document, creating a new version and preserving the old one.
     """
     fy = get_financial_year_for_user(request, pk)
-    doc_type = request.GET.get("type", "financial_statements")
-    fmt = request.GET.get("format", "docx").lower()
+    doc_type = request.POST.get("type", "financial_statements")
+    fmt = request.POST.get("format", "docx").lower()
 
     if not fy.trial_balance_lines.exists() and doc_type == "financial_statements":
         messages.error(request, "Cannot generate statements: no trial balance data loaded.")
@@ -296,6 +304,7 @@ def bulk_regenerate(request, pk):
     )
 
     regenerated = 0
+    failed = []
     for doc_type in doc_types:
         latest = (
             GeneratedDocument.objects
@@ -336,11 +345,16 @@ def bulk_regenerate(request, pk):
                 latest.save(update_fields=["superseded_by"])
 
             regenerated += 1
-        except Exception:
+        except Exception as e:
+            logger.exception(f"Bulk regenerate failed for doc_type={doc_type} on {fy}: {e}")
+            failed.append(doc_type)
             continue
 
     _log_action(request, "generate", f"Bulk regenerated {regenerated} documents for {fy}", fy)
-    messages.success(request, f"Bulk regeneration complete: {regenerated} documents updated.")
+    msg = f"Bulk regeneration complete: {regenerated} documents updated."
+    if failed:
+        msg += f" {len(failed)} failed: {', '.join(failed)}."
+    messages.success(request, msg)
     return redirect("core:financial_year_detail", pk=pk)
 
 
@@ -386,7 +400,7 @@ def trust_distribution(request, pk):
     beneficiaries = EntityOfficer.objects.filter(
         entity=entity
     ).filter(
-        Q(role="beneficiary") | Q(roles__contains="beneficiary")
+        Q(role="beneficiary") | Q(roles__contains=["beneficiary"])
     )
 
     # Get existing allocations
@@ -417,32 +431,35 @@ def trust_distribution(request, pk):
                 messages.error(request, f"Invalid amount: {e}")
 
         elif action == "save_allocations":
-            with transaction.atomic():
-                for ben in beneficiaries:
-                    pct_key = f"pct_{ben.pk}"
-                    flag_key = f"s100a_{ben.pk}"
-                    notes_key = f"s100a_notes_{ben.pk}"
+            try:
+                with transaction.atomic():
+                    for ben in beneficiaries:
+                        pct_key = f"pct_{ben.pk}"
+                        flag_key = f"s100a_{ben.pk}"
+                        notes_key = f"s100a_notes_{ben.pk}"
 
-                    pct = Decimal(request.POST.get(pct_key, "0") or "0")
+                        pct = Decimal(request.POST.get(pct_key, "0") or "0")
 
-                    alloc, _ = BeneficiaryAllocation.objects.update_or_create(
-                        distribution=dist,
-                        beneficiary=ben,
-                        defaults={
-                            "percentage": pct,
-                            "section_100a_flag": flag_key in request.POST,
-                            "section_100a_notes": request.POST.get(notes_key, ""),
-                        },
-                    )
-                    alloc.calculate_allocation()
-                    alloc.save()
+                        alloc, _ = BeneficiaryAllocation.objects.update_or_create(
+                            distribution=dist,
+                            beneficiary=ben,
+                            defaults={
+                                "percentage": pct,
+                                "section_100a_flag": flag_key in request.POST,
+                                "section_100a_notes": request.POST.get(notes_key, ""),
+                            },
+                        )
+                        alloc.calculate_allocation()
+                        alloc.save()
 
-                # Check if fully allocated
-                total_pct = dist.allocations.aggregate(t=Sum("percentage"))["t"] or Decimal("0")
-                dist.is_fully_allocated = (total_pct == Decimal("100"))
-                dist.save(update_fields=["is_fully_allocated"])
+                    # Check if fully allocated
+                    total_pct = dist.allocations.aggregate(t=Sum("percentage"))["t"] or Decimal("0")
+                    dist.is_fully_allocated = (total_pct == Decimal("100"))
+                    dist.save(update_fields=["is_fully_allocated"])
 
-            messages.success(request, "Beneficiary allocations saved.")
+                messages.success(request, "Beneficiary allocations saved.")
+            except (InvalidOperation, TypeError) as e:
+                messages.error(request, f"Invalid allocation value: {e}")
             # Refresh data
             allocations = dist.allocations.select_related("beneficiary").all()
             allocation_map = {a.beneficiary_id: a for a in allocations}
@@ -538,12 +555,26 @@ def generate_beneficiary_statement(request, pk, officer_pk):
     ben_name = beneficiary.full_name.replace(" ", "_")
     filename = f"{entity_name}_Beneficiary_Statement_{ben_name}_{fy.year_label}.docx"
 
+    # Determine next version number
+    latest_ben_doc = (
+        GeneratedDocument.objects
+        .filter(
+            financial_year=fy,
+            document_type=GeneratedDocument.DocumentType.BENEFICIARY_STATEMENT,
+            change_summary__contains=beneficiary.full_name,
+        )
+        .order_by("-version")
+        .first()
+    )
+    ben_version = (latest_ben_doc.version + 1) if latest_ben_doc else 1
+
     # Save as GeneratedDocument
     gen_doc = GeneratedDocument(
         financial_year=fy,
         file_format="docx",
         document_type=GeneratedDocument.DocumentType.BENEFICIARY_STATEMENT,
-        version=1,
+        version=ben_version,
+        change_summary=f"Beneficiary: {beneficiary.full_name}",
         generated_by=request.user,
     )
     gen_doc.file.save(filename, ContentFile(buffer.getvalue()), save=True)
@@ -585,7 +616,7 @@ def partnership_allocation(request, pk):
     partners = EntityOfficer.objects.filter(
         entity=entity
     ).filter(
-        Q(role="partner") | Q(roles__contains="partner")
+        Q(role="partner") | Q(roles__contains=["partner"])
     )
 
     # Get existing shares
@@ -616,49 +647,52 @@ def partnership_allocation(request, pk):
                 messages.error(request, f"Invalid amount: {e}")
 
         elif action == "save_shares":
-            with transaction.atomic():
-                for partner in partners:
-                    salary_key = f"salary_{partner.pk}"
-                    interest_key = f"interest_{partner.pk}"
-                    residual_key = f"residual_pct_{partner.pk}"
+            try:
+                with transaction.atomic():
+                    for partner in partners:
+                        salary_key = f"salary_{partner.pk}"
+                        interest_key = f"interest_{partner.pk}"
+                        residual_key = f"residual_pct_{partner.pk}"
 
-                    share, _ = PartnerShare.objects.update_or_create(
-                        allocation=alloc,
-                        partner=partner,
-                        defaults={
-                            "salary_allowance": Decimal(request.POST.get(salary_key, "0") or "0"),
-                            "interest_on_capital": Decimal(request.POST.get(interest_key, "0") or "0"),
-                            "residual_share_pct": Decimal(request.POST.get(residual_key, "0") or "0"),
-                        },
-                    )
-                    share.calculate_share()
-                    share.save()
+                        share, _ = PartnerShare.objects.update_or_create(
+                            allocation=alloc,
+                            partner=partner,
+                            defaults={
+                                "salary_allowance": Decimal(request.POST.get(salary_key, "0") or "0"),
+                                "interest_on_capital": Decimal(request.POST.get(interest_key, "0") or "0"),
+                                "residual_share_pct": Decimal(request.POST.get(residual_key, "0") or "0"),
+                            },
+                        )
+                        share.calculate_share()
+                        share.save()
 
-                    # Update capital account
-                    ca, _ = PartnerCapitalAccount.objects.update_or_create(
-                        financial_year=fy,
-                        partner=partner,
-                        defaults={
-                            "profit_share": share.total_share,
-                            "drawings": Decimal(
-                                request.POST.get(f"drawings_{partner.pk}", "0") or "0"
-                            ),
-                            "capital_contributions": Decimal(
-                                request.POST.get(f"contributions_{partner.pk}", "0") or "0"
-                            ),
-                        },
-                    )
-                    # Auto-populate opening balance from prior year if available
-                    if ca.opening_balance == 0 and fy.prior_year:
-                        prior_ca = PartnerCapitalAccount.objects.filter(
-                            financial_year=fy.prior_year, partner=partner
-                        ).first()
-                        if prior_ca:
-                            ca.opening_balance = prior_ca.closing_balance
-                    ca.calculate_closing()
-                    ca.save()
+                        # Update capital account
+                        ca, _ = PartnerCapitalAccount.objects.update_or_create(
+                            financial_year=fy,
+                            partner=partner,
+                            defaults={
+                                "profit_share": share.total_share,
+                                "drawings": Decimal(
+                                    request.POST.get(f"drawings_{partner.pk}", "0") or "0"
+                                ),
+                                "capital_contributions": Decimal(
+                                    request.POST.get(f"contributions_{partner.pk}", "0") or "0"
+                                ),
+                            },
+                        )
+                        # Auto-populate opening balance from prior year if available
+                        if ca.opening_balance == 0 and fy.prior_year:
+                            prior_ca = PartnerCapitalAccount.objects.filter(
+                                financial_year=fy.prior_year, partner=partner
+                            ).first()
+                            if prior_ca:
+                                ca.opening_balance = prior_ca.closing_balance
+                        ca.calculate_closing()
+                        ca.save()
 
-            messages.success(request, "Partner shares and capital accounts updated.")
+                messages.success(request, "Partner shares and capital accounts updated.")
+            except (InvalidOperation, TypeError) as e:
+                messages.error(request, f"Invalid share value: {e}")
             # Refresh
             shares = alloc.partner_shares.select_related("partner").all()
             share_map = {s.partner_id: s for s in shares}
@@ -763,11 +797,25 @@ def generate_partner_statement(request, pk, officer_pk):
     partner_name = partner.full_name.replace(" ", "_")
     filename = f"{entity_name}_Partner_Statement_{partner_name}_{fy.year_label}.docx"
 
+    # Determine next version number
+    latest_partner_doc = (
+        GeneratedDocument.objects
+        .filter(
+            financial_year=fy,
+            document_type=GeneratedDocument.DocumentType.PARTNER_STATEMENT,
+            change_summary__contains=partner.full_name,
+        )
+        .order_by("-version")
+        .first()
+    )
+    partner_version = (latest_partner_doc.version + 1) if latest_partner_doc else 1
+
     gen_doc = GeneratedDocument(
         financial_year=fy,
         file_format="docx",
         document_type=GeneratedDocument.DocumentType.PARTNER_STATEMENT,
-        version=1,
+        version=partner_version,
+        change_summary=f"Partner: {partner.full_name}",
         generated_by=request.user,
     )
     gen_doc.file.save(filename, ContentFile(buffer.getvalue()), save=True)
@@ -977,9 +1025,17 @@ def export_workpaper_notes(request, pk):
 # 7. BULK ENTITY IMPORT / ONBOARDING TOOL
 # ============================================================================
 
+def _require_senior(request):
+    """Raise PermissionDenied if user is not admin or senior accountant."""
+    if not (request.user.is_senior or request.user.is_admin):
+        raise PermissionDenied("Only administrators and senior accountants can perform bulk imports.")
+
+
 @login_required
 def bulk_import_start(request):
     """Start a bulk entity import — upload CSV/Excel file."""
+    _require_senior(request)
+
     if request.method == "POST":
         uploaded_file = request.FILES.get("file")
         if not uploaded_file:
@@ -987,8 +1043,13 @@ def bulk_import_start(request):
             return redirect("core:bulk_import_start")
 
         ext = uploaded_file.name.rsplit(".", 1)[-1].lower()
-        if ext not in ("csv", "xlsx", "xls"):
+        if ext not in ("csv", "xlsx"):
             messages.error(request, "Only CSV and Excel (.xlsx) files are supported.")
+            return redirect("core:bulk_import_start")
+
+        # Limit upload size to 10 MB
+        if uploaded_file.size > 10 * 1024 * 1024:
+            messages.error(request, "File too large. Maximum upload size is 10 MB.")
             return redirect("core:bulk_import_start")
 
         job = EntityImportJob(
@@ -1051,6 +1112,7 @@ def bulk_import_template(request):
 @login_required
 def bulk_import_map(request, pk):
     """Column mapping screen for bulk import."""
+    _require_senior(request)
     job = get_object_or_404(EntityImportJob, pk=pk)
 
     # Parse the file to get headers
@@ -1114,6 +1176,7 @@ def bulk_import_map(request, pk):
 @login_required
 def bulk_import_validate(request, pk):
     """Validate the import data and show errors before importing."""
+    _require_senior(request)
     job = get_object_or_404(EntityImportJob, pk=pk)
     mapping = job.column_mapping
 
@@ -1150,6 +1213,7 @@ def bulk_import_validate(request, pk):
         Entity.objects.exclude(abn="").values_list("abn", flat=True)
     )
 
+    seen_abns = set()
     preview_rows = []
     for i, row in enumerate(rows, 2):  # Row 2 onwards (1 = header)
         row_data = {}
@@ -1168,10 +1232,14 @@ def bulk_import_validate(request, pk):
                 "message": f"Invalid entity type: {row_data['entity_type']}. Must be one of: {', '.join(valid_types)}"
             })
 
-        # Check duplicate ABN
+        # Check duplicate ABN (against database and within file)
         abn = row_data.get("abn", "")
-        if abn and abn in existing_abns:
-            errors.append({"row": i, "field": "abn", "message": f"Duplicate ABN: {abn} already exists"})
+        if abn:
+            if abn in existing_abns:
+                errors.append({"row": i, "field": "abn", "message": f"Duplicate ABN: {abn} already exists in database"})
+            elif abn in seen_abns:
+                errors.append({"row": i, "field": "abn", "message": f"Duplicate ABN: {abn} appears multiple times in this file"})
+            seen_abns.add(abn)
 
         preview_rows.append({"row_num": i, "data": row_data})
 
@@ -1182,12 +1250,15 @@ def bulk_import_validate(request, pk):
     if request.method == "POST" and not errors:
         return redirect("core:bulk_import_execute", pk=job.pk)
 
+    # Count rows with errors (a row may have multiple errors)
+    error_rows = len(set(e["row"] for e in errors))
     context = {
         "job": job,
         "errors": errors,
         "preview_rows": preview_rows[:50],  # Show first 50 for preview
         "total_rows": len(rows),
         "error_count": len(errors),
+        "valid_row_count": len(rows) - error_rows,
     }
     return render(request, "core/bulk_import_validate.html", context)
 
@@ -1196,6 +1267,7 @@ def bulk_import_validate(request, pk):
 @require_POST
 def bulk_import_execute(request, pk):
     """Execute the validated import — create entities in the database."""
+    _require_senior(request)
     job = get_object_or_404(EntityImportJob, pk=pk)
 
     if job.validation_errors:
@@ -1261,6 +1333,7 @@ def bulk_import_execute(request, pk):
                     trading_as=row_data.get("trading_as", ""),
                     financial_year_end=row_data.get("financial_year_end", "06-30") or "06-30",
                     contact_email=row_data.get("contact_email", ""),
+                    contact_phone=row_data.get("contact_phone", ""),
                     address_line_1=row_data.get("address_line_1", ""),
                     address_line_2=row_data.get("address_line_2", ""),
                     suburb=row_data.get("suburb", ""),
@@ -1277,7 +1350,8 @@ def bulk_import_execute(request, pk):
                         pass
                 entity.save()
                 created += 1
-            except Exception:
+            except Exception as e:
+                logger.exception(f"Bulk import failed for row entity_name={entity_name}: {e}")
                 errors += 1
 
     job.created_count = created

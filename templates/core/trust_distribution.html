@@ -151,7 +151,6 @@
                     </thead>
                     <tbody>
                         {% for ben in beneficiaries %}
-                        {% with alloc=allocation_map|default_if_none:"" %}
                         <tr>
                             <td>
                                 <strong>{{ ben.full_name }}</strong>
@@ -166,6 +165,7 @@
                                     <span class="input-group-text">%</span>
                                 </div>
                             </td>
+                            {% with found=False %}
                             {% for a in allocations %}{% if a.beneficiary_id == ben.pk %}
                             <td class="text-end">${{ a.allocated_capital_gains|floatformat:2|intcomma }}</td>
                             <td class="text-end">${{ a.allocated_franked_dividends|floatformat:2|intcomma }}</td>
@@ -173,13 +173,14 @@
                             <td class="text-end">${{ a.allocated_other_income|floatformat:2|intcomma }}</td>
                             <td class="text-end fw-bold">${{ a.total_distribution|floatformat:2|intcomma }}</td>
                             {% endif %}{% endfor %}
-                            {% if not allocation_map %}
+                            {% if ben.pk not in allocation_map %}
                             <td class="text-end text-muted">—</td>
                             <td class="text-end text-muted">—</td>
                             <td class="text-end text-muted">—</td>
                             <td class="text-end text-muted">—</td>
                             <td class="text-end text-muted">—</td>
                             {% endif %}
+                            {% endwith %}
                             <td class="text-center">
                                 <div class="form-check d-flex justify-content-center">
                                     <input type="checkbox" name="s100a_{{ ben.pk }}" class="form-check-input"
@@ -193,7 +194,6 @@
                                 </a>
                             </td>
                         </tr>
-                        {% endwith %}
                         {% endfor %}
                     </tbody>
                     <tfoot class="table-light">

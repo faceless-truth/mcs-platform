@@ -1843,25 +1843,21 @@ class BeneficiaryAllocation(models.Model):
         return f"{self.beneficiary.full_name}: {self.percentage}% of {self.distribution}"
 
     def calculate_allocation(self):
-        """Calculate per-stream amounts based on percentage."""
+        """Calculate per-stream amounts based on percentage.
+
+        Per-stream amounts are calculated from their respective category totals.
+        total_distribution is calculated from the distributable_income to ensure
+        the full amount is allocated even if income categories don't sum to the total.
+        """
+        from decimal import Decimal as D
         dist = self.distribution
         pct = self.percentage / 100
-        self.allocated_capital_gains = (dist.capital_gains * pct).quantize(
-            __import__('decimal').Decimal('0.01')
-        )
-        self.allocated_franked_dividends = (dist.franked_dividends * pct).quantize(
-            __import__('decimal').Decimal('0.01')
-        )
-        self.allocated_foreign_income = (dist.foreign_income * pct).quantize(
-            __import__('decimal').Decimal('0.01')
-        )
-        self.allocated_other_income = (dist.other_income * pct).quantize(
-            __import__('decimal').Decimal('0.01')
-        )
-        self.total_distribution = (
-            self.allocated_capital_gains + self.allocated_franked_dividends +
-            self.allocated_foreign_income + self.allocated_other_income
-        )
+        self.allocated_capital_gains = (dist.capital_gains * pct).quantize(D('0.01'))
+        self.allocated_franked_dividends = (dist.franked_dividends * pct).quantize(D('0.01'))
+        self.allocated_foreign_income = (dist.foreign_income * pct).quantize(D('0.01'))
+        self.allocated_other_income = (dist.other_income * pct).quantize(D('0.01'))
+        # Total is based on distributable_income so unstreamed income is not lost
+        self.total_distribution = (dist.distributable_income * pct).quantize(D('0.01'))
 
 
 # ---------------------------------------------------------------------------
@@ -2057,6 +2053,7 @@ class WorkpaperNote(models.Model):
 
     class Meta:
         ordering = ["account_code", "note_type"]
+        unique_together = ["financial_year", "account_code", "note_type"]
         indexes = [
             models.Index(fields=["financial_year", "account_code"]),
         ]
