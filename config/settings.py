@@ -194,6 +194,10 @@ WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
 # creates infinite redirect loops when the app sits behind nginx / Cloudflare.
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
+# django-ratelimit: when connecting via Unix socket, REMOTE_ADDR is empty.
+# Read the real client IP from the X-Forwarded-For header set by nginx.
+RATELIMIT_IP_META_KEY = "HTTP_X_FORWARDED_FOR"
+
 # Security settings (enforced in production)
 if not DEBUG:
     SECURE_BROWSER_XSS_FILTER = True
