@@ -132,11 +132,12 @@
                                     <span class="input-group-text">%</span>
                                 </div>
                             </td>
+                            {% if partner.pk in share_map %}
                             {% for s in shares %}{% if s.partner_id == partner.pk %}
                             <td class="text-end">${{ s.residual_share_amount|floatformat:2|intcomma }}</td>
                             <td class="text-end fw-bold">${{ s.total_share|floatformat:2|intcomma }}</td>
                             {% endif %}{% endfor %}
-                            {% if not share_map %}
+                            {% else %}
                             <td class="text-end text-muted">—</td>
                             <td class="text-end text-muted">—</td>
                             {% endif %}
@@ -170,12 +171,11 @@
                         {% for partner in partners %}
                         <tr>
                             <td>{{ partner.full_name }}</td>
-                            {% with ca=capital_map %}
+                            {% if partner.pk in capital_map %}
                             {% for c_pk, c_obj in capital_map.items %}{% if c_pk == partner.pk %}
                             <td class="text-end">${{ c_obj.opening_balance|floatformat:2|intcomma }}</td>
                             {% endif %}{% endfor %}
-                            {% endwith %}
-                            {% if not capital_map %}
+                            {% else %}
                             <td class="text-end text-muted">$0.00</td>
                             {% endif %}
                             <td>
@@ -194,11 +194,12 @@
                                            class="form-control form-control-sm">
                                 </div>
                             </td>
+                            {% if partner.pk in capital_map %}
                             {% for c_pk, c_obj in capital_map.items %}{% if c_pk == partner.pk %}
                             <td class="text-end">${{ c_obj.profit_share|floatformat:2|intcomma }}</td>
                             <td class="text-end fw-bold">${{ c_obj.closing_balance|floatformat:2|intcomma }}</td>
                             {% endif %}{% endfor %}
-                            {% if not capital_map %}
+                            {% else %}
                             <td class="text-end text-muted">—</td>
                             <td class="text-end text-muted">—</td>
                             {% endif %}

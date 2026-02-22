@@ -1036,13 +1036,23 @@
             <h6 class="mb-0"><i class="bi bi-file-earmark-ruled"></i> Documents &amp; Versions</h6>
             <div class="d-flex gap-2">
                 {% if tb_lines %}
-                <a href="{% url 'core:regenerate_document' pk=fy.pk %}?type=financial_statements&format=docx" class="btn btn-sm btn-primary">
-                    <i class="bi bi-arrow-repeat"></i> Regenerate Statements
-                </a>
+                <form method="post" action="{% url 'core:regenerate_document' pk=fy.pk %}" class="d-inline">
+                    {% csrf_token %}
+                    <input type="hidden" name="type" value="financial_statements">
+                    <input type="hidden" name="format" value="docx">
+                    <button type="submit" class="btn btn-sm btn-primary">
+                        <i class="bi bi-arrow-repeat"></i> Regenerate Statements
+                    </button>
+                </form>
                 {% if entity.entity_type == 'trust' %}
-                <a href="{% url 'core:regenerate_document' pk=fy.pk %}?type=distribution_minutes&format=docx" class="btn btn-sm btn-outline-primary">
-                    <i class="bi bi-arrow-repeat"></i> Regenerate Minutes
-                </a>
+                <form method="post" action="{% url 'core:regenerate_document' pk=fy.pk %}" class="d-inline">
+                    {% csrf_token %}
+                    <input type="hidden" name="type" value="distribution_minutes">
+                    <input type="hidden" name="format" value="docx">
+                    <button type="submit" class="btn btn-sm btn-outline-primary">
+                        <i class="bi bi-arrow-repeat"></i> Regenerate Minutes
+                    </button>
+                </form>
                 {% endif %}
                 <form method="post" action="{% url 'core:bulk_regenerate' pk=fy.pk %}" class="d-inline">
                     {% csrf_token %}
