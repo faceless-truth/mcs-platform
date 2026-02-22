@@ -209,14 +209,14 @@ def entity_create(request, client_pk=None):
         return redirect("core:entity_list")
 
     if request.method == "POST":
-        form = EntityForm(request.POST)
+        form = EntityForm(request.POST, user=request.user)
         if form.is_valid():
             entity = form.save()
             _log_action(request, "import", f"Created entity: {entity.entity_name}", entity)
             messages.success(request, f"Entity '{entity.entity_name}' created.")
             return redirect("core:entity_detail", pk=entity.pk)
     else:
-        form = EntityForm()
+        form = EntityForm(user=request.user)
     return render(request, "core/entity_form.html", {
         "form": form, "title": "Create Entity"
     })
@@ -260,13 +260,13 @@ def entity_edit(request, pk):
         return redirect("core:entity_detail", pk=pk)
 
     if request.method == "POST":
-        form = EntityForm(request.POST, instance=entity)
+        form = EntityForm(request.POST, instance=entity, user=request.user)
         if form.is_valid():
             form.save()
             messages.success(request, f"Entity '{entity.entity_name}' updated.")
             return redirect("core:entity_detail", pk=pk)
     else:
-        form = EntityForm(instance=entity)
+        form = EntityForm(instance=entity, user=request.user)
     return render(request, "core/entity_form.html", {
         "form": form, "title": f"Edit: {entity.entity_name}"
     })
@@ -277,7 +277,7 @@ def entity_edit(request, pk):
 # ---------------------------------------------------------------------------
 @login_required
 def financial_year_create(request, entity_pk):
-    entity = get_object_or_404(Entity, pk=entity_pk)
+    entity = get_entity_for_user(request, entity_pk)
     if not request.user.can_edit:
         messages.error(request, "You do not have permission.")
         return redirect("core:entity_detail", pk=entity_pk)
@@ -624,7 +624,7 @@ def financial_year_status(request, pk):
 @login_required
 def roll_forward(request, pk):
     """Create a new financial year from the current one, carrying closing balances."""
-    current_fy = get_object_or_404(FinancialYear, pk=pk)
+    current_fy = get_financial_year_for_user(request, pk)
     entity = current_fy.entity
 
     if not request.user.can_edit:
@@ -761,7 +761,7 @@ def trial_balance_import(request, pk):
                         messages.warning(request, err)
                 return redirect("core:financial_year_detail", pk=pk)
             except Exception as e:
-                messages.error(request, f"Import failed: {str(e)}")
+                messages.error(request, "Import failed. Please check the file format and try again.")
     else:
         form = TrialBalanceUploadForm()
 
@@ -850,7 +850,7 @@ def _process_trial_balance_upload(fy, file):
 def trial_balance_view(request, pk):
     """Preview trial balance with comparative columns, grouped by section."""
     from collections import OrderedDict
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     tb_lines = fy.trial_balance_lines.select_related("mapped_line_item").order_by("account_code")
 
     SECTION_ORDER = [
@@ -950,7 +950,7 @@ def account_mapping_create(request):
 @login_required
 def map_client_accounts(request, pk):
     """Map unmapped client accounts to standard line items for a financial year."""
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
     unmapped = ClientAccountMapping.objects.filter(
@@ -992,14 +992,14 @@ def map_client_accounts(request, pk):
 # ---------------------------------------------------------------------------
 @login_required
 def adjustment_list(request, pk):
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     adjustments = fy.adjusting_journals.prefetch_related("lines").all()
     return render(request, "core/adjustment_list.html", {"fy": fy, "adjustments": adjustments})
 
 
 @login_required
 def adjustment_create(request, pk):
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
 
     if fy.is_locked:
         messages.error(request, "Cannot add journals to a finalised year.")
@@ -1074,6 +1074,7 @@ def journal_detail(request, pk):
         pk=pk,
     )
     fy = journal.financial_year
+    get_financial_year_for_user(request, fy.pk)  # IDOR check
     entity = fy.entity
     return render(request, "core/journal_detail.html", {
         "journal": journal, "fy": fy, "entity": entity,
@@ -1085,6 +1086,7 @@ def journal_post(request, pk):
     """Post a draft journal — creates adjustment TB lines."""
     journal = get_object_or_404(AdjustingJournal, pk=pk)
     fy = journal.financial_year
+    get_financial_year_for_user(request, fy.pk)  # IDOR check
 
     if journal.status != AdjustingJournal.JournalStatus.DRAFT:
         messages.error(request, "Only draft journals can be posted.")
@@ -1133,6 +1135,7 @@ def journal_delete(request, pk):
     """Delete a journal entry. If posted, also removes its adjustment TB lines."""
     journal = get_object_or_404(AdjustingJournal, pk=pk)
     fy = journal.financial_year
+    get_financial_year_for_user(request, fy.pk)  # IDOR check
 
     if fy.is_locked:
         messages.error(request, "Cannot delete journals in a finalised year.")
@@ -1171,7 +1174,7 @@ def journal_delete(request, pk):
 @login_required
 def account_list_api(request, pk):
     """JSON API endpoint returning available accounts for a financial year's entity."""
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     accounts = list(
         ClientAccountMapping.objects.filter(entity=fy.entity)
         .order_by("client_account_code")
@@ -1205,6 +1208,7 @@ def account_list_api(request, pk):
 @login_required
 def financial_statements_view(request, pk):
     """Render a preview of the financial statements on screen."""
+    get_financial_year_for_user(request, pk)  # IDOR check
     fy = get_object_or_404(
         FinancialYear.objects.select_related("entity", "prior_year"),
         pk=pk,
@@ -1267,7 +1271,7 @@ def financial_statements_view(request, pk):
 # ---------------------------------------------------------------------------
 @login_required
 def generate_document(request, pk):
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
 
     # Check that there are trial balance lines
     if not fy.trial_balance_lines.exists():
@@ -1386,7 +1390,7 @@ def generate_document(request, pk):
 @login_required
 def generate_distribution_minutes(request, pk):
     """Generate distribution minutes document for a trust entity."""
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
     # Only trusts have distribution minutes
@@ -1515,6 +1519,9 @@ def htmx_client_search(request):
 def htmx_map_tb_line(request, pk):
     """HTMX endpoint to map a single trial balance line."""
     line = get_object_or_404(TrialBalanceLine, pk=pk)
+    get_financial_year_for_user(request, line.financial_year.pk)  # IDOR check
+    if not request.user.can_edit:
+        return HttpResponse("Permission denied", status=403)
     mapping_id = request.POST.get("mapped_line_item")
 
     if mapping_id:
@@ -1547,7 +1554,7 @@ def htmx_map_tb_line(request, pk):
 @login_required
 def entity_officers(request, pk):
     """List all officers/signatories for an entity."""
-    entity = get_object_or_404(Entity, pk=pk)
+    entity = get_entity_for_user(request, pk)
     officers = entity.officers.all()
 
     officer_label_map = {
@@ -1569,7 +1576,10 @@ def entity_officers(request, pk):
 @login_required
 def entity_officer_create(request, entity_pk):
     """Add a new officer/signatory to an entity."""
-    entity = get_object_or_404(Entity, pk=entity_pk)
+    entity = get_entity_for_user(request, entity_pk)
+    if not request.user.can_edit:
+        messages.error(request, "You do not have permission.")
+        return redirect("core:entity_officers", pk=entity.pk)
 
     if request.method == "POST":
         form = EntityOfficerForm(request.POST, entity_type=entity.entity_type)
@@ -1596,6 +1606,10 @@ def entity_officer_edit(request, pk):
     """Edit an existing officer/signatory."""
     officer = get_object_or_404(EntityOfficer, pk=pk)
     entity = officer.entity
+    get_entity_for_user(request, entity.pk)  # IDOR check
+    if not request.user.can_edit:
+        messages.error(request, "You do not have permission.")
+        return redirect("core:entity_officers", pk=entity.pk)
 
     if request.method == "POST":
         form = EntityOfficerForm(request.POST, instance=officer, entity_type=entity.entity_type)
@@ -1616,10 +1630,15 @@ def entity_officer_edit(request, pk):
 
 
 @login_required
+@require_POST
 def entity_officer_delete(request, pk):
     """Delete an officer/signatory."""
     officer = get_object_or_404(EntityOfficer, pk=pk)
     entity = officer.entity
+    get_entity_for_user(request, entity.pk)  # IDOR check
+    if not request.user.can_edit:
+        messages.error(request, "You do not have permission.")
+        return redirect("core:entity_officers", pk=entity.pk)
     name = officer.full_name
     _log_action(request, "user_change",
                 f"Removed officer {name} from {entity.entity_name}",
@@ -1672,7 +1691,7 @@ def access_ledger_import(request):
                     result.get("entity"),
                 )
             except Exception as e:
-                messages.error(request, f"Import failed: {str(e)}")
+                messages.error(request, "Import failed. Please check the file format and try again.")
 
     return render(request, "core/access_ledger_import.html", {
         "result": result,
@@ -1700,7 +1719,7 @@ def trial_balance_pdf(request, pk):
     import os
     from django.conf import settings
 
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
     tb_lines = TrialBalanceLine.objects.filter(financial_year=fy).select_related('mapped_line_item').order_by('account_code')
 
@@ -1991,7 +2010,7 @@ def journals_pdf(request, pk):
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     import os
 
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
     journals = AdjustingJournal.objects.filter(financial_year=fy).prefetch_related('lines').order_by('created_at')
 
@@ -2134,7 +2153,7 @@ def journals_pdf(request, pk):
 # ---------------------------------------------------------------------------
 @login_required
 def associate_create(request, entity_pk):
-    entity = get_object_or_404(Entity, pk=entity_pk)
+    entity = get_entity_for_user(request, entity_pk)
     if not request.user.can_edit:
         messages.error(request, "You do not have permission to add associates.")
         return redirect("core:entity_detail", pk=entity_pk)
@@ -2159,6 +2178,7 @@ def associate_create(request, entity_pk):
 def associate_edit(request, pk):
     assoc = get_object_or_404(ClientAssociate, pk=pk)
     entity = assoc.entity
+    get_entity_for_user(request, entity.pk)  # IDOR check
     if not request.user.can_edit:
         messages.error(request, "You do not have permission to edit associates.")
         return redirect("core:entity_detail", pk=entity.pk)
@@ -2180,6 +2200,7 @@ def associate_edit(request, pk):
 def associate_delete(request, pk):
     assoc = get_object_or_404(ClientAssociate, pk=pk)
     entity = assoc.entity
+    get_entity_for_user(request, entity.pk)  # IDOR check
     if not request.user.can_edit:
         messages.error(request, "You do not have permission to delete associates.")
         return redirect("core:entity_detail", pk=entity.pk)
@@ -2196,7 +2217,7 @@ def associate_delete(request, pk):
 # ---------------------------------------------------------------------------
 @login_required
 def software_create(request, entity_pk):
-    entity = get_object_or_404(Entity, pk=entity_pk)
+    entity = get_entity_for_user(request, entity_pk)
     if not request.user.can_edit:
         messages.error(request, "You do not have permission to add software configs.")
         return redirect("core:entity_detail", pk=entity_pk)
@@ -2221,6 +2242,7 @@ def software_create(request, entity_pk):
 def software_edit(request, pk):
     sw = get_object_or_404(AccountingSoftware, pk=pk)
     entity = sw.entity
+    get_entity_for_user(request, entity.pk)  # IDOR check
     if not request.user.can_edit:
         messages.error(request, "You do not have permission to edit software configs.")
         return redirect("core:entity_detail", pk=entity.pk)
@@ -2242,6 +2264,7 @@ def software_edit(request, pk):
 def software_delete(request, pk):
     sw = get_object_or_404(AccountingSoftware, pk=pk)
     entity = sw.entity
+    get_entity_for_user(request, entity.pk)  # IDOR check
     if not request.user.can_edit:
         messages.error(request, "You do not have permission to delete software configs.")
         return redirect("core:entity_detail", pk=entity.pk)
@@ -2258,7 +2281,10 @@ def software_delete(request, pk):
 # ---------------------------------------------------------------------------
 @login_required
 def meeting_note_create(request, entity_pk):
-    entity = get_object_or_404(Entity, pk=entity_pk)
+    entity = get_entity_for_user(request, entity_pk)
+    if not request.user.can_edit:
+        messages.error(request, "You do not have permission.")
+        return redirect("core:entity_detail", pk=entity_pk)
 
     if request.method == "POST":
         form = MeetingNoteForm(request.POST)
@@ -2281,6 +2307,10 @@ def meeting_note_create(request, entity_pk):
 def meeting_note_edit(request, pk):
     note = get_object_or_404(MeetingNote, pk=pk)
     entity = note.entity
+    get_entity_for_user(request, entity.pk)  # IDOR check
+    if not request.user.can_edit:
+        messages.error(request, "You do not have permission.")
+        return redirect("core:entity_detail", pk=entity.pk)
 
     if request.method == "POST":
         form = MeetingNoteForm(request.POST, instance=note)
@@ -2299,6 +2329,7 @@ def meeting_note_edit(request, pk):
 def meeting_note_detail(request, pk):
     note = get_object_or_404(MeetingNote, pk=pk)
     entity = note.entity
+    get_entity_for_user(request, entity.pk)  # IDOR check
     return render(request, "core/meeting_note_detail.html", {
         "note": note, "entity": entity,
     })
@@ -2308,6 +2339,10 @@ def meeting_note_detail(request, pk):
 def meeting_note_delete(request, pk):
     note = get_object_or_404(MeetingNote, pk=pk)
     entity = note.entity
+    get_entity_for_user(request, entity.pk)  # IDOR check
+    if not request.user.can_edit:
+        messages.error(request, "You do not have permission.")
+        return redirect("core:entity_detail", pk=entity.pk)
 
     if request.method == "POST":
         title = note.title
@@ -2320,6 +2355,9 @@ def meeting_note_delete(request, pk):
 def meeting_note_toggle_followup(request, pk):
     """HTMX endpoint to toggle follow-up completion."""
     note = get_object_or_404(MeetingNote, pk=pk)
+    get_entity_for_user(request, note.entity.pk)  # IDOR check
+    if not request.user.can_edit:
+        return JsonResponse({"error": "Permission denied"}, status=403)
     note.follow_up_completed = not note.follow_up_completed
     note.save(update_fields=["follow_up_completed"])
     return JsonResponse({"completed": note.follow_up_completed})
@@ -2336,6 +2374,8 @@ def gst_activity_statement(request, pk):
     Maps trial balance lines to BAS labels using ChartOfAccount tax codes.
     Supports both Simpler BAS (G1, 1A, 1B) and Full BAS (G1-G20).
     """
+    fy = get_financial_year_for_user(request, pk)
+    # Re-fetch with select_related for efficiency
     fy = get_object_or_404(
         FinancialYear.objects.select_related("entity", "entity__client"),
         pk=pk,
@@ -2755,8 +2795,9 @@ def _gst_download_pdf(fy, entity, detail_rows,
     """Generate GST Activity Statement as PDF using WeasyPrint."""
     import io
     import weasyprint
+    from django.utils.html import escape as html_escape
 
-    abn = entity.abn or 'N/A'
+    abn = html_escape(entity.abn or 'N/A')
     period = f"{fy.start_date.strftime('%d/%m/%Y')} to {fy.end_date.strftime('%d/%m/%Y')}"
     net_gst = label_1a - label_1b
     net_label = "Net GST Payable to ATO" if net_gst > 0 else "Net GST Refundable from ATO"
@@ -2764,13 +2805,13 @@ def _gst_download_pdf(fy, entity, detail_rows,
     def fmt(v):
         return f"${v:,.2f}"
 
-    # Build detail rows HTML
+    # Build detail rows HTML (escaped to prevent HTML injection)
     detail_html = ""
     for row in detail_rows:
         detail_html += f"""<tr>
-            <td>{row['code']}</td><td>{row['name']}</td>
-            <td>{row['tax_code']}</td><td class="r">${row['amount']:,.2f}</td>
-            <td>{row['bas_label']}</td>
+            <td>{html_escape(str(row['code']))}</td><td>{html_escape(str(row['name']))}</td>
+            <td>{html_escape(str(row['tax_code']))}</td><td class="r">${row['amount']:,.2f}</td>
+            <td>{html_escape(str(row['bas_label']))}</td>
         </tr>"""
 
     html = f"""<!DOCTYPE html>
@@ -2792,7 +2833,7 @@ def _gst_download_pdf(fy, entity, detail_rows,
 </style></head><body>
 
 <h1>GST Activity Statement</h1>
-<p class="sub">{entity.entity_name} &mdash; ABN: {abn}</p>
+<p class="sub">{html_escape(entity.entity_name)} &mdash; ABN: {abn}</p>
 <p class="sub">Period: {period}</p>
 
 <h2>GST on Sales</h2>
@@ -2856,25 +2897,31 @@ def _gst_download_pdf(fy, entity, detail_rows,
 @login_required
 def depreciation_add(request, pk):
     """Add a new depreciation asset to a financial year."""
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     if request.method != "POST":
         return JsonResponse({"error": "POST required"}, status=405)
+    if not request.user.can_edit:
+        return JsonResponse({"error": "Permission denied"}, status=403)
 
-    asset = DepreciationAsset.objects.create(
-        financial_year=fy,
-        category=request.POST.get("category", "Other"),
-        asset_name=request.POST.get("asset_name", ""),
-        purchase_date=request.POST.get("purchase_date") or None,
-        total_cost=Decimal(request.POST.get("total_cost", "0") or "0"),
-        private_use_pct=Decimal(request.POST.get("private_use_pct", "0") or "0"),
-        opening_wdv=Decimal(request.POST.get("opening_wdv", "0") or "0"),
-        method=request.POST.get("method", "D"),
-        rate=Decimal(request.POST.get("rate", "0") or "0"),
-        addition_cost=Decimal(request.POST.get("addition_cost", "0") or "0"),
-        addition_date=request.POST.get("addition_date") or None,
-        disposal_date=request.POST.get("disposal_date") or None,
-        disposal_consideration=Decimal(request.POST.get("disposal_consideration", "0") or "0"),
-    )
+    try:
+        asset = DepreciationAsset.objects.create(
+            financial_year=fy,
+            category=request.POST.get("category", "Other"),
+            asset_name=request.POST.get("asset_name", ""),
+            purchase_date=request.POST.get("purchase_date") or None,
+            total_cost=Decimal(request.POST.get("total_cost", "0") or "0"),
+            private_use_pct=Decimal(request.POST.get("private_use_pct", "0") or "0"),
+            opening_wdv=Decimal(request.POST.get("opening_wdv", "0") or "0"),
+            method=request.POST.get("method", "D"),
+            rate=Decimal(request.POST.get("rate", "0") or "0"),
+            addition_cost=Decimal(request.POST.get("addition_cost", "0") or "0"),
+            addition_date=request.POST.get("addition_date") or None,
+            disposal_date=request.POST.get("disposal_date") or None,
+            disposal_consideration=Decimal(request.POST.get("disposal_consideration", "0") or "0"),
+        )
+    except (InvalidOperation, ValueError):
+        messages.error(request, "Invalid numeric value provided.")
+        return redirect("core:financial_year_detail", pk=pk)
     # Calculate depreciation
     _calc_depreciation(asset)
     asset.save()
@@ -2889,21 +2936,28 @@ def depreciation_edit(request, pk):
     """Edit a depreciation asset."""
     asset = get_object_or_404(DepreciationAsset, pk=pk)
     fy_pk = asset.financial_year.pk
+    get_financial_year_for_user(request, fy_pk)  # IDOR check
     if request.method != "POST":
         return JsonResponse({"error": "POST required"}, status=405)
+    if not request.user.can_edit:
+        return JsonResponse({"error": "Permission denied"}, status=403)
 
-    asset.category = request.POST.get("category", asset.category)
-    asset.asset_name = request.POST.get("asset_name", asset.asset_name)
-    asset.purchase_date = request.POST.get("purchase_date") or asset.purchase_date
-    asset.total_cost = Decimal(request.POST.get("total_cost", "0") or "0")
-    asset.private_use_pct = Decimal(request.POST.get("private_use_pct", "0") or "0")
-    asset.opening_wdv = Decimal(request.POST.get("opening_wdv", "0") or "0")
-    asset.method = request.POST.get("method", asset.method)
-    asset.rate = Decimal(request.POST.get("rate", "0") or "0")
-    asset.addition_cost = Decimal(request.POST.get("addition_cost", "0") or "0")
-    asset.addition_date = request.POST.get("addition_date") or None
-    asset.disposal_date = request.POST.get("disposal_date") or None
-    asset.disposal_consideration = Decimal(request.POST.get("disposal_consideration", "0") or "0")
+    try:
+        asset.category = request.POST.get("category", asset.category)
+        asset.asset_name = request.POST.get("asset_name", asset.asset_name)
+        asset.purchase_date = request.POST.get("purchase_date") or asset.purchase_date
+        asset.total_cost = Decimal(request.POST.get("total_cost", "0") or "0")
+        asset.private_use_pct = Decimal(request.POST.get("private_use_pct", "0") or "0")
+        asset.opening_wdv = Decimal(request.POST.get("opening_wdv", "0") or "0")
+        asset.method = request.POST.get("method", asset.method)
+        asset.rate = Decimal(request.POST.get("rate", "0") or "0")
+        asset.addition_cost = Decimal(request.POST.get("addition_cost", "0") or "0")
+        asset.addition_date = request.POST.get("addition_date") or None
+        asset.disposal_date = request.POST.get("disposal_date") or None
+        asset.disposal_consideration = Decimal(request.POST.get("disposal_consideration", "0") or "0")
+    except (InvalidOperation, ValueError):
+        messages.error(request, "Invalid numeric value provided.")
+        return redirect("core:financial_year_detail", pk=fy_pk)
     _calc_depreciation(asset)
     asset.save()
 
@@ -2913,10 +2967,15 @@ def depreciation_edit(request, pk):
 
 
 @login_required
+@require_POST
 def depreciation_delete(request, pk):
     """Delete a depreciation asset."""
     asset = get_object_or_404(DepreciationAsset, pk=pk)
     fy_pk = asset.financial_year.pk
+    get_financial_year_for_user(request, fy_pk)  # IDOR check
+    if not request.user.can_edit:
+        messages.error(request, "You do not have permission.")
+        return redirect("core:financial_year_detail", pk=fy_pk)
     name = asset.asset_name
     asset.delete()
     _log_action(request, "delete", f"Deleted depreciation asset: {name}")
@@ -2925,9 +2984,13 @@ def depreciation_delete(request, pk):
 
 
 @login_required
+@require_POST
 def depreciation_roll_forward(request, pk):
     """Roll forward depreciation schedule from prior year."""
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
+    if not request.user.can_edit:
+        messages.error(request, "You do not have permission.")
+        return redirect("core:financial_year_detail", pk=pk)
     if not fy.prior_year:
         messages.error(request, "No prior year linked. Cannot roll forward depreciation.")
         return redirect("core:financial_year_detail", pk=pk)
@@ -3009,19 +3072,25 @@ def _calc_depreciation(asset):
 @login_required
 def stock_add(request, pk):
     """Add a stock item to a financial year."""
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     if request.method != "POST":
         return JsonResponse({"error": "POST required"}, status=405)
+    if not request.user.can_edit:
+        return JsonResponse({"error": "Permission denied"}, status=403)
 
-    StockItem.objects.create(
-        financial_year=fy,
-        item_name=request.POST.get("item_name", ""),
-        opening_quantity=Decimal(request.POST.get("opening_quantity", "0") or "0"),
-        opening_value=Decimal(request.POST.get("opening_value", "0") or "0"),
-        closing_quantity=Decimal(request.POST.get("closing_quantity", "0") or "0"),
-        closing_value=Decimal(request.POST.get("closing_value", "0") or "0"),
-        notes=request.POST.get("notes", ""),
-    )
+    try:
+        StockItem.objects.create(
+            financial_year=fy,
+            item_name=request.POST.get("item_name", ""),
+            opening_quantity=Decimal(request.POST.get("opening_quantity", "0") or "0"),
+            opening_value=Decimal(request.POST.get("opening_value", "0") or "0"),
+            closing_quantity=Decimal(request.POST.get("closing_quantity", "0") or "0"),
+            closing_value=Decimal(request.POST.get("closing_value", "0") or "0"),
+            notes=request.POST.get("notes", ""),
+        )
+    except (InvalidOperation, ValueError):
+        messages.error(request, "Invalid numeric value provided.")
+        return redirect("core:financial_year_detail", pk=pk)
     messages.success(request, "Stock item added.")
     return redirect("core:financial_year_detail", pk=pk)
 
@@ -3031,25 +3100,37 @@ def stock_edit(request, pk):
     """Edit a stock item."""
     item = get_object_or_404(StockItem, pk=pk)
     fy_pk = item.financial_year.pk
+    get_financial_year_for_user(request, fy_pk)  # IDOR check
     if request.method != "POST":
         return JsonResponse({"error": "POST required"}, status=405)
+    if not request.user.can_edit:
+        return JsonResponse({"error": "Permission denied"}, status=403)
 
-    item.item_name = request.POST.get("item_name", item.item_name)
-    item.opening_quantity = Decimal(request.POST.get("opening_quantity", "0") or "0")
-    item.opening_value = Decimal(request.POST.get("opening_value", "0") or "0")
-    item.closing_quantity = Decimal(request.POST.get("closing_quantity", "0") or "0")
-    item.closing_value = Decimal(request.POST.get("closing_value", "0") or "0")
-    item.notes = request.POST.get("notes", "")
+    try:
+        item.item_name = request.POST.get("item_name", item.item_name)
+        item.opening_quantity = Decimal(request.POST.get("opening_quantity", "0") or "0")
+        item.opening_value = Decimal(request.POST.get("opening_value", "0") or "0")
+        item.closing_quantity = Decimal(request.POST.get("closing_quantity", "0") or "0")
+        item.closing_value = Decimal(request.POST.get("closing_value", "0") or "0")
+        item.notes = request.POST.get("notes", "")
+    except (InvalidOperation, ValueError):
+        messages.error(request, "Invalid numeric value provided.")
+        return redirect("core:financial_year_detail", pk=fy_pk)
     item.save()
     messages.success(request, f"Stock item '{item.item_name}' updated.")
     return redirect("core:financial_year_detail", pk=fy_pk)
 
 
 @login_required
+@require_POST
 def stock_delete(request, pk):
     """Delete a stock item."""
     item = get_object_or_404(StockItem, pk=pk)
     fy_pk = item.financial_year.pk
+    get_financial_year_for_user(request, fy_pk)  # IDOR check
+    if not request.user.can_edit:
+        messages.error(request, "You do not have permission.")
+        return redirect("core:financial_year_detail", pk=fy_pk)
     name = item.item_name
     item.delete()
     messages.success(request, f"Stock item '{name}' deleted.")
@@ -3059,7 +3140,10 @@ def stock_delete(request, pk):
 @login_required
 def stock_push_to_tb(request, pk):
     """Push stock values to the trial balance."""
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
+    if not request.user.can_edit:
+        messages.error(request, "You do not have permission.")
+        return redirect("core:financial_year_detail", pk=pk)
     stock_items = StockItem.objects.filter(financial_year=fy)
 
     if not stock_items.exists():
@@ -3116,7 +3200,10 @@ def stock_push_to_tb(request, pk):
 @login_required
 def review_push_to_tb(request, pk):
     """Push confirmed review transactions to the trial balance as journal entries."""
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
+    if not request.user.can_edit:
+        messages.error(request, "You do not have permission.")
+        return redirect("core:financial_year_detail", pk=pk)
     from review.models import PendingTransaction
 
     confirmed = PendingTransaction.objects.filter(
@@ -3176,8 +3263,14 @@ def review_approve_transaction(request, pk):
     from review.models import PendingTransaction
     txn = get_object_or_404(PendingTransaction, pk=pk)
 
+    # IDOR check: verify user has access to the linked entity
+    if txn.job and txn.job.entity:
+        get_entity_for_user(request, txn.job.entity.pk)
+
     if request.method != "POST":
         return JsonResponse({"error": "POST required"}, status=405)
+    if not request.user.can_edit:
+        return JsonResponse({"error": "Permission denied"}, status=403)
 
     txn.confirmed_code = request.POST.get("confirmed_code", txn.ai_suggested_code)
     txn.confirmed_name = request.POST.get("confirmed_name", txn.ai_suggested_name)
@@ -3333,7 +3426,10 @@ def review_approve_all(request, pk):
     """Approve all pending transactions for a financial year's entity.
     Also auto-pushes all approved transactions to the trial balance.
     """
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
+    if not request.user.can_edit:
+        messages.error(request, "You do not have permission.")
+        return redirect("core:financial_year_detail", pk=pk)
     from review.models import PendingTransaction
 
     pending = PendingTransaction.objects.filter(
@@ -3381,26 +3477,28 @@ def review_approve_all(request, pk):
 # Activity Log / Notifications
 # ---------------------------------------------------------------------------
 @login_required
+@require_POST
 def mark_notification_read(request, pk):
     """Mark a single activity log entry as read."""
-    activity = get_object_or_404(ActivityLog, pk=pk)
+    activity = get_object_or_404(ActivityLog, pk=pk, user=request.user)
     activity.is_read = True
     activity.save()
     return JsonResponse({"status": "ok"})
 
 
 @login_required
+@require_POST
 def mark_all_notifications_read(request):
-    """Mark all unread notifications as read."""
-    ActivityLog.objects.filter(is_read=False).update(is_read=True)
+    """Mark all unread notifications as read for the current user."""
+    ActivityLog.objects.filter(is_read=False, user=request.user).update(is_read=True)
     return JsonResponse({"status": "ok"})
 
 
 @login_required
 def notifications_api(request):
-    """Return recent unread notifications as JSON for polling."""
+    """Return recent unread notifications as JSON for polling (scoped to current user)."""
     activities = (
-        ActivityLog.objects.filter(is_read=False)
+        ActivityLog.objects.filter(is_read=False, user=request.user)
         .order_by("-created_at")[:10]
     )
     data = []
@@ -3413,7 +3511,7 @@ def notifications_api(request):
             "url": a.url,
             "created_at": a.created_at.isoformat(),
         })
-    return JsonResponse({"unread_count": ActivityLog.objects.filter(is_read=False).count(), "items": data})
+    return JsonResponse({"unread_count": ActivityLog.objects.filter(is_read=False, user=request.user).count(), "items": data})
 
 
 # ============================================================
@@ -3438,6 +3536,13 @@ def client_bulk_action(request):
         return redirect("core:entity_list")
 
     entities = Entity.objects.filter(pk__in=entity_ids)
+
+    # Ownership check: non-senior users can only act on their own entities
+    if not request.user.is_senior:
+        entities = entities.filter(
+            Q(assigned_accountant=request.user) |
+            Q(client__assigned_accountant=request.user)
+        )
 
     if action == "archive":
         count = entities.update(is_archived=True)
@@ -3472,7 +3577,7 @@ def entity_import_handiledger(request, pk):
     """Import HandiLedger ZIP for a specific entity."""
     from .access_ledger_import import import_access_ledger_zip
 
-    entity = get_object_or_404(Entity, pk=pk)
+    entity = get_entity_for_user(request, pk)
 
     if not request.user.can_edit:
         messages.error(request, "You do not have permission.")
@@ -3515,7 +3620,7 @@ def entity_import_handiledger(request, pk):
                     entity,
                 )
             except Exception as e:
-                messages.error(request, f"Import failed: {str(e)}")
+                messages.error(request, "Import failed. Please check the file format and try again.")
 
     return render(request, "core/entity_import_handiledger.html", {
         "entity": entity,
@@ -3530,7 +3635,7 @@ def entity_import_handiledger(request, pk):
 @login_required
 def delete_unfinalised_fy(request, pk):
     """Delete all unfinalised financial years and their data for an entity."""
-    entity = get_object_or_404(Entity, pk=pk)
+    entity = get_entity_for_user(request, pk)
 
     if request.method != "POST":
         return redirect("core:entity_detail", pk=pk)
@@ -3561,6 +3666,9 @@ def delete_unfinalised_fy(request, pk):
 def htmx_update_tb_mapping(request, pk):
     """HTMX endpoint to update the mapping of a trial balance line via dropdown."""
     line = get_object_or_404(TrialBalanceLine, pk=pk)
+    get_financial_year_for_user(request, line.financial_year.pk)  # IDOR check
+    if not request.user.can_edit:
+        return HttpResponse("Permission denied", status=403)
 
     if request.method == "POST":
         mapping_id = request.POST.get("mapped_line_item")
@@ -3635,7 +3743,7 @@ def xrm_search(request, pk):
     Search XPM for clients matching this entity's name.
     Returns a list of potential matches for the user to confirm.
     """
-    entity = get_object_or_404(Entity, pk=pk)
+    entity = get_entity_for_user(request, pk)
 
     if request.method != "POST":
         return JsonResponse({"status": "error", "message": "POST required"}, status=405)
@@ -3706,14 +3814,14 @@ def xrm_search(request, pk):
         logger.error(f"XRM search failed: {e}\n{traceback.format_exc()}")
         return JsonResponse({
             "status": "error",
-            "message": f"XPM search failed: {str(e)}"
+            "message": "XPM search failed. Please try again later."
         })
 
 
 @login_required
 def xrm_pull(request, pk):
     """Pull entity data from Xero Practice Manager for a single entity."""
-    entity = get_object_or_404(Entity, pk=pk)
+    entity = get_entity_for_user(request, pk)
 
     if request.method != "POST":
         return JsonResponse({"status": "error", "message": "POST required"}, status=405)
@@ -4017,7 +4125,7 @@ def xrm_pull(request, pk):
         logger.error(f"XRM pull failed for {entity.entity_name}: {e}\n{traceback.format_exc()}")
         return JsonResponse({
             "status": "error",
-            "message": f"XRM pull failed: {str(e)}"
+            "message": "XRM pull failed. Please try again later."
         })
 
 
@@ -4032,7 +4140,7 @@ def trial_balance_download(request, pk):
     from decimal import Decimal
 
     fmt = request.GET.get("format", "pdf").lower()
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
     tb_lines = TrialBalanceLine.objects.filter(
         financial_year=fy

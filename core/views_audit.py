@@ -13,6 +13,7 @@ from django.http import HttpResponse, JsonResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
 from django.views.decorators.http import require_POST
+from config.authorization import get_financial_year_for_user
 
 from .models import (
     AccountMapping, ChartOfAccount, RiskRule, RiskReferenceData, RiskFlag,
@@ -189,7 +190,7 @@ def run_risk_engine_view(request, pk):
     Trigger the risk engine for a financial year.
     Runs Tier 1 (variance) and Tier 2 (compliance) analysis.
     """
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
 
     if fy.is_locked:
         messages.warning(request, "Cannot run risk engine on a finalised financial year.")
@@ -225,7 +226,7 @@ def risk_flags_view(request, pk):
     Show all risk flags for a specific financial year.
     Enhanced card-based layout with filtering by severity, status, tier, and category.
     """
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     flags = fy.risk_flags.all().order_by("-severity", "-created_at")
 
     # Filters
@@ -423,7 +424,7 @@ def ai_analyse_all_flags(request, pk):
     Run batch AI analysis on all open flags for a financial year.
     Uses the batch engine with caching and materiality-aware prompts.
     """
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     force = request.POST.get("force", "") == "1"
 
     try:
@@ -486,7 +487,7 @@ def ai_prioritise_flags(request, pk):
     """
     Run AI prioritisation to score flags by 'Likely ATO Interest'.
     """
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     flags = fy.risk_flags.filter(status__in=["open", "reviewed"])
 
     try:
@@ -514,7 +515,7 @@ def generate_risk_report(request, pk):
     """
     Generate a narrative AI Risk Summary Report in Word format.
     """
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
 
     try:
         from core.ai_service import generate_risk_summary_report
@@ -546,4 +547,4 @@ def _compute_flag_hash(flag):
         "calculated_values": flag.calculated_values,
         "affected_accounts": flag.affected_accounts,
     }, sort_keys=True)
-    return hashlib.md5(data_str.encode()).hexdigest()
+    return hashlib.sha256(data_str.encode()).hexdigest()

@@ -1381,6 +1381,10 @@ def entity_assignments(request):
     View and manage primary_accountant and reviewer assignments for all entities.
     Supports filtering by entity type, assignment status, and staff member.
     """
+    if not request.user.is_senior:
+        messages.error(request, "Only senior accountants and administrators can manage entity assignments.")
+        return redirect("core:entity_list")
+
     from django.contrib.auth import get_user_model
     User = get_user_model()
 
@@ -1460,6 +1464,10 @@ def bulk_assign_entities(request):
     Bulk assign primary_accountant and/or reviewer to selected entities.
     Accepts a list of entity IDs and the staff member to assign.
     """
+    if not request.user.is_senior:
+        messages.error(request, "Only senior accountants and administrators can manage entity assignments.")
+        return redirect("core:entity_assignments")
+
     from django.contrib.auth import get_user_model
     User = get_user_model()
 
@@ -1538,6 +1546,10 @@ def update_entity_assignment(request, pk):
     """
     Update the primary_accountant and/or reviewer for a single entity (inline edit).
     """
+    if not request.user.is_senior:
+        messages.error(request, "Only senior accountants and administrators can manage entity assignments.")
+        return redirect("core:entity_assignments")
+
     from django.contrib.auth import get_user_model
     User = get_user_model()
 
@@ -1574,7 +1586,8 @@ def update_entity_assignment(request, pk):
         )
 
     # Return to the referring page or assignments page
+    from django.utils.http import url_has_allowed_host_and_scheme
     next_url = request.POST.get("next", "")
-    if next_url:
+    if next_url and url_has_allowed_host_and_scheme(next_url, allowed_hosts={request.get_host()}):
         return redirect(next_url)
     return redirect("core:entity_assignments")
