@@ -166,9 +166,9 @@ def sync_clients(connection: XPMConnection, sync_log: XPMSyncLog) -> dict:
         try:
             _sync_single_client(connection, client_el, stats)
         except Exception as e:
-            name = _xml_text(client_el, "Name")
-            logger.error(f"Error syncing XPM client '{name}': {e}")
-            stats["errors"].append(f"Client '{name}': {e}")
+            xpm_id = _xml_text(client_el, "UUID")
+            logger.error(f"Error syncing XPM client (uuid={xpm_id}): {e}")
+            stats["errors"].append(f"Client sync error (uuid={xpm_id}): {e}")
 
     return stats
 
@@ -220,7 +220,7 @@ def _sync_single_client(connection: XPMConnection, client_el: ET.Element, stats:
         try:
             _sync_client_detail(connection, client, xpm_uuid, stats)
         except Exception as e:
-            logger.warning(f"Could not fetch detail for {name}: {e}")
+            logger.warning(f"Could not fetch detail for XPM client (uuid={xpm_uuid}): {e}")
 
 
 def _sync_client_detail(connection: XPMConnection, client: Client, xpm_uuid: str, stats: dict):
